@@ -86,12 +86,11 @@ class TwitterReceiver(
       })
 
       val query = new FilterQuery
+      query.locations(Array(Array(-180, -90), Array(180, 90)))
       if (filters.size > 0) {
         query.track(filters.toArray)
-        newTwitterStream.filter(query)
-      } else {
-        newTwitterStream.sample()
       }
+      newTwitterStream.filter(query)
       setTwitterStream(newTwitterStream)
       logInfo("Twitter receiver started")
       stopped = false
