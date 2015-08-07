@@ -31,7 +31,8 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.collection.ExternalSorter
 import org.apache.spark.util.collection.unsafe.sort.PrefixComparator
 import org.apache.spark.util.{CompletionIterator, MutablePair}
-import org.apache.spark.{HashPartitioner, SparkEnv}
+import org.apache.spark.{HashPartitioner, Partitioner, SparkEnv}
+
 
 /**
  * :: DeveloperApi ::
@@ -243,11 +244,21 @@ case class TakeOrderedAndProject(
  */
 @DeveloperApi
 case class Repartition(numPartitions: Int, shuffle: Boolean, child: SparkPlan)
-  extends UnaryNode {
+  extends ExchangeInternal {
   override def output: Seq[Attribute] = child.output
 
-  protected override def doExecute(): RDD[InternalRow] = {
-    child.execute().map(_.copy()).coalesce(numPartitions, shuffle)
+  override def getPartitioner(rdd: RDD[InternalRow]): Partitioner =
+    new HashPartitioner(numPartitions)
+
+  override def getPartitionKeyExtractor(): InternalRow => InternalRow =
+    newMutableProjection(child.output, child.output)()
+
+  protected override def doExecute(): RDD[InternalRow] = attachTree(this , "execute") {
+    if (shuffle) {
+      doShuffle(child)
+    } else {
+      child.execute().map(_.copy()).coalesce(numPartitions, shuffle)
+    }
   }
 }
 

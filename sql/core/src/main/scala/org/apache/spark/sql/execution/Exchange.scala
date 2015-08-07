@@ -37,7 +37,7 @@ import org.apache.spark.{HashPartitioner, Partitioner, RangePartitioner, SparkEn
  * Performs a shuffle that will result in the desired `newPartitioning`.
  */
 @DeveloperApi
-case class Exchange(newPartitioning: Partitioning, child: SparkPlan) extends UnaryNode {
+case class Exchange(newPartitioning: Partitioning, child: SparkPlan) extends ExchangeInternal {
 
   override def outputPartitioning: Partitioning = newPartitioning
 
@@ -52,6 +52,69 @@ case class Exchange(newPartitioning: Partitioning, child: SparkPlan) extends Una
     // an interpreted RowOrdering being applied to an UnsafeRow, which will lead to
     // ClassCastExceptions at runtime. This check can be removed after SPARK-9054 is fixed.
     !newPartitioning.isInstanceOf[RangePartitioning]
+  }
+
+  override def getPartitioner(rdd: RDD[InternalRow]): Partitioner = newPartitioning match {
+    case HashPartitioning(expressions, numPartitions) => new HashPartitioner(numPartitions)
+    case RangePartitioning(sortingExpressions, numPartitions) =>
+      // Internally, RangePartitioner runs a job on the RDD that samples keys to compute
+      // partition bounds. To get accurate samples, we need to copy the mutable keys.
+      val rddForSampling = rdd.mapPartitions { iter =>
+        val mutablePair = new MutablePair[InternalRow, Null]()
+        iter.map(row => mutablePair.update(row.copy(), null))
+      }
+      // We need to use an interpreted ordering here because generated orderings cannot be
+      // serialized and this ordering needs to be created on the driver in order to be passed into
+      // Spark core code.
+      implicit val ordering = new InterpretedOrdering(sortingExpressions, child.output)
+      new RangePartitioner(numPartitions, rddForSampling, ascending = true)
+    case SinglePartition =>
+      new Partitioner {
+        override def numPartitions: Int = 1
+        override def getPartition(key: Any): Int = 0
+      }
+    case _ => sys.error(s"Exchange not implemented for $newPartitioning")
+    // TODO: Handle BroadcastPartitioning.
+  }
+
+  override def getPartitionKeyExtractor(): InternalRow => InternalRow = newPartitioning match {
+    case HashPartitioning(expressions, _) => newMutableProjection(expressions, child.output)()
+    case RangePartitioning(_, _) | SinglePartition => identity
+    case _ => sys.error(s"Exchange not implemented for $newPartitioning")
+  }
+
+  protected override def doExecute(): RDD[InternalRow] = attachTree(this , "execute") {
+    doShuffle(child)
+  }
+}
+
+abstract class ExchangeInternal extends UnaryNode {
+
+  def getPartitioner(rdd: RDD[InternalRow]): Partitioner
+
+  def getPartitionKeyExtractor(): InternalRow => InternalRow
+
+  def getSerializer(child: SparkPlan): Serializer = {
+    val rowDataTypes = child.output.map(_.dataType).toArray
+    // It is true when there is no field that needs to be write out.
+    // For now, we will not use SparkSqlSerializer2 when noField is true.
+    val noField = rowDataTypes == null || rowDataTypes.length == 0
+
+    val useSqlSerializer2 =
+        child.sqlContext.conf.useSqlSerializer2 &&   // SparkSqlSerializer2 is enabled.
+        SparkSqlSerializer2.support(rowDataTypes) &&  // The schema of row is supported.
+        !noField
+
+    if (child.outputsUnsafeRows) {
+      logInfo("Using UnsafeRowSerializer.")
+      new UnsafeRowSerializer(child.output.size)
+    } else if (useSqlSerializer2) {
+      logInfo("Using SparkSqlSerializer2.")
+      new SparkSqlSerializer2(rowDataTypes)
+    } else {
+      logInfo("Using SparkSqlSerializer.")
+      new SparkSqlSerializer(child.sqlContext.sparkContext.getConf)
+    }
   }
 
   /**
@@ -120,75 +183,27 @@ case class Exchange(newPartitioning: Partitioning, child: SparkPlan) extends Una
     }
   }
 
-  @transient private lazy val sparkConf = child.sqlContext.sparkContext.getConf
-
-  private val serializer: Serializer = {
-    val rowDataTypes = child.output.map(_.dataType).toArray
-    // It is true when there is no field that needs to be write out.
-    // For now, we will not use SparkSqlSerializer2 when noField is true.
-    val noField = rowDataTypes == null || rowDataTypes.length == 0
-
-    val useSqlSerializer2 =
-        child.sqlContext.conf.useSqlSerializer2 &&   // SparkSqlSerializer2 is enabled.
-        SparkSqlSerializer2.support(rowDataTypes) &&  // The schema of row is supported.
-        !noField
-
-    if (child.outputsUnsafeRows) {
-      logInfo("Using UnsafeRowSerializer.")
-      new UnsafeRowSerializer(child.output.size)
-    } else if (useSqlSerializer2) {
-      logInfo("Using SparkSqlSerializer2.")
-      new SparkSqlSerializer2(rowDataTypes)
-    } else {
-      logInfo("Using SparkSqlSerializer.")
-      new SparkSqlSerializer(sparkConf)
-    }
-  }
-
-  protected override def doExecute(): RDD[InternalRow] = attachTree(this , "execute") {
+  def doShuffle(child: SparkPlan): RDD[InternalRow] = {
     val rdd = child.execute()
-    val part: Partitioner = newPartitioning match {
-      case HashPartitioning(expressions, numPartitions) => new HashPartitioner(numPartitions)
-      case RangePartitioning(sortingExpressions, numPartitions) =>
-        // Internally, RangePartitioner runs a job on the RDD that samples keys to compute
-        // partition bounds. To get accurate samples, we need to copy the mutable keys.
-        val rddForSampling = rdd.mapPartitions { iter =>
-          val mutablePair = new MutablePair[InternalRow, Null]()
-          iter.map(row => mutablePair.update(row.copy(), null))
-        }
-        // We need to use an interpreted ordering here because generated orderings cannot be
-        // serialized and this ordering needs to be created on the driver in order to be passed into
-        // Spark core code.
-        implicit val ordering = new InterpretedOrdering(sortingExpressions, child.output)
-        new RangePartitioner(numPartitions, rddForSampling, ascending = true)
-      case SinglePartition =>
-        new Partitioner {
-          override def numPartitions: Int = 1
-          override def getPartition(key: Any): Int = 0
-        }
-      case _ => sys.error(s"Exchange not implemented for $newPartitioning")
-      // TODO: Handle BroadcastPartitioning.
-    }
-    def getPartitionKeyExtractor(): InternalRow => InternalRow = newPartitioning match {
-      case HashPartitioning(expressions, _) => newMutableProjection(expressions, child.output)()
-      case RangePartitioning(_, _) | SinglePartition => identity
-      case _ => sys.error(s"Exchange not implemented for $newPartitioning")
-    }
+    val serializer: Serializer = getSerializer(child)
+
+    val partitioner = getPartitioner(rdd)
+
     val rddWithPartitionIds: RDD[Product2[Int, InternalRow]] = {
-      if (needToCopyObjectsBeforeShuffle(part, serializer)) {
+      if (needToCopyObjectsBeforeShuffle(partitioner, serializer)) {
         rdd.mapPartitions { iter =>
           val getPartitionKey = getPartitionKeyExtractor()
-          iter.map { row => (part.getPartition(getPartitionKey(row)), row.copy()) }
+          iter.map { row => (partitioner.getPartition(getPartitionKey(row)), row.copy()) }
         }
       } else {
         rdd.mapPartitions { iter =>
           val getPartitionKey = getPartitionKeyExtractor()
           val mutablePair = new MutablePair[Int, InternalRow]()
-          iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
+          iter.map { row => mutablePair.update(partitioner.getPartition(getPartitionKey(row)), row) }
         }
       }
     }
-    new ShuffledRowRDD(rddWithPartitionIds, serializer, part.numPartitions)
+    new ShuffledRowRDD(rddWithPartitionIds, serializer, partitioner.numPartitions)
   }
 }
 
