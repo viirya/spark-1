@@ -257,14 +257,17 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
     assert(firstPool.poolName == "production")
     assert(firstPool.priority == 10)
     assert(firstPool.cores == 5)
+    assert(firstPool.min_cores == 1)
     assert(firstPool.size == 0)
     assert(secondPool.poolName == "test")
     assert(secondPool.priority == 2)
     assert(secondPool.cores == 1)
+    assert(secondPool.min_cores == 0)
     assert(secondPool.size == 0)
     assert(firstPoolAgain.poolName == "production")
     assert(firstPoolAgain.priority == 10)
     assert(firstPoolAgain.cores == 5)
+    assert(firstPoolAgain.min_cores == 1)
     assert(firstPoolAgain.size == 0)
 
     assert(firstPool.nextApplication() == None)
@@ -492,10 +495,12 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
                           <pool name="production">
                             <priority>10</priority>
                             <cores>5</cores>
+                            <min_cores>1</min_cores>
                           </pool>
                           <pool name="test">
                             <priority>2</priority>
                             <cores>1</cores>
+                            <min_cores>0</min_cores>
                           </pool>
                         </allocations>"""
 

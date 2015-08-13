@@ -196,10 +196,12 @@ private[master] class PrioritySchedulingAlgorithm(
 
   val DEFAULT_PRIORITY = 1
   val DEFAULT_CORES = 1
+  val DEFAULT_MINCORES = 0
   val POOLS_PROPERTY = "pool"
   val POOL_NAME_PROPERTY = "@name"
   val PRIORITY_PROPERTY = "priority"
   val CORES_PROPERTY = "cores"
+  val MINCORES_PROPERTY = "min_cores"
 
   val initAppNumberPerPool = 100
   val initPoolNumber = 5
@@ -217,7 +219,7 @@ private[master] class PrioritySchedulingAlgorithm(
     }
   }
 
-  class Pool(val poolName: String, val priority: Int, val cores: Int) {
+  class Pool(val poolName: String, val priority: Int, val cores: Int, val min_cores: Int) {
     private val appQueue: PriorityQueue[ApplicationSubmission] =
       new PriorityQueue[ApplicationSubmission](initAppNumberPerPool, applicationComparator)
 
@@ -343,13 +345,100 @@ private[master] class PrioritySchedulingAlgorithm(
         val assignedCores =
           scheduleExecutorsOnWorkersForPool(app, usableWorkers, master.spreadOutApps, pool)
 
-        // Now that we've decided how many cores to allocate on each worker, let's allocate them
-        for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
-          allocateWorkerResourceToExecutors(
-            app, assignedCores(pos), coresPerExecutor, usableWorkers(pos))
+        // Whether we need to preempt the executors of other applications
+        val totalAssignedCores = assignedCores.sum
+        if (totalAssignedCores + app.coresGranted < pool.min_cores) {
+          val assignedCoresForAllWorkers = tryPreemptExistingExecutors(app, assignedCores, workers,
+            usableWorkers, master.spreadOutApps, pool)
+          for (pos <- 0 until workers.length if assignedCoresForAllWorkers(pos) > 0) {
+            allocateWorkerResourceToExecutors(
+              app, assignedCoresForAllWorkers(pos), coresPerExecutor, workers(pos))
+          }
+        } else {
+          // Now that we've decided how many cores to allocate on each worker, let's allocate them
+          for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
+            allocateWorkerResourceToExecutors(
+              app, assignedCores(pos), coresPerExecutor, usableWorkers(pos))
+          }
         }
       }
     }}
+  }
+
+  private[master] def getWorkerIndex(workerInfo: WorkerInfo, workers: Array[WorkerInfo]): Int = {
+    var i = 0
+    workers.find { w =>
+      if (w == workerInfo) {
+        true
+      } else {
+        i += 1
+        false
+      }
+    }
+    i
+  }
+
+  private[master] def mapAlreadyAssignedCoresToNewList(
+      assignedCores: Array[Int],
+      usableWorkers: Array[WorkerInfo],
+      workers: Array[WorkerInfo]): Array[Int] = {
+    val numForAllWorkers = workers.length
+    val assignedCoresForAllWorkers = new Array[Int](numForAllWorkers)
+    for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
+      val workerInfo = usableWorkers(pos)
+      val i = getWorkerIndex(workerInfo, workers)
+      assignedCoresForAllWorkers(i) = assignedCores(pos)
+    }
+    assignedCoresForAllWorkers
+  }
+
+  private[master] def preemptExistingExecutor(
+      appInfo: ApplicationInfo,
+      desc: ExecutorDesc): Unit = {
+    appInfo.removeExecutor(desc)
+    master.killExecutor(desc)
+  }
+
+  private[master] def tryPreemptExistingExecutors(
+      app: ApplicationInfo,
+      oldAssignedCores: Array[Int],
+      workers: Array[WorkerInfo],
+      usableWorkers: Array[WorkerInfo],
+      spreadOutApps: Boolean,
+      pool: Pool): Array[Int] = {
+    val coresPerExecutor = app.desc.coresPerExecutor
+    val minCoresPerExecutor = coresPerExecutor.getOrElse(1)
+    // We need to scan all workers
+    val numForAllWorkers = workers.length
+    val assignedCores = mapAlreadyAssignedCoresToNewList(oldAssignedCores, usableWorkers, workers)
+    val assignedExecutors = new Array[Int](numForAllWorkers) // Number of new executors on each worker
+    // We can only assign all cores of the cluster at most
+    var coresToAssign = math.min(pool.min_cores - app.coresGranted - oldAssignedCores.sum,
+      workers.map(_.cores).sum)
+
+    // Filter out the pools with lower priorities
+    nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
+      // We need to reverse the applications in pool because we want to preempt
+      // later submitted applications first
+      lowerPool.getApplications().reverse.map { app =>
+        // If this application has existing executors
+        if (app.executors.values.size > 0) {
+          app.executors.values.foreach { executor =>
+            val keepPreempting = coresToAssign >= minCoresPerExecutor
+            if (keepPreempting) {
+              preemptExistingExecutor(app, executor)
+
+              val workerInfo = executor.worker
+              val pos = getWorkerIndex(workerInfo, workers)
+
+              coresToAssign -= executor.cores
+              assignedCores(pos) += executor.cores
+            }
+          }
+        }
+      }
+    }
+    assignedCores
   }
 
   /**
@@ -436,10 +525,12 @@ private[master] class PrioritySchedulingAlgorithm(
                           <pool name="production">
                             <priority>10</priority>
                             <cores>5</cores>
+                            <min_cores>1</min_cores>
                           </pool>
                           <pool name="test">
                             <priority>2</priority>
                             <cores>1</cores>
+                            <min_cores>0</min_cores>
                           </pool>
                         </allocations>"""
     new ByteArrayInputStream(exampleXML.getBytes(StandardCharsets.UTF_8))
@@ -470,6 +561,7 @@ private[master] class PrioritySchedulingAlgorithm(
       val poolName = (poolNode \ POOL_NAME_PROPERTY).text
       var priority = DEFAULT_PRIORITY
       var cores = DEFAULT_CORES
+      var min_cores = DEFAULT_MINCORES
 
       val xmlPriority = (poolNode \ PRIORITY_PROPERTY).text
       if (xmlPriority != "") {
@@ -481,10 +573,15 @@ private[master] class PrioritySchedulingAlgorithm(
         cores = xmlCores.toInt
       }
 
-      val pool = new Pool(poolName, priority, cores)
+      val xmlMinCores = (poolNode \ MINCORES_PROPERTY).text
+      if (xmlMinCores != "") {
+        min_cores = xmlMinCores.toInt
+      }
+
+      val pool = new Pool(poolName, priority, cores, min_cores)
       poolQueue.add(pool)
-      logInfo("Created pool %s, priority: %d, cores: %d".format(
-        poolName, priority, cores))
+      logInfo("Created pool %s, priority: %d, cores: %d, min_cores: %d".format(
+        poolName, priority, cores, min_cores))
     }
   }
 }

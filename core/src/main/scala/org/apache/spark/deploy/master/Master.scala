@@ -793,7 +793,7 @@ private[deploy] class Master(
   /**
    * Ask the worker on which the specified executor is launched to kill the executor.
    */
-  private def killExecutor(exec: ExecutorDesc): Unit = {
+  private[master] def killExecutor(exec: ExecutorDesc): Unit = {
     exec.worker.removeExecutor(exec)
     exec.worker.endpoint.send(KillExecutor(masterUrl, exec.application.id, exec.id))
     exec.state = ExecutorState.KILLED
