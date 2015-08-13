@@ -243,7 +243,7 @@ private[master] class PrioritySchedulingAlgorithm(
     def removeApplication(app: ApplicationInfo): Boolean = {
       val submitted = appQueue.toArray().find(_.asInstanceOf[ApplicationSubmission].appInfo == app)
       if (submitted != None) {
-        appQueue.remove(submitted)
+        appQueue.remove(submitted.get)
       } else {
         false
       }
@@ -311,7 +311,7 @@ private[master] class PrioritySchedulingAlgorithm(
     }
   }
 
-  override def removeApplication(app: ApplicationInfo): Unit =  {
+  override def removeApplication(app: ApplicationInfo): Unit = {
     if (app.desc.assignedPool == None) {
       throw new SparkException(s"Application ${app.desc.name} hasn't been assigned to any pool")
     } else {
