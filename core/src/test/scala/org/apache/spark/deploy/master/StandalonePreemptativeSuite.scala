@@ -111,6 +111,49 @@ class StandalonePreemptativeSuite
     assert(master.apps.head.getExecutorLimit === 1000)
   }
 
+  test("preemptative priority scheduling") {
+    // Schedule 10 applications with lower priority
+    // Each acquires 1 core
+    // Total is 10 cores
+    val lowPriorityApps = (0 to 9).map { i =>
+      sc = new SparkContext(appConf("test"))
+      val appId = sc.applicationId
+      assert(master.apps.size === i + 1)
+      val app = master.apps.find(app => app.id == appId)
+      assert(app != None)
+      // We can acquire 1 core, spread out to 1 executor on 1 worker
+      assert(app.get.executors.size === 1)
+      assert(app.get.getExecutorLimit === Int.MaxValue)
+      app.get
+    }
+    // Schedule two higher priority applications
+    // Each acquires 5 cores
+    // Total 10 cores
+    (0 to 1).map { i =>
+      sc = new SparkContext(appConf("production"))
+      val appId = sc.applicationId
+      assert(master.apps.size === i + 11)
+      val app = master.apps.find(app => app.id == appId)
+      assert(app != None)
+      // We can acquire 5 cores, spread out to 2 executors on 2 workers
+      assert(app.get.executors.size === 2)
+      assert(app.get.getExecutorLimit === Int.MaxValue)
+    }
+    // Now we schedule another higher priority application
+    sc = new SparkContext(appConf("production"))
+    val appId = sc.applicationId
+    assert(master.apps.size === 13)
+    val app = master.apps.find(app => app.id == appId)
+    assert(app != None)
+    // The applications in production pool will acquire 5 cores
+    // If there are not enough cores, it will preempt lower priority applications until
+    // it has 1 core at lease (min_cores)
+    assert(app.get.executors.size === 1)
+    assert(app.get.getExecutorLimit === Int.MaxValue)
+    // We count for the lower priority applications that have been preempted
+    assert(lowPriorityApps.filter(app => app.executors.size == 0).size == 1)
+  }
+
   // ===============================
   // | Utility methods for testing |
   // ===============================
