@@ -300,20 +300,31 @@ private[master] class PrioritySchedulingAlgorithm(
   }
 
   override def registerApplication(app: ApplicationInfo): Unit = {
+    var pool: Pool = null
     if (app.desc.assignedPool == None) {
-      throw new SparkException(s"Application ${app.desc.name} hasn't been assigned to any pool")
+      logInfo(s"Application ${app.desc.name} hasn't been assigned to any pool")
+      logInfo(s"Assign it to lowest-prioroty pool")
     } else {
-      val pool = poolQueue.toArray().find { p =>
+      pool = poolQueue.toArray().find { p =>
         p.asInstanceOf[Pool].poolName == app.desc.assignedPool.get
       }.getOrElse {
-          throw new SparkException(s"Application ${app.desc.name} has been assigned to " +
+          // If the application is assigned to an unknown pool, we directly assign it to
+          // lowest-prioroty pool
+          logInfo(s"Application ${app.desc.name} has been assigned to " +
             s"unknown pool ${app.desc.assignedPool.get}")
+          logInfo(s"Assign it to lowest-prioroty pool")
+          null
       }.asInstanceOf[Pool]
-      pool.addApplication(app)
     }
+    if (pool == null) {
+      pool = poolQueue.toArray()(queueSize() - 1).asInstanceOf[Pool]
+    }
+    pool.addApplication(app)
   }
 
   override def removeApplication(app: ApplicationInfo): Unit = {
+    // As the application should be assigned a pool before it can be removed, we throw exception here
+    // instead of just logging it
     if (app.desc.assignedPool == None) {
       throw new SparkException(s"Application ${app.desc.name} hasn't been assigned to any pool")
     } else {
