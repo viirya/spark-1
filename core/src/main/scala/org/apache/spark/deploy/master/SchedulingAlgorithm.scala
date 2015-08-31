@@ -427,6 +427,38 @@ private[master] class PrioritySchedulingAlgorithm(
     master.killExecutor(desc)
   }
 
+  private[master] def tryPreemptApplications(
+      numForAllWorkers: Int,
+      workers: Array[WorkerInfo],
+      pool: Pool): (Array[Int], Array[Int]) = {
+    // Allocate arrays for storing preempted cores and memory
+    val preemptedCores = new Array[Int](numForAllWorkers)
+    val preemptedMemory = new Array[Int](numForAllWorkers)
+
+    // Filter out the pools with lower priorities
+    nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
+      // We need to reverse the applications in pool because we want to preempt
+      // later submitted applications first
+      lowerPool.getApplications().reverse.map { app =>
+        // If this application has existing executors
+        if (app.executors.values.size > 0) {
+          // Read necessary information of preempted application
+          val memoryPerExecutorMBForPreempted = app.desc.memoryPerExecutorMB
+
+          app.executors.values.foreach { executor =>
+            val workerInfo = executor.worker
+            val pos = getWorkerIndex(workerInfo, workers)
+
+            // Record how many cores and memory can get if the executor is preempted
+            preemptedCores(pos) += executor.cores
+            preemptedMemory(pos) += memoryPerExecutorMBForPreempted
+          }
+        }
+      }
+    }
+    (preemptedCores, preemptedMemory)
+  }
+
   private[master] def tryPreemptExistingExecutors(
       app: ApplicationInfo,
       oldAssignedCores: Array[Int],
@@ -445,41 +477,56 @@ private[master] class PrioritySchedulingAlgorithm(
     // We can only assign all cores of the cluster at most
     var coresToAssign = math.min(pool.min_cores - app.coresGranted - oldAssignedCores.sum,
       workers.map(_.cores).sum)
+    // Calculate cores and memory obtained by preempting other applications
+    val (preemptedCores, preemptedMemory) = tryPreemptApplications(numForAllWorkers, workers, pool)
 
-    // Filter out the pools with lower priorities
-    nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
-      // We need to reverse the applications in pool because we want to preempt
-      // later submitted applications first
-      lowerPool.getApplications().reverse.map { app =>
-        // If this application has existing executors
-        if (app.executors.values.size > 0) {
-          app.executors.values.foreach { executor =>
-            val workerInfo = executor.worker
-            val pos = getWorkerIndex(workerInfo, workers)
+    // We only count for the cores on which workers we can get enough executor memory
+    // That is because if there are not enough memory for our executor, the executor we
+    // run on the worker will not be useful for our job
+    val canAssignedCores = (0 until numForAllWorkers)
+      .filter(preemptedMemory(_) >= memoryPerExecutor)
+      .map(preemptedCores(_)).sum
 
-            val assignedMemory = assignedExecutors(pos) * memoryPerExecutor
-            val enoughMemory = (oneExecutorPerWorker && assignedExecutors(pos) > 0) ||
-              workers(pos).memoryFree - assignedMemory >= memoryPerExecutor
-            val underLimit = assignedExecutors.sum + app.executors.size < app.executorLimit
+    if (canAssignedCores >= coresToAssign) {
+      // Filter out the pools with lower priorities
+      nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
+        // We need to reverse the applications in pool because we want to preempt
+        // later submitted applications first
+        lowerPool.getApplications().reverse.map { app =>
+          // If this application has existing executors
+          if (app.executors.values.size > 0) {
+            // Read necessary information of preempted application
+            val memoryPerExecutorMBForPreempted = app.desc.memoryPerExecutorMB
+            val coresPerExecutorForPreempted = app.desc.coresPerExecutor
+            val minCoresPerExecutorForPreempted = coresPerExecutorForPreempted.getOrElse(1)
 
-            val keepPreempting = coresToAssign >= minCoresPerExecutor
-            if (keepPreempting && enoughMemory && underLimit) {
-              preemptExistingExecutor(app, executor)
+            app.executors.values.foreach { executor =>
+              val workerInfo = executor.worker
+              val pos = getWorkerIndex(workerInfo, workers)
 
-              coresToAssign -= executor.cores
-              assignedCores(pos) += executor.cores
+              val keepPreempting = coresToAssign >= minCoresPerExecutor
 
-              if (oneExecutorPerWorker) {
-                assignedExecutors(pos) = 1
-              } else {
-                assignedExecutors(pos) = assignedCores(pos) /  minCoresPerExecutor
+              // If we can get enough memory on this worker
+              if (preemptedMemory(pos) >= memoryPerExecutor && keepPreempting) {
+                preemptExistingExecutor(app, executor)
+
+                coresToAssign -= executor.cores
+                assignedCores(pos) += executor.cores
+
+                if (oneExecutorPerWorker) {
+                  assignedExecutors(pos) = 1
+                } else {
+                  assignedExecutors(pos) = assignedCores(pos) /  minCoresPerExecutor
+                }
               }
             }
           }
         }
       }
+      assignedCores
+    } else {
+      new Array[Int](numForAllWorkers)
     }
-    assignedCores
   }
 
   /**
