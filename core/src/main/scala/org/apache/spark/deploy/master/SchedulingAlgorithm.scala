@@ -397,15 +397,27 @@ private[master] class PrioritySchedulingAlgorithm(
   private[master] def mapAlreadyAssignedCoresToNewList(
       assignedCores: Array[Int],
       usableWorkers: Array[WorkerInfo],
-      workers: Array[WorkerInfo]): Array[Int] = {
+      workers: Array[WorkerInfo],
+      minCoresPerExecutor: Int,
+      oneExecutorPerWorker: Boolean): (Array[Int], Array[Int]) = {
     val numForAllWorkers = workers.length
     val assignedCoresForAllWorkers = new Array[Int](numForAllWorkers)
+    val assignedExecutorsForAllWorkers = new Array[Int](numForAllWorkers)
     for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
       val workerInfo = usableWorkers(pos)
       val i = getWorkerIndex(workerInfo, workers)
       assignedCoresForAllWorkers(i) = assignedCores(pos)
     }
-    assignedCoresForAllWorkers
+
+    for (pos <- 0 until assignedCoresForAllWorkers.length) {
+      if (oneExecutorPerWorker) {
+        assignedExecutorsForAllWorkers(pos) = 1
+      } else {
+        assignedExecutorsForAllWorkers(pos) = assignedCoresForAllWorkers(pos) / minCoresPerExecutor
+      }
+    }
+
+    (assignedCoresForAllWorkers, assignedExecutorsForAllWorkers)
   }
 
   private[master] def preemptExistingExecutor(
@@ -423,11 +435,13 @@ private[master] class PrioritySchedulingAlgorithm(
       spreadOutApps: Boolean,
       pool: Pool): Array[Int] = {
     val coresPerExecutor = app.desc.coresPerExecutor
+    val oneExecutorPerWorker = coresPerExecutor.isEmpty
     val minCoresPerExecutor = coresPerExecutor.getOrElse(1)
+    val memoryPerExecutor = app.desc.memoryPerExecutorMB
     // We need to scan all workers
     val numForAllWorkers = workers.length
-    val assignedCores = mapAlreadyAssignedCoresToNewList(oldAssignedCores, usableWorkers, workers)
-    val assignedExecutors = new Array[Int](numForAllWorkers) // Number of new executors on each worker
+    val (assignedCores, assignedExecutors) = mapAlreadyAssignedCoresToNewList(oldAssignedCores,
+      usableWorkers, workers, minCoresPerExecutor, oneExecutorPerWorker)
     // We can only assign all cores of the cluster at most
     var coresToAssign = math.min(pool.min_cores - app.coresGranted - oldAssignedCores.sum,
       workers.map(_.cores).sum)
@@ -440,15 +454,26 @@ private[master] class PrioritySchedulingAlgorithm(
         // If this application has existing executors
         if (app.executors.values.size > 0) {
           app.executors.values.foreach { executor =>
-            val keepPreempting = coresToAssign >= minCoresPerExecutor
-            if (keepPreempting) {
-              preemptExistingExecutor(app, executor)
+            val workerInfo = executor.worker
+            val pos = getWorkerIndex(workerInfo, workers)
 
-              val workerInfo = executor.worker
-              val pos = getWorkerIndex(workerInfo, workers)
+            val assignedMemory = assignedExecutors(pos) * memoryPerExecutor
+            val enoughMemory = (oneExecutorPerWorker && assignedExecutors(pos) > 0) ||
+              workers(pos).memoryFree - assignedMemory >= memoryPerExecutor
+            val underLimit = assignedExecutors.sum + app.executors.size < app.executorLimit
+
+            val keepPreempting = coresToAssign >= minCoresPerExecutor
+            if (keepPreempting && enoughMemory && underLimit) {
+              preemptExistingExecutor(app, executor)
 
               coresToAssign -= executor.cores
               assignedCores(pos) += executor.cores
+
+              if (oneExecutorPerWorker) {
+                assignedExecutors(pos) = 1
+              } else {
+                assignedExecutors(pos) = assignedCores(pos) /  minCoresPerExecutor
+              }
             }
           }
         }
