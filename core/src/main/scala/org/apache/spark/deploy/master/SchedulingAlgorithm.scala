@@ -474,18 +474,24 @@ private[master] class PrioritySchedulingAlgorithm(
     val numForAllWorkers = workers.length
     val (assignedCores, assignedExecutors) = mapAlreadyAssignedCoresToNewList(oldAssignedCores,
       usableWorkers, workers, minCoresPerExecutor, oneExecutorPerWorker)
+    // Calculate cores and memory obtained by preempting other applications
+    val (preemptedCores, preemptedMemory) = tryPreemptApplications(numForAllWorkers, workers, pool)
+
+    // If there are remaining cores we can obtain after preempt executors on this worker
+    // We allocate them to this application
+    val freeCoresOnWorkers = (0 until numForAllWorkers)
+      .map(workers(_).coresFree).sum
+
     // We can only assign all cores of the cluster at most
     var coresToAssign = math.min(pool.min_cores - app.coresGranted - oldAssignedCores.sum,
       workers.map(_.cores).sum)
-    // Calculate cores and memory obtained by preempting other applications
-    val (preemptedCores, preemptedMemory) = tryPreemptApplications(numForAllWorkers, workers, pool)
 
     // We only count for the cores on which workers we can get enough executor memory
     // That is because if there are not enough memory for our executor, the executor we
     // run on the worker will not be useful for our job
     val canAssignedCores = (0 until numForAllWorkers)
-      .filter(preemptedMemory(_) >= memoryPerExecutor)
-      .map(preemptedCores(_)).sum
+      .filter(pos => preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor)
+      .map(pos => preemptedCores(pos) + workers(pos).coresFree - assignedCores(pos)).sum
 
     if (canAssignedCores >= coresToAssign) {
       // Filter out the pools with lower priorities
@@ -528,6 +534,13 @@ private[master] class PrioritySchedulingAlgorithm(
 
                   coresToAssign -= executor.cores
                   assignedCores(pos) += executor.cores
+
+                  // We also allocate free cores on the worker
+                  val coreRemaining = math.min(workers(pos).coresFree - assignedCores(pos), coresToAssign)
+                  if (coreRemaining > 0) {
+                    coresToAssign -= coreRemaining
+                    assignedCores(pos) += coreRemaining
+                  }
 
                   if (oneExecutorPerWorker) {
                     assignedExecutors(pos) = 1
