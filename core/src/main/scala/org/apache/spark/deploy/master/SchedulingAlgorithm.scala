@@ -493,6 +493,10 @@ private[master] class PrioritySchedulingAlgorithm(
       .filter(pos => preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor)
       .map(pos => preemptedCores(pos) + workers(pos).coresFree - assignedCores(pos)).sum
 
+    logInfo(s"canAssignedCores: $canAssignedCores, coresToAssign: $coresToAssign, " +
+      s"alreadyAssignedCores: ${oldAssignedCores.sum}, pool.min_cores: ${pool.min_cores}, " +
+      s"app.coresGranted: ${app.coresGranted}, totalCores: ${workers.map(_.cores).sum}")
+
     if (canAssignedCores >= coresToAssign) {
       // Filter out the pools with lower priorities
       nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
