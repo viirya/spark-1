@@ -500,6 +500,9 @@ private[master] class PrioritySchedulingAlgorithm(
             val coresPerExecutorForPreempted = app.desc.coresPerExecutor
             val minCoresPerExecutorForPreempted = coresPerExecutorForPreempted.getOrElse(1)
 
+            // If we have preempted one of the executors of this application
+            // We will preempt all of them to prevent it failed
+            var havePreempted: Boolean = false
             app.executors.values.foreach { executor =>
               val workerInfo = executor.worker
               val pos = getWorkerIndex(workerInfo, workers)
@@ -508,15 +511,35 @@ private[master] class PrioritySchedulingAlgorithm(
 
               // If we can get enough memory on this worker
               if (preemptedMemory(pos) >= memoryPerExecutor && keepPreempting) {
-                preemptExistingExecutor(app, executor)
+                havePreempted = true
+              }
+            }
 
-                coresToAssign -= executor.cores
-                assignedCores(pos) += executor.cores
+            if (havePreempted) {
+              app.executors.values.foreach { executor =>
+                val workerInfo = executor.worker
+                val pos = getWorkerIndex(workerInfo, workers)
 
-                if (oneExecutorPerWorker) {
-                  assignedExecutors(pos) = 1
+                val keepPreempting = coresToAssign >= minCoresPerExecutor
+
+                // If we can get enough memory on this worker
+                if (preemptedMemory(pos) >= memoryPerExecutor && keepPreempting) {
+                  preemptExistingExecutor(app, executor)
+
+                  coresToAssign -= executor.cores
+                  assignedCores(pos) += executor.cores
+
+                  if (oneExecutorPerWorker) {
+                    assignedExecutors(pos) = 1
+                  } else {
+                    assignedExecutors(pos) = assignedCores(pos) /  minCoresPerExecutor
+                  }
                 } else {
-                  assignedExecutors(pos) = assignedCores(pos) /  minCoresPerExecutor
+                  // If this worker has no enough memory or
+                  // we already have enough cores for our application,
+                  // we still preempt the remaining executors of this application.
+                  // But we don't allocate these cores to our application
+                  preemptExistingExecutor(app, executor)
                 }
               }
             }
