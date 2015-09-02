@@ -520,7 +520,8 @@ private[master] class PrioritySchedulingAlgorithm(
               val keepPreempting = coresToAssign >= minCoresPerExecutor
 
               // If we can get enough memory on this worker
-              if (preemptedMemory(pos) >= memoryPerExecutor && keepPreempting) {
+              if (preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor &&
+                keepPreempting) {
                 havePreempted = true
               }
             }
@@ -533,14 +534,16 @@ private[master] class PrioritySchedulingAlgorithm(
                 val keepPreempting = coresToAssign >= minCoresPerExecutor
 
                 // If we can get enough memory on this worker
-                if (preemptedMemory(pos) >= memoryPerExecutor && keepPreempting) {
+                if (preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor &&
+                  keepPreempting) {
                   preemptExistingExecutor(app, executor)
 
                   coresToAssign -= executor.cores
                   assignedCores(pos) += executor.cores
 
                   // We also allocate free cores on the worker
-                  val coreRemaining = math.min(workers(pos).coresFree - assignedCores(pos), coresToAssign)
+                  val coreRemaining = math.min(workers(pos).coresFree - assignedCores(pos),
+                    coresToAssign)
                   if (coreRemaining > 0) {
                     coresToAssign -= coreRemaining
                     assignedCores(pos) += coreRemaining
@@ -549,7 +552,10 @@ private[master] class PrioritySchedulingAlgorithm(
                   if (oneExecutorPerWorker) {
                     assignedExecutors(pos) = 1
                   } else {
-                    assignedExecutors(pos) = assignedCores(pos) /  minCoresPerExecutor
+                    // The number of executors we can allocate at most on this worker
+                    // It can't be more than available memory
+                    assignedExecutors(pos) = math.min(assignedCores(pos) /  minCoresPerExecutor,
+                      (preemptedMemory(pos) + workers(pos).memoryFree) / memoryPerExecutor)
                   }
                 } else {
                   // If this worker has no enough memory or
@@ -563,6 +569,8 @@ private[master] class PrioritySchedulingAlgorithm(
           }
         }
       }
+      logInfo(s"After preempting other applications, this application can be allocated: " +
+        s"${assignedCores.sum} cores")
       assignedCores
     } else {
       new Array[Int](numForAllWorkers)
