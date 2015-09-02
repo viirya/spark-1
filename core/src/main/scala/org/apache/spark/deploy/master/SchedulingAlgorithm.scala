@@ -538,8 +538,8 @@ private[master] class PrioritySchedulingAlgorithm(
                   keepPreempting) {
                   preemptExistingExecutor(app, executor)
 
-                  coresToAssign -= executor.cores
-                  assignedCores(pos) += executor.cores
+                  assignedCores(pos) += math.min(executor.cores, coresToAssign)
+                  coresToAssign -= math.min(executor.cores, coresToAssign)
 
                   // We also allocate free cores on the worker
                   val coreRemaining = math.min(workers(pos).coresFree - assignedCores(pos),
