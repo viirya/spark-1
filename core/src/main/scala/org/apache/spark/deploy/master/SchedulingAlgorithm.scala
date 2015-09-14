@@ -67,8 +67,9 @@ private[master] trait SchedulingAlgorithm {
     for (i <- 1 to numExecutors) {
       val exec = app.addExecutor(worker, coresToAssign)
       master.launchExecutor(worker, exec)
-      app.state = ApplicationState.RUNNING
     }
+    app.state = ApplicationState.RUNNING
+    app.startTiming
   }
 }
 
@@ -352,6 +353,8 @@ private[master] class PrioritySchedulingAlgorithm(
     nonEmptyPools().map { pool => pool.getApplications().map { app =>
       // The allowed cores setting overwrites app.requestedCores, so we check it here
       if (pool.cores - app.coresGranted > 0) {
+        logInfo(s"Application ${app.desc.name} has not granted enough cores. " +
+          s"It still needs ${pool.cores - app.coresGranted} cores.")
         val coresPerExecutor: Option[Int] = app.desc.coresPerExecutor
         // Filter out workers that don't have enough resources to launch an executor
         val usableWorkers = workers.toArray.filter(_.state == WorkerState.ALIVE)
@@ -565,6 +568,10 @@ private[master] class PrioritySchedulingAlgorithm(
                   preemptExistingExecutor(app, executor)
                 }
               }
+              // Reset application state to waiting
+              app.state = ApplicationState.WAITING
+              // Stop to count for running time
+              app.stopTiming
             }
           }
         }

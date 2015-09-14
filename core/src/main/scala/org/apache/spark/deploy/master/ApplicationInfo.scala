@@ -27,7 +27,7 @@ import org.apache.spark.rpc.RpcEndpointRef
 import org.apache.spark.util.Utils
 
 private[spark] class ApplicationInfo(
-    val startTime: Long,
+    var startTime: Long,
     val id: String,
     val desc: ApplicationDescription,
     val submitDate: Date,
@@ -60,6 +60,7 @@ private[spark] class ApplicationInfo(
     state = ApplicationState.WAITING
     executors = new mutable.HashMap[Int, ExecutorDesc]
     coresGranted = 0
+    startTime = -1L
     endTime = -1L
     appSource = new ApplicationSource(this)
     nextExecutorId = 0
@@ -127,12 +128,32 @@ private[spark] class ApplicationInfo(
    */
   private[deploy] def getExecutorLimit: Int = executorLimit
 
-  def duration: Long = {
-    if (endTime != -1) {
-      endTime - startTime
-    } else {
-      System.currentTimeMillis() - startTime
+  var accuDuration: Long = 0
+
+  def startTiming: Unit = {
+    if (startTime != -1) {
+      accuDuration += System.currentTimeMillis() - startTime
     }
+    startTime = System.currentTimeMillis()
   }
 
+  def stopTiming: Unit = {
+    if (startTime != -1) {
+      accuDuration += System.currentTimeMillis() - startTime
+    }
+    startTime = -1
+  }
+
+  // Calculate and record the duration until now
+  def duration: Long = {
+    if (startTime != -1) {
+      if (endTime != -1) {
+        (endTime - startTime) + accuDuration
+      } else {
+        System.currentTimeMillis() - startTime + accuDuration
+      }
+    } else {
+      accuDuration
+    }
+  }
 }
