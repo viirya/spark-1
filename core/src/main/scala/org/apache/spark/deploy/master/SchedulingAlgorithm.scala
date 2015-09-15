@@ -384,6 +384,8 @@ private[master] class PrioritySchedulingAlgorithm(
 
       pool = poolQueue.toArray()(queueSize() - 1).asInstanceOf[Pool]
       pool.addApplication(app)
+      // Re-assign application to the pool
+      app.desc.assignedPool = Some(pool.poolName)
       logInfo(s"Application ${app.desc.name} has assigned to the pool ${pool.poolName}")
     }
   }
