@@ -21,6 +21,7 @@ import java.io.{ByteArrayInputStream, FileInputStream, InputStream}
 import java.nio.charset.StandardCharsets
 import java.util.{Comparator, Date, PriorityQueue}
 
+import scala.collection.mutable
 import scala.xml.XML
 
 import org.apache.spark.{Logging, SparkException}
@@ -220,10 +221,17 @@ private[master] class PrioritySchedulingAlgorithm(
     }
   }
 
-  class Pool(val poolName: String, val priority: Int, val cores: Int, val min_cores: Int) {
+  class Pool(var poolName: String, var priority: Int, var cores: Int, var min_cores: Int) {
     private val appQueue: PriorityQueue[ApplicationSubmission] =
       new PriorityQueue[ApplicationSubmission](initAppNumberPerPool, applicationComparator)
 
+    private var deprecated: Boolean = false
+
+    def markedDeprecated: Unit = {
+      deprecated = true
+    }
+
+    def isDeprecated: Boolean = deprecated
 
     def addApplication(app: ApplicationSubmission): Unit = {
       appQueue.add(app)
@@ -300,6 +308,53 @@ private[master] class PrioritySchedulingAlgorithm(
     }
   }
 
+  private def findPool(poolName: String): Option[Pool] = {
+    val pool = poolQueue.toArray().find { p =>
+      p.asInstanceOf[Pool].poolName == poolName
+    }.getOrElse(null).asInstanceOf[Pool]
+    if (pool == null) {
+      logInfo(s"Can't find the pool: $poolName")
+      None
+    } else {
+      logInfo(s"Found the pool: $poolName")
+      Some(pool)
+    }
+  }
+
+  private def removePool(poolName: String): Boolean = {
+    val poolToRemove = findPool(poolName)
+    if (poolToRemove.isDefined) {
+      if (poolToRemove.get.size == 0) {
+        logInfo(s"Trying to remove the pool: $poolName")
+        val ret = poolQueue.remove(poolToRemove.get)
+        if (ret) {
+          logInfo(s"Successfully remove the pool: $poolName")
+        } else {
+          logInfo(s"Can't remove the pool: $poolName")
+        }
+        ret
+      } else {
+        logInfo(s"Can't remove the pool: $poolName, because ${poolToRemove.get.size} " +
+          "applications are queued in it")
+        logInfo(s"Marked it as deprecated and applications can't be queued into further")
+        poolToRemove.get.markedDeprecated
+        true
+      }
+    } else {
+      false
+    }
+  }
+
+  private def deprecatePools(poolNames: mutable.ArrayBuffer[String]): Unit = {
+    val poolsToDeprecated: mutable.ArrayBuffer[String] = mutable.ArrayBuffer[String]()
+    poolQueue.toArray().map { p =>
+      if (!poolNames.contains(p.asInstanceOf[Pool].poolName)) {
+        poolsToDeprecated += p.asInstanceOf[Pool].poolName
+      }
+    }
+    poolsToDeprecated.foreach(p => removePool(p))
+  }
+
   override def registerApplication(app: ApplicationInfo): Unit = {
     var pool: Pool = null
     if (app.desc.assignedPool == None) {
@@ -320,7 +375,17 @@ private[master] class PrioritySchedulingAlgorithm(
     if (pool == null) {
       pool = poolQueue.toArray()(queueSize() - 1).asInstanceOf[Pool]
     }
-    pool.addApplication(app)
+    if (!pool.isDeprecated) {
+      pool.addApplication(app)
+      logInfo(s"Application ${app.desc.name} has assigned to the pool ${pool.poolName}")
+    } else {
+      logInfo(s"The pool ${pool.poolName} has been deprecated")
+      logInfo(s"Assign application ${app.desc.name} to the lowest-prioroty pool")
+
+      pool = poolQueue.toArray()(queueSize() - 1).asInstanceOf[Pool]
+      pool.addApplication(app)
+      logInfo(s"Application ${app.desc.name} has assigned to the pool ${pool.poolName}")
+    }
   }
 
   override def removeApplication(app: ApplicationInfo): Unit = {
@@ -350,6 +415,9 @@ private[master] class PrioritySchedulingAlgorithm(
   def startExecutorsOnWorkers(
       waitingApps: Array[ApplicationInfo],
       workers: Array[WorkerInfo]): Unit = {
+    // Refresh pool definitions
+    buildPools()
+
     nonEmptyPools().map { pool => pool.getApplications().map { app =>
       // The allowed cores setting overwrites app.requestedCores, so we check it here
       if (pool.cores - app.coresGranted > 0) {
@@ -698,6 +766,7 @@ private[master] class PrioritySchedulingAlgorithm(
   }
 
   def buildFairSchedulerPool(is: InputStream): Unit = {
+    val importedPools = mutable.ArrayBuffer[String]()
     val xml = XML.load(is)
     for (poolNode <- (xml \\ POOLS_PROPERTY)) {
 
@@ -722,9 +791,19 @@ private[master] class PrioritySchedulingAlgorithm(
       }
 
       val pool = new Pool(poolName, priority, cores, min_cores)
-      poolQueue.add(pool)
+      val existingPool = findPool(poolName)
+      if (existingPool.isDefined) {
+        existingPool.get.poolName = poolName
+        existingPool.get.priority = priority
+        existingPool.get.cores = cores
+        existingPool.get.min_cores = min_cores
+      } else {
+        poolQueue.add(pool)
+      }
+      importedPools += poolName
       logInfo("Created pool %s, priority: %d, cores: %d, min_cores: %d".format(
         poolName, priority, cores, min_cores))
     }
+    deprecatePools(importedPools)
   }
 }
