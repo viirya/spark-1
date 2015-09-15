@@ -364,6 +364,9 @@ private[master] class PrioritySchedulingAlgorithm(
   }
 
   override def registerApplication(app: ApplicationInfo): Unit = {
+    // Refresh pool definitions
+    buildPools()
+
     var pool: Pool = null
     if (app.desc.assignedPool == None) {
       logInfo(s"Application ${app.desc.name} hasn't been assigned to any pool")
