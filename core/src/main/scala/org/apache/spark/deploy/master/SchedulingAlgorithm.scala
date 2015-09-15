@@ -19,7 +19,7 @@ package org.apache.spark.deploy.master
 
 import java.io.{ByteArrayInputStream, FileInputStream, InputStream}
 import java.nio.charset.StandardCharsets
-import java.util.{Comparator, Date, PriorityQueue}
+import java.util.{Arrays, Comparator, Date, PriorityQueue}
 
 import scala.collection.mutable
 import scala.xml.XML
@@ -277,6 +277,12 @@ private[master] class PrioritySchedulingAlgorithm(
 
   def queueSize(): Int = poolQueue.size()
 
+  def poolsToArray(): Array[Pool] = {
+    val pools = poolQueue.toArray().map(_.asInstanceOf[Pool])
+    Arrays.sort(pools, poolComparator)
+    pools
+  }
+
   def firstPool(): Option[Pool] = {
     if (queueSize() == 0) {
       None
@@ -290,26 +296,28 @@ private[master] class PrioritySchedulingAlgorithm(
       None
     } else {
       queueIndex %= queueSize()
-      val nextOne = poolQueue.toArray()(queueIndex)
+      val nextOne = poolsToArray()(queueIndex)
       queueIndex += 1
       Some(nextOne.asInstanceOf[Pool])
     }
   }
 
   def nonEmptyPools(): Seq[Pool] = {
-    poolQueue.toArray().filter(_.asInstanceOf[Pool].size > 0).map(_.asInstanceOf[Pool])
+    val pools = poolsToArray()
+    pools.filter(_.asInstanceOf[Pool].size > 0).map(_.asInstanceOf[Pool])
   }
 
   def nextNonEmptyPool(): Option[Pool] = {
     if (queueSize() == 0) {
       None
     } else {
-      poolQueue.toArray().find(_.asInstanceOf[Pool].size > 0).map(_.asInstanceOf[Pool])
+      val pools = poolsToArray()
+      pools.find(_.asInstanceOf[Pool].size > 0).map(_.asInstanceOf[Pool])
     }
   }
 
   private def findPool(poolName: String): Option[Pool] = {
-    val pool = poolQueue.toArray().find { p =>
+    val pool = poolsToArray().find { p =>
       p.asInstanceOf[Pool].poolName == poolName
     }.getOrElse(null).asInstanceOf[Pool]
     if (pool == null) {
@@ -347,7 +355,7 @@ private[master] class PrioritySchedulingAlgorithm(
 
   private def deprecatePools(poolNames: mutable.ArrayBuffer[String]): Unit = {
     val poolsToDeprecated: mutable.ArrayBuffer[String] = mutable.ArrayBuffer[String]()
-    poolQueue.toArray().map { p =>
+    poolsToArray().map { p =>
       if (!poolNames.contains(p.asInstanceOf[Pool].poolName)) {
         poolsToDeprecated += p.asInstanceOf[Pool].poolName
       }
@@ -361,7 +369,7 @@ private[master] class PrioritySchedulingAlgorithm(
       logInfo(s"Application ${app.desc.name} hasn't been assigned to any pool")
       logInfo(s"Assign it to lowest-prioroty pool")
     } else {
-      pool = poolQueue.toArray().find { p =>
+      pool = poolsToArray().find { p =>
         p.asInstanceOf[Pool].poolName == app.desc.assignedPool.get
       }.getOrElse {
           // If the application is assigned to an unknown pool, we directly assign it to
@@ -373,7 +381,7 @@ private[master] class PrioritySchedulingAlgorithm(
       }.asInstanceOf[Pool]
     }
     if (pool == null) {
-      pool = poolQueue.toArray()(queueSize() - 1).asInstanceOf[Pool]
+      pool = poolsToArray()(queueSize() - 1).asInstanceOf[Pool]
     }
     if (!pool.isDeprecated) {
       pool.addApplication(app)
@@ -382,7 +390,7 @@ private[master] class PrioritySchedulingAlgorithm(
       logInfo(s"The pool ${pool.poolName} has been deprecated")
       logInfo(s"Assign application ${app.desc.name} to the lowest-prioroty pool")
 
-      pool = poolQueue.toArray()(queueSize() - 1).asInstanceOf[Pool]
+      pool = poolsToArray()(queueSize() - 1).asInstanceOf[Pool]
       pool.addApplication(app)
       // Re-assign application to the pool
       app.desc.assignedPool = Some(pool.poolName)
@@ -396,7 +404,7 @@ private[master] class PrioritySchedulingAlgorithm(
       logInfo(s"Application ${app.desc.name} hasn't been assigned to any pool")
       logInfo(s"Looking it up in lowest-prioroty pool")
     } else {
-      pool = poolQueue.toArray().find { p =>
+      pool = poolsToArray().find { p =>
         p.asInstanceOf[Pool].poolName == app.desc.assignedPool.get
       }.getOrElse {
           logInfo(s"Application ${app.desc.name} has been assigned to " +
@@ -406,7 +414,7 @@ private[master] class PrioritySchedulingAlgorithm(
       }.asInstanceOf[Pool]
     }
     if (pool == null) {
-      pool = poolQueue.toArray()(queueSize() - 1).asInstanceOf[Pool]
+      pool = poolsToArray()(queueSize() - 1).asInstanceOf[Pool]
     }
     if (!pool.removeApplication(app)) {
       throw new SparkException(s"Can't remove application ${app.desc.name} " +
