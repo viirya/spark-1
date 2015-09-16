@@ -24,6 +24,7 @@ import java.util.Date
 import scala.concurrent.duration._
 import scala.io.Source
 import scala.language.postfixOps
+import scala.xml.XML
 
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
@@ -248,6 +249,8 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
   test("building pool and queue") {
     val master = makeMasterWithPriorityScheduler()
     val algo = makePrioritySchedulingAlgorithm(master)
+
+    assert(algo.availableWorkers == 10)
 
     assert(algo.queueSize() == 2)
 
@@ -492,6 +495,9 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
 
     val exampleXML = """<?xml version="1.0"?>
                         <allocations>
+                          <config name="workers">
+                            <number>10</number>
+                          </config>
                           <pool name="production">
                             <priority>10</priority>
                             <cores>5</cores>
@@ -505,8 +511,9 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
                         </allocations>"""
 
     val stream = new ByteArrayInputStream(exampleXML.getBytes(StandardCharsets.UTF_8))
-
-    algo.buildFairSchedulerPool(stream)
+    val xml = XML.load(stream)
+    algo.buildFairSchedulerPool(xml)
+    algo.setClusterConfig(xml)
     algo
   }
 

@@ -22,7 +22,7 @@ import java.nio.charset.StandardCharsets
 import java.util.{Arrays, Comparator, Date, PriorityQueue}
 
 import scala.collection.mutable
-import scala.xml.XML
+import scala.xml.{Elem, XML}
 
 import org.apache.spark.{Logging, SparkException}
 
@@ -195,7 +195,7 @@ case class ApplicationSubmission(val appInfo: ApplicationInfo, val submittedTime
 private[master] class PrioritySchedulingAlgorithm(
     val master: Master,
     val schedulingSetting: SchedulingSetting) extends SchedulingAlgorithm with Logging {
-
+  // XML tags and attributes for pool definition
   val DEFAULT_PRIORITY = 1
   val DEFAULT_CORES = 1
   val DEFAULT_MINCORES = 0
@@ -204,6 +204,16 @@ private[master] class PrioritySchedulingAlgorithm(
   val PRIORITY_PROPERTY = "priority"
   val CORES_PROPERTY = "cores"
   val MINCORES_PROPERTY = "min_cores"
+
+  // XML tags and attributes for cluster configuration
+  val CONFIG_PROPERTY = "config"
+  val CONFIG_NAME_PROPERTY = "@name"
+  val WORKERS_PROPERTY = "workers"
+  val NUMBER_PROPERTY = "number"
+
+  // How many workers we can allocate executors
+  // By default, it is negative, we will allocate all workers
+  var availableWorkers = -1
 
   val initAppNumberPerPool = 100
   val initPoolNumber = 5
@@ -426,6 +436,17 @@ private[master] class PrioritySchedulingAlgorithm(
   }
 
   def startExecutorsOnWorkers(
+      waitingApps: Array[ApplicationInfo],
+      workers: Array[WorkerInfo]): Unit = {
+    if (availableWorkers >= 0) {
+      val workersToAllocate = workers.slice(0, availableWorkers)
+      internalStartExecutorsOnWorkers(waitingApps, workersToAllocate)
+    } else {
+      internalStartExecutorsOnWorkers(waitingApps, workers)
+    }
+  }
+
+  private def internalStartExecutorsOnWorkers(
       waitingApps: Array[ApplicationInfo],
       workers: Array[WorkerInfo]): Unit = {
     // Refresh pool definitions
@@ -746,6 +767,9 @@ private[master] class PrioritySchedulingAlgorithm(
   def loadDefault(): InputStream = {
     val exampleXML = """<?xml version="1.0"?>
                         <allocations>
+                          <config name="workers">
+                            <number>10</number>
+                          </config>
                           <pool name="production">
                             <priority>10</priority>
                             <cores>5</cores>
@@ -771,16 +795,36 @@ private[master] class PrioritySchedulingAlgorithm(
           loadDefault()
         }
       }
-      is.foreach { i => buildFairSchedulerPool(i) }
+      is.foreach { i =>
+        val xml = XML.load(i)
+        buildFairSchedulerPool(xml)
+        setClusterConfig(xml)
+      }
     } finally {
       is.foreach(_.close())
     }
     this
   }
 
-  def buildFairSchedulerPool(is: InputStream): Unit = {
+  def setClusterConfig(xml: Elem): Unit = {
+    for (configNode <- (xml \\ CONFIG_PROPERTY)) {
+      val configName = (configNode \ CONFIG_NAME_PROPERTY).text
+
+      configName match {
+        case WORKERS_PROPERTY =>
+          val xmlNumber = (configNode \ NUMBER_PROPERTY).text
+          if (xmlNumber != "") {
+            availableWorkers = xmlNumber.toInt
+          }
+          logInfo(s"workers configuration: $availableWorkers")
+        case _ =>
+          logInfo(s"Unknown configuration: $configName")
+      }
+    }
+  }
+
+  def buildFairSchedulerPool(xml: Elem): Unit = {
     val importedPools = mutable.ArrayBuffer[String]()
-    val xml = XML.load(is)
     for (poolNode <- (xml \\ POOLS_PROPERTY)) {
 
       val poolName = (poolNode \ POOL_NAME_PROPERTY).text
