@@ -438,6 +438,9 @@ private[master] class PrioritySchedulingAlgorithm(
   def startExecutorsOnWorkers(
       waitingApps: Array[ApplicationInfo],
       workers: Array[WorkerInfo]): Unit = {
+    // Refresh pool definitions
+    buildPools()
+
     if (availableWorkers >= 0) {
       val workersToAllocate = workers.slice(0, availableWorkers)
       internalStartExecutorsOnWorkers(waitingApps, workersToAllocate)
@@ -449,9 +452,6 @@ private[master] class PrioritySchedulingAlgorithm(
   private def internalStartExecutorsOnWorkers(
       waitingApps: Array[ApplicationInfo],
       workers: Array[WorkerInfo]): Unit = {
-    // Refresh pool definitions
-    buildPools()
-
     nonEmptyPools().map { pool => pool.getApplications().map { app =>
       // The allowed cores setting overwrites app.requestedCores, so we check it here
       if (pool.cores - app.coresGranted > 0) {
