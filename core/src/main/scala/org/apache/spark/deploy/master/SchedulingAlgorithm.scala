@@ -496,6 +496,9 @@ private[master] class PrioritySchedulingAlgorithm(
         false
       }
     }
+    if (i == workers.size) {
+      i = -1
+    }
     i
   }
 
@@ -511,7 +514,9 @@ private[master] class PrioritySchedulingAlgorithm(
     for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
       val workerInfo = usableWorkers(pos)
       val i = getWorkerIndex(workerInfo, workers)
-      assignedCoresForAllWorkers(i) = assignedCores(pos)
+      if (i >= 0) {
+        assignedCoresForAllWorkers(i) = assignedCores(pos)
+      }
     }
 
     for (pos <- 0 until assignedCoresForAllWorkers.length) {
@@ -555,8 +560,10 @@ private[master] class PrioritySchedulingAlgorithm(
             val pos = getWorkerIndex(workerInfo, workers)
 
             // Record how many cores and memory can get if the executor is preempted
-            preemptedCores(pos) += executor.cores
-            preemptedMemory(pos) += memoryPerExecutorMBForPreempted
+            if (pos >= 0) {
+              preemptedCores(pos) += executor.cores
+              preemptedMemory(pos) += memoryPerExecutorMBForPreempted
+            }
           }
         }
       }
@@ -625,7 +632,7 @@ private[master] class PrioritySchedulingAlgorithm(
               val keepPreempting = coresToAssign >= minCoresPerExecutor
 
               // If we can get enough memory on this worker
-              if (preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor &&
+              if (pos >= 0 && preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor &&
                 keepPreempting) {
                 havePreempted = true
               }
@@ -639,7 +646,8 @@ private[master] class PrioritySchedulingAlgorithm(
                 val keepPreempting = coresToAssign >= minCoresPerExecutor
 
                 // If we can get enough memory on this worker
-                if (preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor &&
+                if (pos >= 0 &&
+                  preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor &&
                   keepPreempting) {
                   preemptExistingExecutor(app, executor)
 
