@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets
 import java.util.{Arrays, Comparator, Date, PriorityQueue}
 
 import scala.collection.mutable
+import scala.io.Source
 import scala.xml.{Elem, XML}
 
 import org.apache.spark.{Logging, SparkException}
@@ -445,7 +446,9 @@ private[master] class PrioritySchedulingAlgorithm(
       val workersToAllocate = workers.slice(0, availableWorkers)
       internalStartExecutorsOnWorkers(waitingApps, workersToAllocate)
     } else {
-      internalStartExecutorsOnWorkers(waitingApps, workers)
+      val disallowedWorkers: Set[String] = loadDisallowedWorkers()
+      val workersToAllocate = workers.filterNot(w => disallowedWorkers.contains(w.host))
+      internalStartExecutorsOnWorkers(waitingApps, workersToAllocate)
     }
   }
 
@@ -809,6 +812,28 @@ private[master] class PrioritySchedulingAlgorithm(
                           </pool>
                         </allocations>"""
     new ByteArrayInputStream(exampleXML.getBytes(StandardCharsets.UTF_8))
+  }
+
+  def loadDisallowedWorkers(): Set[String] = {
+    var is: Option[InputStream] = None
+    val workers: mutable.ArrayBuffer[String] = mutable.ArrayBuffer[String]()
+    try {
+      is = Option {
+        schedulingSetting.disabledWorkerFile.map { f =>
+          new FileInputStream(f)
+        }.getOrElse {
+          logInfo("No disabled worker file is specified for priority scheduling")
+          null
+        }
+      }
+      is.foreach { i =>
+        val buffered = Source.fromInputStream(i).getLines
+        buffered.copyToBuffer(workers)
+      }
+    } finally {
+      is.foreach(_.close())
+    }
+    workers.toSet
   }
 
   def buildPools(): PrioritySchedulingAlgorithm = {

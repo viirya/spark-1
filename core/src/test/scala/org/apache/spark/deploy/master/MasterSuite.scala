@@ -469,7 +469,7 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
   private def makeMasterWithPriorityScheduler(conf: SparkConf = new SparkConf): Master = {
     val securityMgr = new SecurityManager(conf)
     val rpcEnv = RpcEnv.create(Master.SYSTEM_NAME, "localhost", 0, conf, securityMgr)
-    val setting: SchedulingSetting = SchedulingSetting(SchedulingMode.PRIORITY, None)
+    val setting: SchedulingSetting = SchedulingSetting(SchedulingMode.PRIORITY, None, None)
     val master = new Master(rpcEnv, rpcEnv.address, 0, securityMgr, conf, setting)
     master
   }

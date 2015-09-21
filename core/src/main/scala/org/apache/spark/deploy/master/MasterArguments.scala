@@ -33,6 +33,7 @@ private[master] class MasterArguments(args: Array[String], conf: SparkConf) {
   // default schedulingMode among Spark applications is FIFO
   var schedulingMode: SchedulingMode = SchedulingMode.withName("FIFO")
   var schedulingConfigFile: Option[String] = None
+  var schedulingDisabledWorkerFile: Option[String] = None
 
   // Check for settings in environment variables
   if (System.getenv("SPARK_MASTER_HOST") != null) {
@@ -66,6 +67,10 @@ private[master] class MasterArguments(args: Array[String], conf: SparkConf) {
 
   if (conf.contains("spark.master.scheduling.config")) {
     schedulingConfigFile = Some(conf.get("spark.master.scheduling.config"))
+  }
+
+  if (conf.contains("spark.master.scheduling.disabledworkers")) {
+    schedulingDisabledWorkerFile = Some(conf.get("spark.master.scheduling.disabledworkers"))
   }
 
   private def parse(args: List[String]): Unit = args match {

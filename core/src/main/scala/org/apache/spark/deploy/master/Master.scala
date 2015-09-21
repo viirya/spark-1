@@ -52,7 +52,7 @@ private[deploy] class Master(
     webUiPort: Int,
     val securityMgr: SecurityManager,
     val conf: SparkConf,
-    val schedulingSetting: SchedulingSetting = SchedulingSetting(SchedulingMode.FIFO, None))
+    val schedulingSetting: SchedulingSetting = SchedulingSetting(SchedulingMode.FIFO, None, None))
   extends ThreadSafeRpcEndpoint with Logging with LeaderElectable {
 
   private val forwardMessageThread =
@@ -945,7 +945,9 @@ private[deploy] object Master extends Logging {
     SignalLogger.register(log)
     val conf = new SparkConf
     val args = new MasterArguments(argStrings, conf)
-    val schedulingSetting = SchedulingSetting(args.schedulingMode, args.schedulingConfigFile)
+    val schedulingSetting =
+      SchedulingSetting(args.schedulingMode, args.schedulingConfigFile,
+        args.schedulingDisabledWorkerFile)
     val (rpcEnv, _, _) = startRpcEnvAndEndpoint(args.host, args.port, args.webUiPort, conf,
       schedulingSetting)
     rpcEnv.awaitTermination()
@@ -962,7 +964,7 @@ private[deploy] object Master extends Logging {
       port: Int,
       webUiPort: Int,
       conf: SparkConf,
-      schedulingSetting: SchedulingSetting = SchedulingSetting(SchedulingMode.FIFO, None)
+      schedulingSetting: SchedulingSetting = SchedulingSetting(SchedulingMode.FIFO, None, None)
       ): (RpcEnv, Int, Option[Int]) = {
     val securityMgr = new SecurityManager(conf)
     val rpcEnv = RpcEnv.create(SYSTEM_NAME, host, port, conf, securityMgr)

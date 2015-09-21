@@ -170,7 +170,7 @@ class StandalonePreemptativeSuite
 
   /** Make a master to which our application will send executor requests. */
   private def makeMaster(): Master = {
-    val setting: SchedulingSetting = SchedulingSetting(SchedulingMode.PRIORITY, None)
+    val setting: SchedulingSetting = SchedulingSetting(SchedulingMode.PRIORITY, None, None)
     val master = new Master(masterRpcEnv, masterRpcEnv.address, 0, securityManager, conf, setting)
     masterRpcEnv.setupEndpoint(Master.ENDPOINT_NAME, master)
     master
