@@ -55,7 +55,7 @@ class StandalonePreemptativeSuite
       RpcEnv.create(Worker.SYSTEM_NAME + i, "localhost", 0, conf, securityManager)
     }
     master = makeMaster()
-    workers = makeWorkers(10, 2048)
+    workers = makeWorkers(12, 2048) // total 24 cores
   }
 
   override def afterAll(): Unit = {
@@ -147,10 +147,11 @@ class StandalonePreemptativeSuite
     assert(app != None)
     // The applications in production pool will acquire 5 cores
     // If there are not enough cores, it will preempt lower priority applications until
-    // it has 1 core at lease (min_cores)
-    assert(app.get.executors.size === 1)
+    // it has the number of cores defined in the pool
+    assert(app.get.executors.size === 2)
     assert(app.get.getExecutorLimit === Int.MaxValue)
     // We count for the lower priority applications that have been preempted
+    // There is one lower priority app getting preempted
     assert(lowPriorityApps.filter(app => app.executors.size == 0).size == 1)
   }
 

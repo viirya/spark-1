@@ -209,7 +209,7 @@ private[master] class PrioritySchedulingAlgorithm(
   val CONFIG_PROPERTY = "config"
   val CONFIG_NAME_PROPERTY = "@name"
   val WORKERS_PROPERTY = "workers"
-  val NUMBER_PROPERTY = "number"
+  val WORKER_NUMBER_PROPERTY = "worker_number"
 
   // How many workers we can allocate executors
   // By default, it is negative, we will allocate all workers
@@ -467,8 +467,10 @@ private[master] class PrioritySchedulingAlgorithm(
           scheduleExecutorsOnWorkersForPool(app, usableWorkers, master.spreadOutApps, pool)
 
         // Whether we need to preempt the executors of other applications
+        // If the already granted cores plus assigned cores in this iteration is less than
+        // the cores of the pool, we will try to preempt other applications to get more cores
         val totalAssignedCores = assignedCores.sum
-        if (totalAssignedCores + app.coresGranted < pool.min_cores) {
+        if (totalAssignedCores + app.coresGranted < pool.cores) {
           val assignedCoresForAllWorkers = tryPreemptExistingExecutors(app, assignedCores, workers,
             usableWorkers, master.spreadOutApps, pool)
           for (pos <- 0 until workers.length if assignedCoresForAllWorkers(pos) > 0) {
@@ -595,7 +597,11 @@ private[master] class PrioritySchedulingAlgorithm(
       .map(workers(_).coresFree).sum
 
     // We can only assign all cores of the cluster at most
-    var coresToAssign = math.min(pool.min_cores - app.coresGranted - oldAssignedCores.sum,
+    var coresToAssign = math.min(pool.cores - app.coresGranted - oldAssignedCores.sum,
+      workers.map(_.cores).sum)
+
+    // Minimal cores we want to assign for the application in this pool
+    var minCoresToAssign = math.min(pool.min_cores - app.coresGranted - oldAssignedCores.sum,
       workers.map(_.cores).sum)
 
     // We only count for the cores on which workers we can get enough executor memory
@@ -606,10 +612,21 @@ private[master] class PrioritySchedulingAlgorithm(
       .map(pos => preemptedCores(pos) + workers(pos).coresFree - assignedCores(pos)).sum
 
     logInfo(s"canAssignedCores: $canAssignedCores, coresToAssign: $coresToAssign, " +
-      s"alreadyAssignedCores: ${oldAssignedCores.sum}, pool.min_cores: ${pool.min_cores}, " +
-      s"app.coresGranted: ${app.coresGranted}, totalCores: ${workers.map(_.cores).sum}")
+      s"alreadyAssignedCores: ${oldAssignedCores.sum}, pool.cores: ${pool.cores}, " +
+      s"pool.min_cores: ${pool.min_cores}, app.coresGranted: ${app.coresGranted}, " +
+      s"totalCores: ${workers.map(_.cores).sum}")
 
-    if (canAssignedCores >= coresToAssign) {
+    // Can we satisfy the core requirement and minimal core requirement
+    val canSatisfyCoreReq = canAssignedCores >= coresToAssign
+    val canSatisfyMinimalCoreReq = canAssignedCores >= minCoresToAssign
+
+    if (canSatisfyCoreReq || canSatisfyMinimalCoreReq) {
+      // If we can only satisfy minimal core requirement, we need to reset the coresToAssign,
+      // as we can only provide `canAssignedCores` cores
+      if (!canSatisfyCoreReq && canSatisfyMinimalCoreReq) {
+        coresToAssign = canAssignedCores
+      }
+
       // Filter out the pools with lower priorities
       nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
         // We need to reverse the applications in pool because we want to preempt
@@ -690,6 +707,8 @@ private[master] class PrioritySchedulingAlgorithm(
         s"${assignedCores.sum} cores")
       assignedCores
     } else {
+      logInfo(s"Can not satisfy the minimal core requirement: ${minCoresToAssign} cores, " +
+        "skip preempting this time")
       new Array[Int](numForAllWorkers)
     }
   }
@@ -776,7 +795,7 @@ private[master] class PrioritySchedulingAlgorithm(
     val exampleXML = """<?xml version="1.0"?>
                         <allocations>
                           <config name="workers">
-                            <number>10</number>
+                            <worker_number>10</worker_number>
                           </config>
                           <pool name="production">
                             <priority>10</priority>
@@ -820,7 +839,7 @@ private[master] class PrioritySchedulingAlgorithm(
 
       configName match {
         case WORKERS_PROPERTY =>
-          val xmlNumber = (configNode \ NUMBER_PROPERTY).text
+          val xmlNumber = (configNode \ WORKER_NUMBER_PROPERTY).text
           if (xmlNumber != "") {
             availableWorkers = xmlNumber.toInt
           }
