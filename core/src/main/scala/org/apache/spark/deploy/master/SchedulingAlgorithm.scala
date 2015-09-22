@@ -197,9 +197,9 @@ private[master] class PrioritySchedulingAlgorithm(
     val master: Master,
     val schedulingSetting: SchedulingSetting) extends SchedulingAlgorithm with Logging {
   // XML tags and attributes for pool definition
-  val DEFAULT_PRIORITY = 1
-  val DEFAULT_CORES = 1
-  val DEFAULT_MINCORES = 0
+  val DEFAULT_PRIORITY: Double = 1.0
+  val DEFAULT_CORES: Int = 1
+  val DEFAULT_MINCORES: Int = 0
   val POOLS_PROPERTY = "pool"
   val POOL_NAME_PROPERTY = "@name"
   val PRIORITY_PROPERTY = "priority"
@@ -228,11 +228,11 @@ private[master] class PrioritySchedulingAlgorithm(
 
   private final val poolComparator: Comparator[Pool] = new Comparator[Pool]() {
     override def compare(left: Pool, right: Pool): Int = {
-      -Ordering[Int].compare(left.priority, right.priority)
+      -Ordering[Double].compare(left.priority, right.priority)
     }
   }
 
-  class Pool(var poolName: String, var priority: Int, var cores: Int, var min_cores: Int) {
+  class Pool(var poolName: String, var priority: Double, var cores: Int, var min_cores: Int) {
     private val appQueue: PriorityQueue[ApplicationSubmission] =
       new PriorityQueue[ApplicationSubmission](initAppNumberPerPool, applicationComparator)
 
@@ -551,7 +551,7 @@ private[master] class PrioritySchedulingAlgorithm(
     val preemptedMemory = new Array[Int](numForAllWorkers)
 
     // Filter out the pools with lower priorities
-    nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
+    nonEmptyPools().filter(_.priority.toInt < pool.priority.toInt).map { lowerPool =>
       // We need to reverse the applications in pool because we want to preempt
       // later submitted applications first
       lowerPool.getApplications().reverse.map { app =>
@@ -644,7 +644,7 @@ private[master] class PrioritySchedulingAlgorithm(
       }
 
       // Filter out the pools with lower priorities
-      nonEmptyPools().filter(_.priority < pool.priority).map { lowerPool =>
+      nonEmptyPools().filter(_.priority.toInt < pool.priority.toInt).map { lowerPool =>
         // We need to reverse the applications in pool because we want to preempt
         // later submitted applications first
         lowerPool.getApplications().reverse.map { app =>
@@ -893,13 +893,13 @@ private[master] class PrioritySchedulingAlgorithm(
     for (poolNode <- (xml \\ POOLS_PROPERTY)) {
 
       val poolName = (poolNode \ POOL_NAME_PROPERTY).text
-      var priority = DEFAULT_PRIORITY
-      var cores = DEFAULT_CORES
-      var min_cores = DEFAULT_MINCORES
+      var priority: Double = DEFAULT_PRIORITY
+      var cores: Int = DEFAULT_CORES
+      var min_cores: Int = DEFAULT_MINCORES
 
       val xmlPriority = (poolNode \ PRIORITY_PROPERTY).text
       if (xmlPriority != "") {
-        priority = xmlPriority.toInt
+        priority = xmlPriority.toDouble
       }
 
       val xmlCores = (poolNode \ CORES_PROPERTY).text
@@ -923,7 +923,7 @@ private[master] class PrioritySchedulingAlgorithm(
         poolQueue.add(pool)
       }
       importedPools += poolName
-      logInfo("Created pool %s, priority: %d, cores: %d, min_cores: %d".format(
+      logInfo("Created pool %s, priority: %f, cores: %d, min_cores: %d".format(
         poolName, priority, cores, min_cores))
     }
     deprecatePools(importedPools)
