@@ -604,6 +604,9 @@ private[master] class PrioritySchedulingAlgorithm(
       workers.map(_.cores).sum)
 
     // Minimal cores we want to assign for the application in this pool
+    // Becasue min_cores could be less than coresGranted,
+    // `minCoresToAssign` could be negative number, if so, we will simply reture already
+    // assigned cores because it already satisfies minimal core requirement
     var minCoresToAssign = math.min(pool.min_cores - app.coresGranted - oldAssignedCores.sum,
       workers.map(_.cores).sum)
 
@@ -622,6 +625,16 @@ private[master] class PrioritySchedulingAlgorithm(
     // Can we satisfy the core requirement and minimal core requirement
     val canSatisfyCoreReq = canAssignedCores >= coresToAssign
     val canSatisfyMinimalCoreReq = canAssignedCores >= minCoresToAssign
+
+    // If we can't allocate any cores by preempting other applications,
+    // but already assigned cores are more than `min_cores` (i.e. `minCoresToAssign` is negative),
+    // we just simply return already assigned cores
+    if (canAssignedCores == 0 && canSatisfyMinimalCoreReq) {
+      logInfo(s"Can't allocate more cores by preempting other applications, " +
+        s"but already assigned cores: ${oldAssignedCores.sum} satisfy " +
+        "minimal core requirement, so simply return already assigned cores")
+      return assignedCores
+    }
 
     if (canSatisfyCoreReq || canSatisfyMinimalCoreReq) {
       // If we can only satisfy minimal core requirement, we need to reset the coresToAssign,
