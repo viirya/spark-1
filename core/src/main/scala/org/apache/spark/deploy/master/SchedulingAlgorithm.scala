@@ -672,6 +672,8 @@ private[master] class PrioritySchedulingAlgorithm(
             }
 
             if (havePreempted) {
+              val appOriginalExecutorNum = app.executors.values.size
+              var preemptedExecutorNum = 0
               app.executors.values.foreach { executor =>
                 val workerInfo = executor.worker
                 val pos = getWorkerIndex(workerInfo, workers)
@@ -683,6 +685,7 @@ private[master] class PrioritySchedulingAlgorithm(
                   preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor &&
                   keepPreempting) {
                   preemptExistingExecutor(app, executor)
+                  preemptedExecutorNum += 1
 
                   assignedCores(pos) += math.min(executor.cores, coresToAssign)
                   coresToAssign -= math.min(executor.cores, coresToAssign)
@@ -708,13 +711,18 @@ private[master] class PrioritySchedulingAlgorithm(
                   // we already have enough cores for our application,
                   // we still preempt the remaining executors of this application.
                   // But we don't allocate these cores to our application
-                  preemptExistingExecutor(app, executor)
+                  // TODO: We temporarily do preempt these executors and see if it works
+                  // preemptExistingExecutor(app, executor)
+                }
+
+                if (preemptedExecutorNum > 0 &&
+                  appOriginalExecutorNum == preemptedExecutorNum) {
+                  // Reset application state to waiting
+                  app.state = ApplicationState.WAITING
+                  // Stop to count for running time
+                  app.stopTiming
                 }
               }
-              // Reset application state to waiting
-              app.state = ApplicationState.WAITING
-              // Stop to count for running time
-              app.stopTiming
             }
           }
         }
