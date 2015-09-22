@@ -723,7 +723,7 @@ private[master] class PrioritySchedulingAlgorithm(
         s"${assignedCores.sum} cores")
       assignedCores
     } else {
-      logInfo(s"Can not satisfy the minimal core requirement: ${minCoresToAssign} cores, " +
+      logInfo(s"Can not satisfy the minimal core requirement: ${pool.min_cores} cores, " +
         "skip preempting this time")
       new Array[Int](numForAllWorkers)
     }
