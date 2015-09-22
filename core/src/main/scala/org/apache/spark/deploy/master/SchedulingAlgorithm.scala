@@ -711,8 +711,7 @@ private[master] class PrioritySchedulingAlgorithm(
                   // we already have enough cores for our application,
                   // we still preempt the remaining executors of this application.
                   // But we don't allocate these cores to our application
-                  // TODO: We temporarily do preempt these executors and see if it works
-                  // preemptExistingExecutor(app, executor)
+                  preemptExistingExecutor(app, executor)
                 }
 
                 if (preemptedExecutorNum > 0 &&
