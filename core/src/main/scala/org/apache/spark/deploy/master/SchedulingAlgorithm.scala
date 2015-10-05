@@ -200,11 +200,13 @@ private[master] class PrioritySchedulingAlgorithm(
   val DEFAULT_PRIORITY: Double = 1.0
   val DEFAULT_CORES: Int = 1
   val DEFAULT_MINCORES: Int = 0
+  val DEFAULT_MEMORY: Int = 100
   val POOLS_PROPERTY = "pool"
   val POOL_NAME_PROPERTY = "@name"
   val PRIORITY_PROPERTY = "priority"
   val CORES_PROPERTY = "cores"
   val MINCORES_PROPERTY = "min_cores"
+  val MEMORY_PROPERTY = "memory"
 
   // XML tags and attributes for cluster configuration
   val CONFIG_PROPERTY = "config"
@@ -232,7 +234,12 @@ private[master] class PrioritySchedulingAlgorithm(
     }
   }
 
-  class Pool(var poolName: String, var priority: Double, var cores: Int, var min_cores: Int) {
+  class Pool(
+      var poolName: String,
+      var priority: Double,
+      var cores: Int,
+      var min_cores: Int,
+      var memory: Int) {
     private val appQueue: PriorityQueue[ApplicationSubmission] =
       new PriorityQueue[ApplicationSubmission](initAppNumberPerPool, applicationComparator)
 
@@ -274,6 +281,15 @@ private[master] class PrioritySchedulingAlgorithm(
     def getApplications(): Seq[ApplicationInfo] = {
       appQueue.toArray().map(_.asInstanceOf[ApplicationSubmission].appInfo)
         .map(_.asInstanceOf[ApplicationInfo])
+    }
+
+    def getApplicationExecutorMemory(app: ApplicationInfo): Int = {
+      // If this pool is defined with executor memory
+      if (memory > 0) {
+        memory
+      } else {
+        app.desc.memoryPerExecutorMB
+      }
     }
 
     def size: Int = appQueue.size()
@@ -463,7 +479,7 @@ private[master] class PrioritySchedulingAlgorithm(
         val coresPerExecutor: Option[Int] = app.desc.coresPerExecutor
         // Filter out workers that don't have enough resources to launch an executor
         val usableWorkers = workers.toArray.filter(_.state == WorkerState.ALIVE)
-          .filter(worker => worker.memoryFree >= app.desc.memoryPerExecutorMB &&
+          .filter(worker => worker.memoryFree >= pool.getApplicationExecutorMemory(app) &&
             worker.coresFree >= coresPerExecutor.getOrElse(1))
           .sortBy(_.coresFree).reverse
         val assignedCores =
@@ -558,7 +574,7 @@ private[master] class PrioritySchedulingAlgorithm(
         // If this application has existing executors
         if (app.executors.values.size > 0) {
           // Read necessary information of preempted application
-          val memoryPerExecutorMBForPreempted = app.desc.memoryPerExecutorMB
+          val memoryPerExecutorMBForPreempted = lowerPool.getApplicationExecutorMemory(app)
 
           app.executors.values.foreach { executor =>
             val workerInfo = executor.worker
@@ -586,7 +602,7 @@ private[master] class PrioritySchedulingAlgorithm(
     val coresPerExecutor = app.desc.coresPerExecutor
     val oneExecutorPerWorker = coresPerExecutor.isEmpty
     val minCoresPerExecutor = coresPerExecutor.getOrElse(1)
-    val memoryPerExecutor = app.desc.memoryPerExecutorMB
+    val memoryPerExecutor = pool.getApplicationExecutorMemory(app)
     // We need to scan all workers
     val numForAllWorkers = workers.length
     val (assignedCores, assignedExecutors) = mapAlreadyAssignedCoresToNewList(oldAssignedCores,
@@ -651,7 +667,7 @@ private[master] class PrioritySchedulingAlgorithm(
           // If this application has existing executors
           if (app.executors.values.size > 0) {
             // Read necessary information of preempted application
-            val memoryPerExecutorMBForPreempted = app.desc.memoryPerExecutorMB
+            val memoryPerExecutorMBForPreempted = lowerPool.getApplicationExecutorMemory(app)
             val coresPerExecutorForPreempted = app.desc.coresPerExecutor
             val minCoresPerExecutorForPreempted = coresPerExecutorForPreempted.getOrElse(1)
 
@@ -711,6 +727,7 @@ private[master] class PrioritySchedulingAlgorithm(
                   // we already have enough cores for our application,
                   // we still preempt the remaining executors of this application.
                   // But we don't allocate these cores to our application
+                  preemptedExecutorNum += 1
                   preemptExistingExecutor(app, executor)
                 }
 
@@ -755,7 +772,7 @@ private[master] class PrioritySchedulingAlgorithm(
     val coresPerExecutor = app.desc.coresPerExecutor
     val minCoresPerExecutor = coresPerExecutor.getOrElse(1)
     val oneExecutorPerWorker = coresPerExecutor.isEmpty
-    val memoryPerExecutor = app.desc.memoryPerExecutorMB
+    val memoryPerExecutor = currentPool.getApplicationExecutorMemory(app)
     val numUsable = usableWorkers.length
     val assignedCores = new Array[Int](numUsable) // Number of cores to give to each worker
     val assignedExecutors = new Array[Int](numUsable) // Number of new executors on each worker
@@ -824,11 +841,13 @@ private[master] class PrioritySchedulingAlgorithm(
                             <priority>10</priority>
                             <cores>5</cores>
                             <min_cores>1</min_cores>
+                            <memory>100</memory>
                           </pool>
                           <pool name="test">
                             <priority>2</priority>
                             <cores>1</cores>
                             <min_cores>0</min_cores>
+                            <memory>100</memory>
                           </pool>
                         </allocations>"""
     new ByteArrayInputStream(exampleXML.getBytes(StandardCharsets.UTF_8))
@@ -897,42 +916,59 @@ private[master] class PrioritySchedulingAlgorithm(
 
   def buildFairSchedulerPool(xml: Elem): Unit = {
     val importedPools = mutable.ArrayBuffer[String]()
-    for (poolNode <- (xml \\ POOLS_PROPERTY)) {
+    try {
+      for (poolNode <- (xml \\ POOLS_PROPERTY)) {
 
-      val poolName = (poolNode \ POOL_NAME_PROPERTY).text
-      var priority: Double = DEFAULT_PRIORITY
-      var cores: Int = DEFAULT_CORES
-      var min_cores: Int = DEFAULT_MINCORES
+        val poolName = (poolNode \ POOL_NAME_PROPERTY).text
+        var priority: Double = DEFAULT_PRIORITY
+        var cores: Int = DEFAULT_CORES
+        var min_cores: Int = DEFAULT_MINCORES
+        var memory: Int = DEFAULT_MEMORY
 
-      val xmlPriority = (poolNode \ PRIORITY_PROPERTY).text
-      if (xmlPriority != "") {
-        priority = xmlPriority.toDouble
+        try {
+          val xmlPriority = (poolNode \ PRIORITY_PROPERTY).text
+          if (xmlPriority != "") {
+            priority = xmlPriority.toDouble
+          }
+
+          val xmlCores = (poolNode \ CORES_PROPERTY).text
+          if (xmlCores != "") {
+            cores = xmlCores.toInt
+          }
+
+          val xmlMinCores = (poolNode \ MINCORES_PROPERTY).text
+          if (xmlMinCores != "") {
+            min_cores = xmlMinCores.toInt
+          }
+
+          val xmlMemory = (poolNode \ MEMORY_PROPERTY).text
+          if (xmlMemory != "") {
+            memory = xmlMemory.toInt
+          }
+        } catch {
+          case e: Exception =>
+            logError(s"Errors in parsing XML, using default values for pool $poolName")
+        }
+
+        val pool = new Pool(poolName, priority, cores, min_cores, memory)
+        val existingPool = findPool(poolName)
+        if (existingPool.isDefined) {
+          existingPool.get.poolName = poolName
+          existingPool.get.priority = priority
+          existingPool.get.cores = cores
+          existingPool.get.min_cores = min_cores
+          existingPool.get.memory = memory
+        } else {
+          poolQueue.add(pool)
+        }
+        importedPools += poolName
+        logInfo("Created pool %s, priority: %f, cores: %d, min_cores: %d, memory: %d".format(
+          poolName, priority, cores, min_cores, memory))
       }
-
-      val xmlCores = (poolNode \ CORES_PROPERTY).text
-      if (xmlCores != "") {
-        cores = xmlCores.toInt
-      }
-
-      val xmlMinCores = (poolNode \ MINCORES_PROPERTY).text
-      if (xmlMinCores != "") {
-        min_cores = xmlMinCores.toInt
-      }
-
-      val pool = new Pool(poolName, priority, cores, min_cores)
-      val existingPool = findPool(poolName)
-      if (existingPool.isDefined) {
-        existingPool.get.poolName = poolName
-        existingPool.get.priority = priority
-        existingPool.get.cores = cores
-        existingPool.get.min_cores = min_cores
-      } else {
-        poolQueue.add(pool)
-      }
-      importedPools += poolName
-      logInfo("Created pool %s, priority: %f, cores: %d, min_cores: %d".format(
-        poolName, priority, cores, min_cores))
+      deprecatePools(importedPools)
+    } catch {
+      case e: Exception =>
+        logError("Errors in parsing XML, skip parsing XML this time and use current pool definition")
     }
-    deprecatePools(importedPools)
   }
 }

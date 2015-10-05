@@ -261,16 +261,19 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
     assert(firstPool.priority == 10)
     assert(firstPool.cores == 5)
     assert(firstPool.min_cores == 1)
+    assert(firstPool.memory == 100)
     assert(firstPool.size == 0)
     assert(secondPool.poolName == "test")
     assert(secondPool.priority == 2)
     assert(secondPool.cores == 1)
     assert(secondPool.min_cores == 0)
+    assert(secondPool.memory == 100)
     assert(secondPool.size == 0)
     assert(firstPoolAgain.poolName == "production")
     assert(firstPoolAgain.priority == 10)
     assert(firstPoolAgain.cores == 5)
     assert(firstPoolAgain.min_cores == 1)
+    assert(firstPoolAgain.memory == 100)
     assert(firstPoolAgain.size == 0)
 
     assert(firstPool.nextApplication() == None)
@@ -496,17 +499,19 @@ class MasterSuite extends SparkFunSuite with Matchers with Eventually with Priva
     val exampleXML = """<?xml version="1.0"?>
                         <allocations>
                           <config name="workers">
-                            <number>10</number>
+                            <worker_number>10</worker_number>
                           </config>
                           <pool name="production">
                             <priority>10</priority>
                             <cores>5</cores>
                             <min_cores>1</min_cores>
+                            <memory>100</memory>
                           </pool>
                           <pool name="test">
                             <priority>2</priority>
                             <cores>1</cores>
                             <min_cores>0</min_cores>
+                            <memory>100</memory>
                           </pool>
                         </allocations>"""
 
