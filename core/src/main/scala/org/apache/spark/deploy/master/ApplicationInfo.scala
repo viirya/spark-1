@@ -49,6 +49,8 @@ private[spark] class ApplicationInfo(
 
   @transient private var nextExecutorId: Int = _
 
+  @transient private var assignedPool: PrioritySchedulingAlgorithm.Pool = _
+
   init()
 
   private def readObject(in: java.io.ObjectInputStream): Unit = Utils.tryOrIOException {
@@ -68,6 +70,10 @@ private[spark] class ApplicationInfo(
     executorLimit = Integer.MAX_VALUE
   }
 
+  def assignPool(pool: PrioritySchedulingAlgorithm.Pool): Unit = {
+    assignedPool = pool
+  }
+
   private def newExecutorId(useID: Option[Int] = None): Int = {
     useID match {
       case Some(id) =>
@@ -84,7 +90,8 @@ private[spark] class ApplicationInfo(
       worker: WorkerInfo,
       cores: Int,
       useID: Option[Int] = None): ExecutorDesc = {
-    val exec = new ExecutorDesc(newExecutorId(useID), this, worker, cores, desc.memoryPerExecutorMB)
+    val exec = new ExecutorDesc(newExecutorId(useID), this, worker, cores,
+      assignedPool.getApplicationExecutorMemory(this))
     executors(exec.id) = exec
     coresGranted += cores
     exec
