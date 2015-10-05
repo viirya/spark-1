@@ -49,7 +49,7 @@ private[spark] class ApplicationInfo(
 
   @transient private var nextExecutorId: Int = _
 
-  @transient private var assignedPool: PrioritySchedulingAlgorithm.Pool = _
+  @transient private var assignedPool: PrioritySchedulingAlgorithm#Pool = _
 
   init()
 
@@ -70,7 +70,7 @@ private[spark] class ApplicationInfo(
     executorLimit = Integer.MAX_VALUE
   }
 
-  def assignPool(pool: PrioritySchedulingAlgorithm.Pool): Unit = {
+  def assignPool(pool: PrioritySchedulingAlgorithm#Pool): Unit = {
     assignedPool = pool
   }
 

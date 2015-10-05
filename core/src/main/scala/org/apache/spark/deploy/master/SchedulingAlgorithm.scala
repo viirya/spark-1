@@ -258,6 +258,7 @@ private[master] class PrioritySchedulingAlgorithm(
     def addApplication(app: ApplicationInfo): Unit = {
       val submission = ApplicationSubmission(app, new Date())
       addApplication(submission)
+      app.assignPool(this)
     }
 
     def nextApplication(): Option[ApplicationInfo] = {
