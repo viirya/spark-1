@@ -200,7 +200,7 @@ private[master] class PrioritySchedulingAlgorithm(
   val DEFAULT_PRIORITY: Double = 1.0
   val DEFAULT_CORES: Int = 1
   val DEFAULT_MINCORES: Int = 0
-  val DEFAULT_MEMORY: Int = 100
+  val DEFAULT_MEMORY: Int = 0
   val POOLS_PROPERTY = "pool"
   val POOL_NAME_PROPERTY = "@name"
   val PRIORITY_PROPERTY = "priority"
