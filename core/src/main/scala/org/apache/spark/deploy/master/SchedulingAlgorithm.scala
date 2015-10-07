@@ -440,16 +440,24 @@ private[master] class PrioritySchedulingAlgorithm(
       }.getOrElse {
           logInfo(s"Application ${app.desc.name} has been assigned to " +
             s"unknown pool ${app.desc.assignedPool.get}")
-          logInfo(s"Looking it up in lowest-prioroty pool")
+          logInfo(s"Looking it up in other pools.")
           null
       }.asInstanceOf[Pool]
     }
     if (pool == null) {
       pool = poolsToArray()(queueSize() - 1).asInstanceOf[Pool]
     }
-    if (!pool.removeApplication(app)) {
-      throw new SparkException(s"Can't remove application ${app.desc.name} " +
-        s"from pool ${app.desc.assignedPool.get}")
+    if (pool == null || !pool.removeApplication(app)) {
+      var removed = false
+      poolsToArray().foreach { p =>
+        if (!removed && p.asInstanceOf[Pool].removeApplication(app)) {
+          removed = true
+        }
+      }
+      if (!removed) {
+        logError(s"Can't remove application ${app.desc.name} " +
+          s"from pool ${app.desc.assignedPool.get}")
+      }
     }
   }
 
