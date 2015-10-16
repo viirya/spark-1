@@ -207,12 +207,19 @@ private[master] class PrioritySchedulingAlgorithm(
   val CORES_PROPERTY = "cores"
   val MINCORES_PROPERTY = "min_cores"
   val MEMORY_PROPERTY = "memory"
+  val POOL_ZONE_PROPERTY = "@zone"
 
   // XML tags and attributes for cluster configuration
   val CONFIG_PROPERTY = "config"
   val CONFIG_NAME_PROPERTY = "@name"
   val WORKERS_PROPERTY = "workers"
   val WORKER_NUMBER_PROPERTY = "worker_number"
+
+  // XML tags and attributes for cluster zone configuration
+  val ZONES_PROPERTY = "zones"
+  val ZONE_PROPERTY = "zone"
+  val ZONE_NAME_PROPERTY = "@name"
+  val ZONE_CORES_PROPERTY = "cores"
 
   // How many workers we can allocate executors
   // By default, it is negative, we will allocate all workers
@@ -234,12 +241,17 @@ private[master] class PrioritySchedulingAlgorithm(
     }
   }
 
+  case class Zone(val zoneName: String, var cores: Int, var assignedCores: Int = 0)
+
+  val clusterZones: mutable.ArrayBuffer[Zone] = mutable.ArrayBuffer[Zone]()
+
   class Pool(
       var poolName: String,
       var priority: Double,
       var cores: Int,
       var min_cores: Int,
-      var memory: Int) {
+      var memory: Int,
+      var zoneName: String) {
     private val appQueue: PriorityQueue[ApplicationSubmission] =
       new PriorityQueue[ApplicationSubmission](initAppNumberPerPool, applicationComparator)
 
@@ -497,19 +509,32 @@ private[master] class PrioritySchedulingAlgorithm(
         // Whether we need to preempt the executors of other applications
         // If the already granted cores plus assigned cores in this iteration is less than
         // the cores of the pool, we will try to preempt other applications to get more cores
-        val totalAssignedCores = assignedCores.sum
+        var totalAssignedCores = assignedCores.sum
+        val zone = clusterZones.find(_.zoneName == pool.zoneName)
         if (totalAssignedCores + app.coresGranted < pool.cores) {
           val assignedCoresForAllWorkers = tryPreemptExistingExecutors(app, assignedCores, workers,
             usableWorkers, master.spreadOutApps, pool)
+
+          totalAssignedCores = assignedCoresForAllWorkers.sum
           for (pos <- 0 until workers.length if assignedCoresForAllWorkers(pos) > 0) {
             allocateWorkerResourceToExecutors(
               app, assignedCoresForAllWorkers(pos), coresPerExecutor, workers(pos))
           }
+          // The check of zone capacity is done in tryPreemptExistingExecutors
+          // We simply add totalAssignedCores to zone.assignedCores
+          if (zone.isDefined) zone.get.assignedCores += totalAssignedCores
         } else {
-          // Now that we've decided how many cores to allocate on each worker, let's allocate them
-          for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
-            allocateWorkerResourceToExecutors(
-              app, assignedCores(pos), coresPerExecutor, usableWorkers(pos))
+          if (!zone.isDefined || totalAssignedCores + zone.get.assignedCores <= zone.get.cores) {
+            // Now that we've decided how many cores to allocate on each worker, let's allocate them
+            for (pos <- 0 until usableWorkers.length if assignedCores(pos) > 0) {
+              allocateWorkerResourceToExecutors(
+                app, assignedCores(pos), coresPerExecutor, usableWorkers(pos))
+            }
+            if (zone.isDefined) zone.get.assignedCores += totalAssignedCores
+          } else {
+            logInfo(s"totalAssignedCores: $totalAssignedCores is more than the " +
+              s"capacity ${zone.get.cores} cores of the zone: ${zone.get.zoneName}")
+            logInfo("Can't allocate cores to this application now")
           }
         }
       }
@@ -658,7 +683,19 @@ private[master] class PrioritySchedulingAlgorithm(
       logInfo(s"Can't allocate more cores by preempting other applications, " +
         s"but already assigned cores: ${oldAssignedCores.sum} satisfy " +
         "minimal core requirement, so simply return already assigned cores")
-      return assignedCores
+
+      // We check if we will allocate more cores than the zone cores definition
+      val zone = clusterZones.find(_.zoneName == pool.zoneName)
+      if (zone.isDefined &&
+        assignedCores.sum + zone.get.assignedCores > zone.get.cores) {
+        logInfo(s"assignedCores ${assignedCores.sum} " +
+          s"is more than the current capacity ${zone.get.cores - zone.get.assignedCores} " +
+          s"cores of the zone: ${zone.get.zoneName}")
+        logInfo("Can't allocate cores to this application now")
+        return new Array[Int](numForAllWorkers)
+      } else {
+        return assignedCores
+      }
     }
 
     if (canSatisfyCoreReq || canSatisfyMinimalCoreReq) {
@@ -666,6 +703,17 @@ private[master] class PrioritySchedulingAlgorithm(
       // as we can only provide `canAssignedCores` cores
       if (!canSatisfyCoreReq && canSatisfyMinimalCoreReq) {
         coresToAssign = canAssignedCores
+      }
+
+      // We check if we will allocate more cores than the zone cores definition
+      val zone = clusterZones.find(_.zoneName == pool.zoneName)
+      if (zone.isDefined &&
+        assignedCores.sum + coresToAssign + zone.get.assignedCores > zone.get.cores) {
+        logInfo(s"coresToAssign + assignedCores ${coresToAssign + assignedCores.sum} " +
+          s"is more than the current capacity ${zone.get.cores - zone.get.assignedCores} " +
+          s"cores of the zone: ${zone.get.zoneName}")
+        logInfo("Can't allocate cores to this application now")
+        return new Array[Int](numForAllWorkers)
       }
 
       // Filter out the pools with lower priorities
@@ -846,6 +894,11 @@ private[master] class PrioritySchedulingAlgorithm(
                           <config name="workers">
                             <worker_number>10</worker_number>
                           </config>
+                          <zones>
+                            <zone name="test">
+                              <cores>10</cores>
+                            </zone>
+                          </zones>
                           <pool name="production">
                             <priority>10</priority>
                             <cores>5</cores>
@@ -923,12 +976,55 @@ private[master] class PrioritySchedulingAlgorithm(
     }
   }
 
+  def buildZonesForPool(xml: Elem): Unit = {
+    val prevZones = clusterZones.clone()
+    clusterZones.clear()
+
+    try {
+      for (zoneNode <- (xml \\ ZONES_PROPERTY \\ ZONE_PROPERTY)) {
+
+        val zoneName = (zoneNode \ ZONE_NAME_PROPERTY).text
+        var cores: Int = DEFAULT_CORES
+
+        try {
+          val xmlCores = (zoneNode \ ZONE_CORES_PROPERTY).text
+          if (xmlCores != "") {
+            cores = xmlCores.toInt
+          }
+        } catch {
+          case e: Exception =>
+            logError(s"Errors in parsing XML, using default values for zone $zoneName")
+        }
+
+        val existingZone = prevZones.find(_.zoneName == zoneName)
+        if (existingZone.isDefined) {
+          existingZone.get.cores = cores
+          clusterZones += existingZone.get
+
+          logInfo("Created zone %s, cores: %d, already assignd cores: %d".format(
+            zoneName, cores, existingZone.get.assignedCores))
+        } else {
+          val zone = Zone(zoneName, cores)
+          clusterZones += zone
+
+          logInfo("Created zone %s, cores: %d".format(
+            zoneName, cores))
+        }
+      }
+    } catch {
+      case e: Exception =>
+        logError("Errors in parsing XML, skip parsing XML this time and use current zone definition")
+    }
+  }
+
   def buildFairSchedulerPool(xml: Elem): Unit = {
     val importedPools = mutable.ArrayBuffer[String]()
     try {
       for (poolNode <- (xml \\ POOLS_PROPERTY)) {
 
         val poolName = (poolNode \ POOL_NAME_PROPERTY).text
+        val zoneName = (poolNode \ POOL_ZONE_PROPERTY).text
+
         var priority: Double = DEFAULT_PRIORITY
         var cores: Int = DEFAULT_CORES
         var min_cores: Int = DEFAULT_MINCORES
@@ -959,7 +1055,7 @@ private[master] class PrioritySchedulingAlgorithm(
             logError(s"Errors in parsing XML, using default values for pool $poolName")
         }
 
-        val pool = new Pool(poolName, priority, cores, min_cores, memory)
+        val pool = new Pool(poolName, priority, cores, min_cores, memory, zoneName)
         val existingPool = findPool(poolName)
         if (existingPool.isDefined) {
           existingPool.get.poolName = poolName
@@ -967,6 +1063,7 @@ private[master] class PrioritySchedulingAlgorithm(
           existingPool.get.cores = cores
           existingPool.get.min_cores = min_cores
           existingPool.get.memory = memory
+          existingPool.get.zoneName = zoneName
         } else {
           poolQueue.add(pool)
         }
