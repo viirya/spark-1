@@ -285,7 +285,12 @@ private[master] class PrioritySchedulingAlgorithm(
     def removeApplication(app: ApplicationInfo): Boolean = {
       val submitted = appQueue.toArray().find(_.asInstanceOf[ApplicationSubmission].appInfo == app)
       if (submitted != None) {
-        appQueue.remove(submitted.get)
+        val ret = appQueue.remove(submitted.get)
+        if (ret) {
+          val zone = clusterZones.find(_.zoneName == zoneName)
+          if (zone.isDefined) zone.get.assignedCores -= app.coresGranted
+        }
+        ret
       } else {
         false
       }
