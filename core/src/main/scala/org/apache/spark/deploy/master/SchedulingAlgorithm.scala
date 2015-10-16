@@ -533,7 +533,8 @@ private[master] class PrioritySchedulingAlgorithm(
             if (zone.isDefined) zone.get.assignedCores += totalAssignedCores
           } else {
             logInfo(s"totalAssignedCores: $totalAssignedCores is more than the " +
-              s"capacity ${zone.get.cores} cores of the zone: ${zone.get.zoneName}")
+              s"capacity ${zone.get.cores - zone.get.assignedCores} cores of " +
+              s"the zone: ${zone.get.zoneName}")
             logInfo("Can't allocate cores to this application now")
           }
         }
@@ -952,6 +953,7 @@ private[master] class PrioritySchedulingAlgorithm(
         val xml = XML.load(i)
         buildFairSchedulerPool(xml)
         setClusterConfig(xml)
+        buildZonesForPool(xml)
       }
     } finally {
       is.foreach(_.close())
