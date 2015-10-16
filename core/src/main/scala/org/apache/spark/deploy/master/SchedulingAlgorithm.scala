@@ -607,7 +607,8 @@ private[master] class PrioritySchedulingAlgorithm(
     val preemptedMemory = new Array[Int](numForAllWorkers)
 
     // Filter out the pools with lower priorities
-    nonEmptyPools().filter(_.priority.toInt < pool.priority.toInt).map { lowerPool =>
+    nonEmptyPools().filter(p => p.priority.toInt < pool.priority.toInt &&
+      p.zoneName == pool.zoneName).map { lowerPool =>
       // We need to reverse the applications in pool because we want to preempt
       // later submitted applications first
       lowerPool.getApplications().reverse.map { app =>
@@ -714,8 +715,8 @@ private[master] class PrioritySchedulingAlgorithm(
       // We check if we will allocate more cores than the zone cores definition
       val zone = clusterZones.find(_.zoneName == pool.zoneName)
       if (zone.isDefined &&
-        assignedCores.sum + coresToAssign + zone.get.assignedCores > zone.get.cores) {
-        logInfo(s"coresToAssign + assignedCores ${coresToAssign + assignedCores.sum} " +
+        assignedCores.sum + zone.get.assignedCores > zone.get.cores) {
+        logInfo(s"assignedCores ${assignedCores.sum} " +
           s"is more than the current capacity ${zone.get.cores - zone.get.assignedCores} " +
           s"cores of the zone: ${zone.get.zoneName}")
         logInfo("Can't allocate cores to this application now")
@@ -723,7 +724,8 @@ private[master] class PrioritySchedulingAlgorithm(
       }
 
       // Filter out the pools with lower priorities
-      nonEmptyPools().filter(_.priority.toInt < pool.priority.toInt).map { lowerPool =>
+      nonEmptyPools().filter(p => p.priority.toInt < pool.priority.toInt
+        && p.zoneName == pool.zoneName).map { lowerPool =>
         // We need to reverse the applications in pool because we want to preempt
         // later submitted applications first
         lowerPool.getApplications().reverse.map { app =>
