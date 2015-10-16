@@ -657,6 +657,7 @@ private[master] class PrioritySchedulingAlgorithm(
       .map(workers(_).coresFree).sum
 
     // We can only assign all cores of the cluster at most
+    // How many cores we need to assign to this application, in addition to already assigned cores
     var coresToAssign = math.min(pool.cores - app.coresGranted - oldAssignedCores.sum,
       workers.map(_.cores).sum)
 
@@ -670,6 +671,10 @@ private[master] class PrioritySchedulingAlgorithm(
     // We only count for the cores on which workers we can get enough executor memory
     // That is because if there are not enough memory for our executor, the executor we
     // run on the worker will not be useful for our job
+
+    // canAssignedCores = cores obtainted by preempting other applications + all free cores
+    // on all workers (include cores assigned by Spark default but not
+    // already assigned cores, i.e., app.coresGranted)
     val canAssignedCores = (0 until numForAllWorkers)
       .filter(pos => preemptedMemory(pos) + workers(pos).memoryFree >= memoryPerExecutor)
       .map(pos => preemptedCores(pos) + workers(pos).coresFree - assignedCores(pos)).sum
@@ -715,9 +720,10 @@ private[master] class PrioritySchedulingAlgorithm(
       // We check if we will allocate more cores than the zone cores definition
       val zone = clusterZones.find(_.zoneName == pool.zoneName)
       if (zone.isDefined &&
-        assignedCores.sum + zone.get.assignedCores > zone.get.cores) {
+        assignedCores.sum + (zone.get.assignedCores - coresToAssign) > zone.get.cores) {
         logInfo(s"assignedCores ${assignedCores.sum} " +
-          s"is more than the current capacity ${zone.get.cores - zone.get.assignedCores} " +
+          s"is more than the the capacity after preempting: " +
+          s"${zone.get.cores - zone.get.assignedCores + coresToAssign} " +
           s"cores of the zone: ${zone.get.zoneName}")
         logInfo("Can't allocate cores to this application now")
         return new Array[Int](numForAllWorkers)
