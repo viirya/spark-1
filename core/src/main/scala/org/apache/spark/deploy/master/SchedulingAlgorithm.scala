@@ -813,6 +813,7 @@ private[master] class PrioritySchedulingAlgorithm(
                   // Stop to count for running time
                   app.stopTiming
 
+                  val zone = clusterZones.find(_.zoneName == lowerPool.zoneName)
                   if (zone.isDefined) zone.get.assignedCores -= preemptedCores
                 }
               }
