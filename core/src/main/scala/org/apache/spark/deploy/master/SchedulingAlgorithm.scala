@@ -761,6 +761,7 @@ private[master] class PrioritySchedulingAlgorithm(
             if (havePreempted) {
               val appOriginalExecutorNum = app.executors.values.size
               var preemptedExecutorNum = 0
+              var preemptedCores = 0
               app.executors.values.foreach { executor =>
                 val workerInfo = executor.worker
                 val pos = getWorkerIndex(workerInfo, workers)
@@ -776,6 +777,7 @@ private[master] class PrioritySchedulingAlgorithm(
 
                   assignedCores(pos) += math.min(executor.cores, coresToAssign)
                   coresToAssign -= math.min(executor.cores, coresToAssign)
+                  preemptedCores += math.min(executor.cores, coresToAssign)
 
                   // We also allocate free cores on the worker
                   val coreRemaining = math.min(workers(pos).coresFree - assignedCores(pos),
@@ -800,6 +802,8 @@ private[master] class PrioritySchedulingAlgorithm(
                   // But we don't allocate these cores to our application
                   preemptedExecutorNum += 1
                   preemptExistingExecutor(app, executor)
+
+                  preemptedCores += math.min(executor.cores, coresToAssign)
                 }
 
                 if (preemptedExecutorNum > 0 &&
@@ -808,6 +812,8 @@ private[master] class PrioritySchedulingAlgorithm(
                   app.state = ApplicationState.WAITING
                   // Stop to count for running time
                   app.stopTiming
+
+                  if (zone.isDefined) zone.get.assignedCores -= preemptedCores
                 }
               }
             }
