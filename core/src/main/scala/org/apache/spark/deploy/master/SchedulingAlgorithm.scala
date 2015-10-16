@@ -608,7 +608,7 @@ private[master] class PrioritySchedulingAlgorithm(
 
     // Filter out the pools with lower priorities
     nonEmptyPools().filter(p => p.priority.toInt < pool.priority.toInt &&
-      p.zoneName == pool.zoneName).map { lowerPool =>
+      (pool.zoneName == "" || p.zoneName == pool.zoneName)).map { lowerPool =>
       // We need to reverse the applications in pool because we want to preempt
       // later submitted applications first
       lowerPool.getApplications().reverse.map { app =>
@@ -731,7 +731,7 @@ private[master] class PrioritySchedulingAlgorithm(
 
       // Filter out the pools with lower priorities
       nonEmptyPools().filter(p => p.priority.toInt < pool.priority.toInt
-        && p.zoneName == pool.zoneName).map { lowerPool =>
+        && (pool.zoneName == "" || p.zoneName == pool.zoneName)).map { lowerPool =>
         // We need to reverse the applications in pool because we want to preempt
         // later submitted applications first
         lowerPool.getApplications().reverse.map { app =>
