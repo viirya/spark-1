@@ -33,4 +33,17 @@ class SparkQlSuite extends PlanTest {
       "'com.matthewrathbone.example.SimpleUDFExample' USING JAR '/path/to/jar', " +
       "FILE 'path/to/file'")
   }
+
+  test("alter table") {
+    parser.parsePlan("ALTER TABLE table_name RENAME TO new_table_name")
+    parser.parsePlan("ALTER TABLE table_name SET TBLPROPERTIES ('test' = 'test', " +
+      "'comment' = 'new_comment')")
+    parser.parsePlan("ALTER TABLE table_name UNSET TBLPROPERTIES ('comment', 'test')")
+    parser.parsePlan("ALTER TABLE table_name UNSET TBLPROPERTIES IF EXISTS ('comment', 'test')")
+
+    parser.parsePlan("ALTER TABLE table_name SET SERDE 'org.apache.class'")
+    parser.parsePlan("ALTER TABLE table_name SET SERDE 'org.apache.class' " +
+      "WITH SERDEPROPERTIES ('columns'='foo,bar', 'field.delim' = ',')")
+    parser.parsePlan("ALTER TABLE table_name SET SERDEPROPERTIES ('columns'='foo,bar', 'field.delim' = ',')")
+  }
 }

@@ -117,6 +117,91 @@ private[sql] class SparkQl(conf: ParserConf = SimpleParserConf()) extends Cataly
         }.toMap
         CreateFunction(funcName, asName, resourcesMap, temp.isDefined)(node.source)
 
+      case Token("TOK_ALTERTABLE", alterTableArgs) =>
+
+        val Seq(
+          Some(tabName),
+          rename,
+          setTableProps,
+          dropTableProps,
+          serde,
+          serdeProps) = getClauses(Seq(
+          "TOK_TABNAME",
+          "TOK_ALTERTABLE_RENAME",
+          "TOK_ALTERTABLE_PROPERTIES",
+          "TOK_ALTERTABLE_DROPPROPERTIES",
+          "TOK_ALTERTABLE_SERIALIZER",
+          "TOK_ALTERTABLE_SERDEPROPERTIES"), alterTableArgs)
+
+        val renamedTable = rename.map {
+          case Token("TOK_ALTERTABLE_RENAME", renameArgs) =>
+            getClause("TOK_TABNAME", renameArgs)
+        }
+
+        val tableIdent: TableIdentifier = extractTableIdent(tabName)
+        val renamedTableIdent: Option[TableIdentifier] = renamedTable.map(extractTableIdent)
+
+        def extractTableProps(node: ASTNode): Map[String, Option[String]] = node match {
+          case Token("TOK_TABLEPROPERTIES", propsList) =>
+            propsList.flatMap {
+              case Token("TOK_TABLEPROPLIST", props) =>
+                props.map {
+                  case Token("TOK_TABLEPROPERTY", key :: Token("TOK_NULL", Nil) :: Nil) =>
+                    val k = unquoteString(key.text)
+                    (k, None)
+                  case Token("TOK_TABLEPROPERTY", key :: value :: Nil) =>
+                    val k = unquoteString(key.text)
+                    val v = unquoteString(value.text)
+                    (k, Some(v))
+                }
+            }.toMap
+        }
+
+        val setTableProperties = setTableProps.map {
+          case Token("TOK_ALTERTABLE_PROPERTIES", args :: Nil) => extractTableProps(args)
+        }
+        val dropTableProperties = dropTableProps.map {
+          case Token("TOK_ALTERTABLE_DROPPROPERTIES", args) =>
+            extractTableProps(args.head)
+        }
+        val allowExisting = dropTableProps.flatMap {
+          case Token("TOK_ALTERTABLE_DROPPROPERTIES", args) =>
+            getClauseOption("TOK_IFEXISTS", args)
+        }
+
+        val serdeArgs: Option[Seq[ASTNode]] = serde.map {
+          case Token("TOK_ALTERTABLE_SERIALIZER", args) =>
+            args
+        }
+
+        val serdeClassName = serdeArgs.map(_.head).map {
+          case Token(className, Nil) => className
+        }
+
+        val serdeProperties: Option[Map[String, Option[String]]] = Option(
+          // SET SERDE serde_classname WITH SERDEPROPERTIES
+          serdeArgs.map(_.tail).map { props =>
+            if (props.isEmpty) {
+              null
+            } else {
+              extractTableProps(props.head)
+            }
+          }.getOrElse {
+            // SET SERDEPROPERTIES
+            serdeProps.map {
+              case Token("TOK_ALTERTABLE_SERDEPROPERTIES", args) =>
+                extractTableProps(args.head)
+            }.getOrElse(null)
+          }
+        )
+
+        AlterTable(
+          tableIdent,
+          renamedTableIdent,
+          setTableProperties,
+          dropTableProperties,
+          allowExisting.isDefined)(node.source)
+
       case Token("TOK_CREATETABLEUSING", createTableArgs) =>
         val Seq(
           temp,

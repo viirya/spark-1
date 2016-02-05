@@ -22,7 +22,7 @@ import java.util.NoSuchElementException
 import org.apache.spark.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Row, SQLConf, SQLContext}
-import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
+import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.errors.TreeNodeException
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical
@@ -439,6 +439,21 @@ case class CreateFunction(
     asName: String,
     resourcesMap: Map[String, String],
     isTemp: Boolean)(sql: String) extends RunnableCommand with Logging {
+
+  override def run(sqlContext: SQLContext): Seq[Row] = {
+    sqlContext.catalog.runNativeCommand(sql)
+  }
+
+  override val output: Seq[Attribute] =
+    Seq(AttributeReference("result", StringType, nullable = false)())
+}
+
+case class AlterTable(
+    tableName: TableIdentifier,
+    renameTableName: Option[TableIdentifier],
+    setProperties: Option[Map[String, Option[String]]],
+    dropProperties: Option[Map[String, Option[String]]],
+    allowExisting: Boolean)(sql: String) extends RunnableCommand with Logging {
 
   override def run(sqlContext: SQLContext): Seq[Row] = {
     sqlContext.catalog.runNativeCommand(sql)
