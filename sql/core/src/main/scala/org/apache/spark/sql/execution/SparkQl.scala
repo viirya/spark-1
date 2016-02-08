@@ -144,7 +144,8 @@ private[sql] class SparkQl(conf: ParserConf = SimpleParserConf()) extends Cataly
           setLocation,
           touch,
           compact,
-          merge) = getClauses(Seq(
+          merge,
+          renameCol) = getClauses(Seq(
           "TOK_TABNAME",
           "TOK_ALTERTABLE_RENAME",
           "TOK_ALTERTABLE_PROPERTIES",
@@ -166,7 +167,8 @@ private[sql] class SparkQl(conf: ParserConf = SimpleParserConf()) extends Cataly
           "TOK_ALTERTABLE_LOCATION",
           "TOK_ALTERTABLE_TOUCH",
           "TOK_ALTERTABLE_COMPACT",
-          "TOK_ALTERTABLE_MERGEFILES"), alterTableArgs)
+          "TOK_ALTERTABLE_MERGEFILES",
+          "TOK_ALTERTABLE_RENAMECOL"), alterTableArgs)
 
         val tableIdent: TableIdentifier = extractTableIdent(tabName)
 
@@ -490,6 +492,10 @@ private[sql] class SparkQl(conf: ParserConf = SimpleParserConf()) extends Cataly
           AlterTableCompact(tableIdent, partition, compactType)(node.source)
         } else if (merge.isDefined) {
           AlterTableMerge(tableIdent, partition)(node.source)
+        } else if (renameCol.isDefined) {
+          val oldName = renameCol.get.children(0).text
+          val newName = renameCol.get.children(1).text
+          
         } else {
           nodeToDescribeFallback(node)
         }
