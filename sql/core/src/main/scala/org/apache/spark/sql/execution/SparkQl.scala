@@ -123,6 +123,9 @@ private[sql] class SparkQl(conf: ParserConf = SimpleParserConf()) extends Cataly
         CreateFunction(funcName, asName, resourcesMap, temp.isDefined)(node.source)
 
       case Token("TOK_ALTERTABLE", alterTableArgs) =>
+        AlterTableCommandParser(this).applyOrElse(node,
+          (node: ASTNode) => throw new NotImplementedError(node.text))
+      /*
         val tabName = getClause("TOK_TABNAME", alterTableArgs)
         val rename = getClauseOption("TOK_ALTERTABLE_RENAME", alterTableArgs)
         val setTableProps = getClauseOption("TOK_ALTERTABLE_PROPERTIES", alterTableArgs)
@@ -518,7 +521,7 @@ private[sql] class SparkQl(conf: ParserConf = SimpleParserConf()) extends Cataly
         } else {
           nodeToDescribeFallback(node)
         }
-
+        */
       case Token("TOK_CREATETABLEUSING", createTableArgs) =>
         val Seq(
           temp,

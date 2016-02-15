@@ -417,11 +417,9 @@ case class AlterTableRename(
     Seq(AttributeReference("result", StringType, nullable = false)())
 }
 
-case class AlterTableProperties(
+case class AlterTableSetProperties(
     tableName: TableIdentifier,
-    setProperties: Option[Map[String, Option[String]]],
-    dropProperties: Option[Map[String, Option[String]]],
-    allowExisting: Boolean)(sql: String) extends RunnableCommand with Logging {
+    setProperties: Map[String, Option[String]])(sql: String) extends RunnableCommand with Logging {
 
   override def run(sqlContext: SQLContext): Seq[Row] = {
     sqlContext.catalog.runNativeCommand(sql)
@@ -431,6 +429,18 @@ case class AlterTableProperties(
     Seq(AttributeReference("result", StringType, nullable = false)())
 }
 
+case class AlterTableDropProperties(
+    tableName: TableIdentifier,
+    dropProperties: Map[String, Option[String]],
+    allowExisting: Boolean)(sql: String) extends RunnableCommand with Logging {
+
+  override def run(sqlContext: SQLContext): Seq[Row] = {
+    sqlContext.catalog.runNativeCommand(sql)
+  }
+
+  override val output: Seq[Attribute] =
+    Seq(AttributeReference("result", StringType, nullable = false)())
+} 
 case class AlterTableSerDeProperties(
     tableName: TableIdentifier,
     serdeClassName: Option[String],
