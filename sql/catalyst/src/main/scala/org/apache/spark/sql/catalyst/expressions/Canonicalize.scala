@@ -79,3 +79,62 @@ object Canonicalize extends RuleExecutor[Expression] {
     }
   }
 }
+
+
+object PredicateChecker {
+
+  def getTargetLiteral(expr: Expression): (Any, DataType) = expr match {
+    case EqualTo(_, Literal(v, dt)) => (v, dt)
+    case EqualTo(Literal(v, dt), _) => (v, dt)
+    case GreaterThan(_, Literal(v, dt)) => (v, dt)
+    case LessThan(Literal(v, dt), _) => (v, dt)
+    case GreaterThanOrEqual(l, Literal(v, dt)) => (v, dt)
+    case LessThanOrEqual(Literal(v, dt), _) => (v, dt)
+    case _ => (null, DataTypes.NullType)
+  }
+
+  // Determine whether predicate is always true based on the fact that the constraint is true.
+  def trueGuaranteed(pt: Expression, ct: Expression): Boolean = {
+    val predicate = pt.canonicalized
+    val constraint = ct.canonicalized
+
+    if (predicate.semanticEquals(constraint)) return true
+
+    // If predicate and constraint are referring to different attributes, return false.
+    if (!predicate.references.equals(constraint.references)) return false
+
+    if (constraint.isInstanceOf[IsNull] && predicate.isInstanceOf[IsNotNull]) return false
+    if (constraint.isInstanceOf[IsNotNull] && predicate.isInstanceOf[IsNull]) return false
+
+    val (literalForContraint, dtForConstraint) = getTargetLiteral(constraint)
+    val (literalForPredicate, dtForPredicate) = getTargetLiteral(predicate)
+
+    constraint match {
+      case EqualTo(_, _) =>
+        literalForContraint == literalForPredicatet && dtForConstraint == dtForPredicate
+      case GreaterThan(_, _) =>
+        literalForPredicate >= literalForContraint && dtForConstraint == dtForPredicate
+      case LessThan(_, _) =>
+        literalForContraint == literalForContraint && dtForConstraint == dtForPredicate
+      case GreaterThanOrEqual(_, ) =>
+        literalForContraint == literalForContraint && dtForConstraint == dtForPredicate
+      case LessThanOrEqual(_, ) =>
+        literalForContraint == literalForContraint && dtForConstraint == dtForPredicate
+      case _ => return false
+    }
+  }
+
+  // Determine whether predicate is always false based on the fact that the constraint is true.
+  def falseGuaranteed(pt: Expression, ct: Expression): Boolean = {
+    val predicate = pt.canonicalized
+    val constraint = ct.canonicalized
+
+    if (predicate.semanticEquals(constraint)) return false
+
+    // If predicate and constraint are referring to different attributes, return false.
+    if (!predicate.references.equals(constraint.references)) return false
+
+    if (constraint.isInstanceOf[IsNull] && predicate.isInstanceOf[IsNotNull]) return true
+    if (constraint.isInstanceOf[IsNotNull] && predicate.isInstanceOf[IsNull]) return true
+  }
+}
