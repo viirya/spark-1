@@ -18,38 +18,46 @@
 package org.apache.spark.sql.hive.thriftserver
 
 import java.io._
+import java.nio.charset.StandardCharsets
+import java.sql.Timestamp
+import java.util.Date
 
 import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.duration._
 import scala.concurrent.{Await, Promise}
-import scala.sys.process.{Process, ProcessLogger}
-import scala.util.Failure
+import scala.concurrent.duration._
 
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars
-import org.scalatest.BeforeAndAfter
+import org.scalatest.BeforeAndAfterAll
 
-import org.apache.spark.{Logging, SparkFunSuite}
+import org.apache.spark.SparkFunSuite
+import org.apache.spark.internal.Logging
+import org.apache.spark.sql.test.ProcessTestUtils.ProcessOutputCapturer
 import org.apache.spark.util.Utils
 
 /**
  * A test suite for the `spark-sql` CLI tool.  Note that all test cases share the same temporary
  * Hive metastore and warehouse.
  */
-class CliSuite extends SparkFunSuite with BeforeAndAfter with Logging {
+class CliSuite extends SparkFunSuite with BeforeAndAfterAll with Logging {
   val warehousePath = Utils.createTempDir()
   val metastorePath = Utils.createTempDir()
   val scratchDirPath = Utils.createTempDir()
 
-  before {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
     warehousePath.delete()
     metastorePath.delete()
     scratchDirPath.delete()
   }
 
-  after {
-    warehousePath.delete()
-    metastorePath.delete()
-    scratchDirPath.delete()
+  override def afterAll(): Unit = {
+    try {
+      warehousePath.delete()
+      metastorePath.delete()
+      scratchDirPath.delete()
+    } finally {
+      super.afterAll()
+    }
   }
 
   /**
@@ -57,11 +65,11 @@ class CliSuite extends SparkFunSuite with BeforeAndAfter with Logging {
    * @param timeout maximum time for the commands to complete
    * @param extraArgs any extra arguments
    * @param errorResponses a sequence of strings whose presence in the stdout of the forked process
-   *                       is taken as an immediate error condition. That is: if a line beginning
+   *                       is taken as an immediate error condition. That is: if a line containing
    *                       with one of these strings is found, fail the test immediately.
    *                       The default value is `Seq("Error:")`
    *
-   * @param queriesAndExpectedAnswers one or more tupes of query + answer
+   * @param queriesAndExpectedAnswers one or more tuples of query + answer
    */
   def runCliWithin(
       timeout: FiniteDuration,
@@ -70,11 +78,16 @@ class CliSuite extends SparkFunSuite with BeforeAndAfter with Logging {
       queriesAndExpectedAnswers: (String, String)*): Unit = {
 
     val (queries, expectedAnswers) = queriesAndExpectedAnswers.unzip
+    // Explicitly adds ENTER for each statement to make sure they are actually entered into the CLI.
+    val queriesString = queries.map(_ + "\n").mkString
+
     val command = {
       val cliScript = "../../bin/spark-sql".split("/").mkString(File.separator)
       val jdbcUrl = s"jdbc:derby:;databaseName=$metastorePath;create=true"
       s"""$cliScript
          |  --master local
+         |  --driver-java-options -Dderby.system.durability=test
+         |  --conf spark.ui.enabled=false
          |  --hiveconf ${ConfVars.METASTORECONNECTURLKEY}=$jdbcUrl
          |  --hiveconf ${ConfVars.METASTOREWAREHOUSE}=$warehousePath
          |  --hiveconf ${ConfVars.SCRATCHDIR}=$scratchDirPath
@@ -83,63 +96,43 @@ class CliSuite extends SparkFunSuite with BeforeAndAfter with Logging {
 
     var next = 0
     val foundAllExpectedAnswers = Promise.apply[Unit]()
-    // Explicitly adds ENTER for each statement to make sure they are actually entered into the CLI.
-    val queryStream = new ByteArrayInputStream(queries.map(_ + "\n").mkString.getBytes)
     val buffer = new ArrayBuffer[String]()
     val lock = new Object
 
     def captureOutput(source: String)(line: String): Unit = lock.synchronized {
-      buffer += s"$source> $line"
+      // This test suite sometimes gets extremely slow out of unknown reason on Jenkins.  Here we
+      // add a timestamp to provide more diagnosis information.
+      buffer += s"${new Timestamp(new Date().getTime)} - $source> $line"
+
       // If we haven't found all expected answers and another expected answer comes up...
-      if (next < expectedAnswers.size && line.startsWith(expectedAnswers(next))) {
+      if (next < expectedAnswers.size && line.contains(expectedAnswers(next))) {
         next += 1
         // If all expected answers have been found...
         if (next == expectedAnswers.size) {
           foundAllExpectedAnswers.trySuccess(())
         }
       } else {
-        errorResponses.foreach( r => {
-          if (line.startsWith(r)) {
+        errorResponses.foreach { r =>
+          if (line.contains(r)) {
             foundAllExpectedAnswers.tryFailure(
               new RuntimeException(s"Failed with error line '$line'"))
-          }})
-      }
-    }
-
-    // Searching expected output line from both stdout and stderr of the CLI process
-    val process = (Process(command, None) #< queryStream).run(
-      ProcessLogger(captureOutput("stdout"), captureOutput("stderr")))
-
-    // catch the output value
-    class exitCodeCatcher extends Runnable {
-      var exitValue = 0
-
-      override def run(): Unit = {
-        try {
-          exitValue = process.exitValue()
-        } catch {
-          case rte: RuntimeException =>
-            // ignored as it will get triggered when the process gets destroyed
-            logDebug("Ignoring exception while waiting for exit code", rte)
-        }
-        if (exitValue != 0) {
-          // process exited: fail fast
-          foundAllExpectedAnswers.tryFailure(
-            new RuntimeException(s"Failed with exit code $exitValue"))
+          }
         }
       }
     }
-    // spin off the code catche thread. No attempt is made to kill this
-    // as it will exit once the launched process terminates.
-    val codeCatcherThread = new Thread(new exitCodeCatcher())
-    codeCatcherThread.start()
+
+    val process = new ProcessBuilder(command: _*).start()
+
+    val stdinWriter = new OutputStreamWriter(process.getOutputStream, StandardCharsets.UTF_8)
+    stdinWriter.write(queriesString)
+    stdinWriter.flush()
+    stdinWriter.close()
+
+    new ProcessOutputCapturer(process.getInputStream, captureOutput("stdout")).start()
+    new ProcessOutputCapturer(process.getErrorStream, captureOutput("stderr")).start()
 
     try {
-      Await.ready(foundAllExpectedAnswers.future, timeout)
-      foundAllExpectedAnswers.future.value match {
-        case Some(Failure(t)) => throw t
-        case _ =>
-      }
+      Await.result(foundAllExpectedAnswers.future, timeout)
     } catch { case cause: Throwable =>
       val message =
         s"""
@@ -175,35 +168,32 @@ class CliSuite extends SparkFunSuite with BeforeAndAfter with Logging {
       s"LOAD DATA LOCAL INPATH '$dataFilePath' OVERWRITE INTO TABLE hive_test;"
         -> "OK",
       "CACHE TABLE hive_test;"
-        -> "Time taken: ",
+        -> "",
       "SELECT COUNT(*) FROM hive_test;"
         -> "5",
       "DROP TABLE hive_test;"
-        -> "OK"
+        -> ""
     )
   }
 
   test("Single command with -e") {
-    runCliWithin(2.minute, Seq("-e", "SHOW DATABASES;"))("" -> "OK")
+    runCliWithin(2.minute, Seq("-e", "SHOW DATABASES;"))("" -> "")
   }
 
   test("Single command with --database") {
     runCliWithin(2.minute)(
       "CREATE DATABASE hive_test_db;"
-        -> "OK",
+        -> "",
       "USE hive_test_db;"
-        -> "OK",
+        -> "",
       "CREATE TABLE hive_test(key INT, val STRING);"
         -> "OK",
       "SHOW TABLES;"
-        -> "Time taken: "
+        -> "hive_test"
     )
 
     runCliWithin(2.minute, Seq("--database", "hive_test_db", "-e", "SHOW TABLES;"))(
-      ""
-        -> "OK",
-      ""
-        -> "hive_test"
+      "" -> "hive_test"
     )
   }
 
@@ -226,13 +216,26 @@ class CliSuite extends SparkFunSuite with BeforeAndAfter with Logging {
       s"LOAD DATA LOCAL INPATH '$dataFilePath' OVERWRITE INTO TABLE sourceTable;"
         -> "OK",
       "INSERT INTO TABLE t1 SELECT key, val FROM sourceTable;"
-        -> "Time taken:",
+        -> "",
       "SELECT count(key) FROM t1;"
         -> "5",
       "DROP TABLE t1;"
-        -> "OK",
+        -> "",
       "DROP TABLE sourceTable;"
-        -> "OK"
+        -> ""
     )
+  }
+
+  test("SPARK-11188 Analysis error reporting") {
+    runCliWithin(timeout = 2.minute,
+      errorResponses = Seq("AnalysisException"))(
+      "select * from nonexistent_table;"
+        -> "Error in query: Table not found: nonexistent_table;"
+    )
+  }
+
+  test("SPARK-11624 Spark SQL CLI should set sessionState only once") {
+    runCliWithin(2.minute, Seq("-e", "!echo \"This is a test for Spark-11624\";"))(
+      "" -> "This is a test for Spark-11624")
   }
 }

@@ -17,7 +17,8 @@
 
 package org.apache.spark.sql.sources
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
+import scala.util.Random
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -28,18 +29,18 @@ import org.apache.parquet.hadoop.ParquetOutputCommitter
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.hive.test.TestHive
+import org.apache.spark.sql.hive.test.TestHiveSingleton
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types._
 
 
-abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
-  override lazy val sqlContext: SQLContext = TestHive
-
-  import sqlContext.sql
+abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils with TestHiveSingleton {
   import sqlContext.implicits._
 
   val dataSourceName: String
+
+  protected def supportsDataType(dataType: DataType): Boolean = true
 
   val dataSchema =
     StructType(
@@ -59,7 +60,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
     p2 <- Seq("foo", "bar")
   } yield (i, s"val_$i", 2, p2)).toDF("a", "b", "p1", "p2")
 
-  lazy val partitionedTestDF = partitionedTestDF1.unionAll(partitionedTestDF2)
+  lazy val partitionedTestDF = partitionedTestDF1.union(partitionedTestDF2)
 
   def checkQueries(df: DataFrame): Unit = {
     // Selects everything
@@ -101,6 +102,72 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
     }
   }
 
+  private val supportedDataTypes = Seq(
+    StringType, BinaryType,
+    NullType, BooleanType,
+    ByteType, ShortType, IntegerType, LongType,
+    FloatType, DoubleType, DecimalType(25, 5), DecimalType(6, 5),
+    DateType, TimestampType,
+    ArrayType(IntegerType),
+    MapType(StringType, LongType),
+    new StructType()
+      .add("f1", FloatType, nullable = true)
+      .add("f2", ArrayType(BooleanType, containsNull = true), nullable = true),
+    new MyDenseVectorUDT()
+  ).filter(supportsDataType)
+
+  try {
+    for (dataType <- supportedDataTypes) {
+      for (parquetDictionaryEncodingEnabled <- Seq(true, false)) {
+        test(s"test all data types - $dataType with parquet.enable.dictionary = " +
+          s"$parquetDictionaryEncodingEnabled") {
+
+          hadoopConfiguration.setBoolean("parquet.enable.dictionary",
+            parquetDictionaryEncodingEnabled)
+
+          withTempPath { file =>
+            val path = file.getCanonicalPath
+
+            val dataGenerator = RandomDataGenerator.forType(
+              dataType = dataType,
+              nullable = true,
+              new Random(System.nanoTime())
+            ).getOrElse {
+              fail(s"Failed to create data generator for schema $dataType")
+            }
+
+            // Create a DF for the schema with random data. The index field is used to sort the
+            // DataFrame.  This is a workaround for SPARK-10591.
+            val schema = new StructType()
+              .add("index", IntegerType, nullable = false)
+              .add("col", dataType, nullable = true)
+            val rdd =
+              sqlContext.sparkContext.parallelize((1 to 10).map(i => Row(i, dataGenerator())))
+            val df = sqlContext.createDataFrame(rdd, schema).orderBy("index").coalesce(1)
+
+            df.write
+              .mode("overwrite")
+              .format(dataSourceName)
+              .option("dataSchema", df.schema.json)
+              .save(path)
+
+            val loadedDF = sqlContext
+              .read
+              .format(dataSourceName)
+              .option("dataSchema", df.schema.json)
+              .schema(df.schema)
+              .load(path)
+              .orderBy("index")
+
+            checkAnswer(loadedDF, df)
+          }
+        }
+      }
+    }
+  } finally {
+    hadoopConfiguration.unset("parquet.enable.dictionary")
+  }
+
   test("save()/load() - non-partitioned table - Overwrite") {
     withTempPath { file =>
       testDF.write.mode(SaveMode.Overwrite).format(dataSourceName).save(file.getCanonicalPath)
@@ -124,7 +191,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
         sqlContext.read.format(dataSourceName)
           .option("dataSchema", dataSchema.json)
           .load(file.getCanonicalPath).orderBy("a"),
-        testDF.unionAll(testDF).orderBy("a").collect())
+        testDF.union(testDF).orderBy("a").collect())
     }
   }
 
@@ -201,7 +268,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
         sqlContext.read.format(dataSourceName)
           .option("dataSchema", dataSchema.json)
           .load(file.getCanonicalPath),
-        partitionedTestDF.unionAll(partitionedTestDF).collect())
+        partitionedTestDF.union(partitionedTestDF).collect())
     }
   }
 
@@ -265,7 +332,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
     testDF.write.format(dataSourceName).mode(SaveMode.Append).saveAsTable("t")
 
     withTable("t") {
-      checkAnswer(sqlContext.table("t"), testDF.unionAll(testDF).orderBy("a").collect())
+      checkAnswer(sqlContext.table("t"), testDF.union(testDF).orderBy("a").collect())
     }
   }
 
@@ -296,6 +363,19 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
 
     withTable("t") {
       checkQueries(sqlContext.table("t"))
+    }
+  }
+
+  test("saveAsTable()/load() - partitioned table - boolean type") {
+    sqlContext.range(2)
+      .select('id, ('id % 2 === 0).as("b"))
+      .write.partitionBy("b").saveAsTable("t")
+
+    withTable("t") {
+      checkAnswer(
+        sqlContext.table("t").sort('id),
+        Row(0, true) :: Row(1, false) :: Nil
+      )
     }
   }
 
@@ -335,7 +415,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
       .saveAsTable("t")
 
     withTable("t") {
-      checkAnswer(sqlContext.table("t"), partitionedTestDF.unionAll(partitionedTestDF).collect())
+      checkAnswer(sqlContext.table("t"), partitionedTestDF.union(partitionedTestDF).collect())
     }
   }
 
@@ -419,6 +499,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
       val df = sqlContext.read
         .format(dataSourceName)
         .option("dataSchema", dataSchema.json)
+        .option("basePath", file.getCanonicalPath)
         .load(s"${file.getCanonicalPath}/p1=*/p2=???")
 
       val expectedPaths = Set(
@@ -433,8 +514,8 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
       }
 
       val actualPaths = df.queryExecution.analyzed.collectFirst {
-        case LogicalRelation(relation: HadoopFsRelation) =>
-          relation.paths.toSet
+        case LogicalRelation(relation: HadoopFsRelation, _, _) =>
+          relation.location.paths.map(_.toString).toSet
       }.getOrElse {
         fail("Expect an FSBasedRelation, but none could be found")
       }
@@ -444,21 +525,39 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
     }
   }
 
-  // HadoopFsRelation.discoverPartitions() called by refresh(), which will ignore
-  // the given partition data type.
-  ignore("Partition column type casting") {
+  test("SPARK-9735 Partition column type casting") {
     withTempPath { file =>
-      val input = partitionedTestDF.select('a, 'b, 'p1.cast(StringType).as('ps), 'p2)
+      val df = (for {
+        i <- 1 to 3
+        p2 <- Seq("foo", "bar")
+      } yield (i, s"val_$i", 1.0d, p2, 123, 123.123f)).toDF("a", "b", "p1", "p2", "p3", "f")
 
-      input
-        .write
-        .format(dataSourceName)
-        .mode(SaveMode.Overwrite)
-        .partitionBy("ps", "p2")
-        .saveAsTable("t")
+      val input = df.select(
+        'a,
+        'b,
+        'p1.cast(StringType).as('ps1),
+        'p2,
+        'p3.cast(FloatType).as('pf1),
+        'f)
 
       withTempTable("t") {
-        checkAnswer(sqlContext.table("t"), input.collect())
+        input
+          .write
+          .format(dataSourceName)
+          .mode(SaveMode.Overwrite)
+          .partitionBy("ps1", "p2", "pf1", "f")
+          .saveAsTable("t")
+
+        input
+          .write
+          .format(dataSourceName)
+          .mode(SaveMode.Append)
+          .partitionBy("ps1", "p2", "pf1", "f")
+          .saveAsTable("t")
+
+        val realData = input.collect()
+
+        checkAnswer(sqlContext.table("t"), realData ++ realData)
       }
     }
   }
@@ -473,7 +572,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
       .saveAsTable("t")
 
     withTable("t") {
-      checkAnswer(sqlContext.table("t"), df.select('b, 'c, 'a).collect())
+      checkAnswer(sqlContext.table("t").select('b, 'c, 'a), df.select('b, 'c, 'a).collect())
     }
   }
 
@@ -505,17 +604,17 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
   }
 
   test("SPARK-8578 specified custom output committer will not be used to append data") {
-    val clonedConf = new Configuration(configuration)
+    val clonedConf = new Configuration(hadoopConfiguration)
     try {
       val df = sqlContext.range(1, 10).toDF("i")
       withTempPath { dir =>
         df.write.mode("append").format(dataSourceName).save(dir.getCanonicalPath)
-        configuration.set(
+        hadoopConfiguration.set(
           SQLConf.OUTPUT_COMMITTER_CLASS.key,
           classOf[AlwaysFailOutputCommitter].getName)
         // Since Parquet has its own output committer setting, also set it
         // to AlwaysFailParquetOutputCommitter at here.
-        configuration.set("spark.sql.parquet.output.committer.class",
+        hadoopConfiguration.set("spark.sql.parquet.output.committer.class",
           classOf[AlwaysFailParquetOutputCommitter].getName)
         // Because there data already exists,
         // this append should succeed because we will use the output committer associated
@@ -526,7 +625,7 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
             .format(dataSourceName)
             .option("dataSchema", df.schema.json)
             .load(dir.getCanonicalPath),
-          df.unionAll(df))
+          df.union(df))
 
         // This will fail because AlwaysFailOutputCommitter is used when we do append.
         intercept[Exception] {
@@ -534,12 +633,12 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
         }
       }
       withTempPath { dir =>
-        configuration.set(
+        hadoopConfiguration.set(
           SQLConf.OUTPUT_COMMITTER_CLASS.key,
           classOf[AlwaysFailOutputCommitter].getName)
         // Since Parquet has its own output committer setting, also set it
         // to AlwaysFailParquetOutputCommitter at here.
-        configuration.set("spark.sql.parquet.output.committer.class",
+        hadoopConfiguration.set("spark.sql.parquet.output.committer.class",
           classOf[AlwaysFailParquetOutputCommitter].getName)
         // Because there is no existing data,
         // this append will fail because AlwaysFailOutputCommitter is used when we do append
@@ -550,8 +649,23 @@ abstract class HadoopFsRelationTest extends QueryTest with SQLTestUtils {
       }
     } finally {
       // Hadoop 1 doesn't have `Configuration.unset`
-      configuration.clear()
-      clonedConf.foreach(entry => configuration.set(entry.getKey, entry.getValue))
+      hadoopConfiguration.clear()
+      clonedConf.asScala.foreach(entry => hadoopConfiguration.set(entry.getKey, entry.getValue))
+    }
+  }
+
+  test("SPARK-8887: Explicitly define which data types can be used as dynamic partition columns") {
+    val df = Seq(
+      (1, "v1", Array(1, 2, 3), Map("k1" -> "v1"), Tuple2(1, "4")),
+      (2, "v2", Array(4, 5, 6), Map("k2" -> "v2"), Tuple2(2, "5")),
+      (3, "v3", Array(7, 8, 9), Map("k3" -> "v3"), Tuple2(3, "6"))).toDF("a", "b", "c", "d", "e")
+    withTempDir { file =>
+      intercept[AnalysisException] {
+        df.write.format(dataSourceName).partitionBy("c", "d", "e").save(file.getCanonicalPath)
+      }
+    }
+    intercept[AnalysisException] {
+      df.write.format(dataSourceName).partitionBy("c", "d", "e").saveAsTable("t")
     }
   }
 }

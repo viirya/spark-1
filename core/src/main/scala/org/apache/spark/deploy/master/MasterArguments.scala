@@ -19,6 +19,8 @@ package org.apache.spark.deploy.master
 
 import org.apache.spark.deploy.master.SchedulingMode.SchedulingMode
 import org.apache.spark.{SparkConf, SparkException}
+import scala.annotation.tailrec
+
 import org.apache.spark.util.{IntParam, Utils}
 
 /**
@@ -68,6 +70,7 @@ private[master] class MasterArguments(args: Array[String], conf: SparkConf) {
     schedulingConfigFile = Some(conf.get("spark.master.scheduling.config"))
   }
 
+  @tailrec
   private def parse(args: List[String]): Unit = args match {
     case ("--ip" | "-i") :: value :: tail =>
       Utils.checkHost(value, "ip no longer supported, please use hostname " + value)

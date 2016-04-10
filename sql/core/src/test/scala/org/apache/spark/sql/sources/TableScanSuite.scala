@@ -22,6 +22,7 @@ import java.sql.{Date, Timestamp}
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
+import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types._
 
 class DefaultSource extends SimpleScanSource
@@ -84,6 +85,7 @@ case class AllDataTypesScan(
         Date.valueOf("1970-01-01"),
         new Timestamp(20000 + i),
         s"varchar_$i",
+        s"char_$i",
         Seq(i, i + 1),
         Seq(Map(s"str_$i" -> Row(i.toLong))),
         Map(i -> i.toString),
@@ -95,8 +97,8 @@ case class AllDataTypesScan(
   }
 }
 
-class TableScanSuite extends DataSourceTest {
-  import caseInsensitiveContext.sql
+class TableScanSuite extends DataSourceTest with SharedSQLContext {
+  protected override lazy val sql = caseInsensitiveContext.sql _
 
   private lazy val tableWithSchemaExpected = (1 to 10).map { i =>
     Row(
@@ -114,6 +116,7 @@ class TableScanSuite extends DataSourceTest {
       Date.valueOf("1970-01-01"),
       new Timestamp(20000 + i),
       s"varchar_$i",
+      s"char_$i",
       Seq(i, i + 1),
       Seq(Map(s"str_$i" -> Row(i.toLong))),
       Map(i -> i.toString),
@@ -122,7 +125,8 @@ class TableScanSuite extends DataSourceTest {
       Row(Seq(s"str_$i", s"str_${i + 1}"), Row(Seq(Date.valueOf(s"1970-01-${i + 1}")))))
   }.toSeq
 
-  before {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
     sql(
       """
         |CREATE TEMPORARY TABLE oneToTen
@@ -152,6 +156,7 @@ class TableScanSuite extends DataSourceTest {
         |dateField dAte,
         |timestampField tiMestamp,
         |varcharField varchaR(12),
+        |charField ChaR(18),
         |arrayFieldSimple Array<inT>,
         |arrayFieldComplex Array<Map<String, Struct<key:bigInt>>>,
         |mapFieldSimple MAP<iNt, StRing>,
@@ -205,6 +210,7 @@ class TableScanSuite extends DataSourceTest {
       StructField("dateField", DateType, true) ::
       StructField("timestampField", TimestampType, true) ::
       StructField("varcharField", StringType, true) ::
+      StructField("charField", StringType, true) ::
       StructField("arrayFieldSimple", ArrayType(IntegerType), true) ::
       StructField("arrayFieldComplex",
         ArrayType(
@@ -246,6 +252,7 @@ class TableScanSuite extends DataSourceTest {
           | dateField,
           | timestampField,
           | varcharField,
+          | charField,
           | arrayFieldSimple,
           | arrayFieldComplex,
           | mapFieldSimple,
@@ -303,9 +310,10 @@ class TableScanSuite extends DataSourceTest {
       sql("SELECT i * 2 FROM oneToTen"),
       (1 to 10).map(i => Row(i * 2)).toSeq)
 
-    assertCached(sql("SELECT a.i, b.i FROM oneToTen a JOIN oneToTen b ON a.i = b.i + 1"), 2)
-    checkAnswer(
-      sql("SELECT a.i, b.i FROM oneToTen a JOIN oneToTen b ON a.i = b.i + 1"),
+    assertCached(sql(
+      "SELECT a.i, b.i FROM oneToTen a JOIN oneToTen b ON a.i = b.i + 1"), 2)
+    checkAnswer(sql(
+      "SELECT a.i, b.i FROM oneToTen a JOIN oneToTen b ON a.i = b.i + 1"),
       (2 to 10).map(i => Row(i, i - 1)).toSeq)
 
     // Verify uncaching
@@ -331,7 +339,7 @@ class TableScanSuite extends DataSourceTest {
 
   test("exceptions") {
     // Make sure we do throw correct exception when users use a relation provider that
-    // only implements the RelationProvier or the SchemaRelationProvider.
+    // only implements the RelationProvider or the SchemaRelationProvider.
     val schemaNotAllowed = intercept[Exception] {
       sql(
         """

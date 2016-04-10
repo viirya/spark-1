@@ -382,6 +382,7 @@ class StringExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     checkEvaluation(InitCap(Literal("a b")), "A B")
     checkEvaluation(InitCap(Literal(" a")), " A")
     checkEvaluation(InitCap(Literal("the test")), "The Test")
+    checkEvaluation(InitCap(Literal("sParK")), "Spark")
     // scalastyle:off
     // non ascii characters are not allowed in the code, so we disable the scalastyle here.
     checkEvaluation(InitCap(Literal("世界")), "世界")
@@ -673,7 +674,7 @@ class StringExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     checkEvaluation(Length(Literal.create(null, BinaryType)), null, create_row(bytes))
   }
 
-  test("number format") {
+  test("format_number / FormatNumber") {
     checkEvaluation(FormatNumber(Literal(4.asInstanceOf[Byte]), Literal(3)), "4.000")
     checkEvaluation(FormatNumber(Literal(4.asInstanceOf[Short]), Literal(3)), "4.000")
     checkEvaluation(FormatNumber(Literal(4.0f), Literal(3)), "4.000")

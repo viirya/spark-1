@@ -23,7 +23,8 @@ import java.util.{Comparator, Date, PriorityQueue}
 
 import scala.xml.XML
 
-import org.apache.spark.{Logging, SparkException}
+import org.apache.spark.SparkException
+import org.apache.spark.internal.Logging
 
 /**
  * An interface for sort algorithm
