@@ -607,8 +607,21 @@ case class TungstenAggregate(
     val unsafeRowBuffer = ctx.freshName("unsafeRowAggBuffer")
     val vectorizedRowBuffer = ctx.freshName("vectorizedAggBuffer")
 
+    // generate hash code for key
+    val hashExpr = Murmur3Hash(groupingExpressions, 42)
+    ctx.currentVars = input
+    val hashEval = BindReferences.bindReference(hashExpr, child.output).genCode(ctx)
+
+    // Special handling for TypedAggregateExpression
+    val (typedAggExprs, nonTypedAggExprs) = aggregateExpressions.partition { e =>
+      e.aggregateFunction match {
+        case _: TypedAggregateExpression => true
+        case _ => false
+      }
+    }
+
     // only have DeclarativeAggregate
-    val updateExpr = aggregateExpressions.flatMap { e =>
+    val typedUpdateExprs = typedAggExprs.flatMap { e =>
       e.mode match {
         case Partial | Complete =>
           e.aggregateFunction.asInstanceOf[DeclarativeAggregate].updateExpressions
@@ -617,13 +630,84 @@ case class TungstenAggregate(
       }
     }
 
-    // generate hash code for key
-    val hashExpr = Murmur3Hash(groupingExpressions, 42)
-    ctx.currentVars = input
-    val hashEval = BindReferences.bindReference(hashExpr, child.output).genCode(ctx)
+    val nonTypedUpdateExprs = nonTypedAggExprs.flatMap { e =>
+      e.mode match {
+        case Partial | Complete =>
+          e.aggregateFunction.asInstanceOf[DeclarativeAggregate].updateExpressions
+        case PartialMerge | Final =>
+          e.aggregateFunction.asInstanceOf[DeclarativeAggregate].mergeExpressions
+      }
+    }
+
+    println(s"typedUpdateExprs: $typedUpdateExprs")
+    println(s"nonTypedUpdateExprs: $nonTypedUpdateExprs")
+
+    val bufferSerializers = typedAggExprs.flatMap { e =>
+        e.aggregateFunction.asInstanceOf[TypedAggregateExpression].bufferSerializer
+    }
+
+    val bufferDeserializers = typedAggExprs.map { e =>
+        e.aggregateFunction.asInstanceOf[TypedAggregateExpression].bufferDeserializer
+    }
 
     val inputAttr = aggregateBufferAttributes ++ child.output
     ctx.currentVars = new Array[ExprCode](aggregateBufferAttributes.length) ++ input
+
+    val boundDeserializers = bufferDeserializers.map(BindReferences.bindReference(_, inputAttr))
+    println(s"boundDeserializers: $boundDeserializers")
+
+    ctx.INPUT_ROW = vectorizedRowBuffer
+    val vectorizedBufferDeserializers = boundDeserializers.map(_.genCode(ctx))
+    ctx.INPUT_ROW = unsafeRowBuffer
+    val unsafeBufferDeserializers = boundDeserializers.map(_.genCode(ctx))
+
+    // Rewritten TypedAggregateExpression's update/merge expressions to remove buffer serializers
+    // and deserializers.
+    val vectorizedRewrittenTypedUpdateExprs = 
+      typedAggExprs.zip(vectorizedBufferDeserializers).flatMap {
+        case (e, d) =>
+          e.mode match {
+            case Partial | Complete =>
+              e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
+                .updateExpressionsForCodegen(d)
+            case PartialMerge | Final =>
+              e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
+                .mergeExpressionsForCodegen(d)
+          }
+      }
+
+    val unsafeRewrittenTypedUpdateExprs = 
+      typedAggExprs.zip(unsafeBufferDeserializers).flatMap {
+        case (e, d) =>
+          e.mode match {
+            case Partial | Complete =>
+              e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
+                .updateExpressionsForCodegen(d)
+            case PartialMerge | Final =>
+              e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
+                .mergeExpressionsForCodegen(d)
+          }
+      }
+    println(s"vectorizedRewrittenTypedUpdateExprs: $vectorizedRewrittenTypedUpdateExprs")
+    println(s"unsafeRewrittenTypedUpdateExprs: $unsafeRewrittenTypedUpdateExprs")
+
+    // Create a map for retrieving domain objects with grouping keys.
+    val domainObjMap = if (typedUpdateExprs.nonEmpty) {
+      val mapVariable = ctx.freshName("domainObjMap")
+      ctx.addMutableState("java.util.HashMap<ByteBuffer, Object>",
+        mapVariable, s"$mapVariable = new HashMap<ByteBuffer, Object>();")
+      mapVariable
+    } else {
+      ""
+    }
+
+    val unsafeRowKeyCodeString = if (typedUpdateExprs.nonEmpty) {
+      val code = unsafeRowKeyCode.code
+      unsafeRowKeyCode.code = ""
+      code
+    }
+
+    val updateExpr = typedUpdateExprs ++ nonTypedUpdateExprs
 
     val (checkFallbackForGeneratedHashMap, checkFallbackForBytesToBytesMap, resetCounter,
     incCounter) = if (testFallbackStartsAt.isDefined) {
@@ -734,6 +818,26 @@ case class TungstenAggregate(
            """.stripMargin
     }
 
+    // Next, we generate code to probe and update the domain object map.
+    val findOrInsertInDomainObjMap: String = {
+      if (typedUpdateExprs.nonEmpty) {
+        s"""
+           | val keyBytes = ByteBuffer.wrap($unsafeRowKeys.getBytes());
+           | if ($domainObjMap.containsKey(keyBytes)) {
+           | } else {
+           |   // Get domain object and put into map.
+           |   if ($vectorizedRowBuffer != null) {
+           |     ${vectorizedBufferDeserializers.mkString("\n")}
+           |   } else {
+           |     ${unsafeBufferDeserializers.mkString("\n")}
+           |   }
+           |   $domainObjMap.put(keyBytes, );
+           | }
+         """.stripMargin
+      } else {
+        ""
+      }
+    }
 
     // We try to do hash map based in-memory aggregation first. If there is not enough memory (the
     // hash map will return null for new key), we spill the hash map to disk to free memory, then
@@ -743,9 +847,13 @@ case class TungstenAggregate(
      UnsafeRow $unsafeRowBuffer = null;
      org.apache.spark.sql.execution.vectorized.ColumnarBatch.Row $vectorizedRowBuffer = null;
 
+     $unsafeRowKeyCodeString
+
      ${findOrInsertInVectorizedHashMap.getOrElse("")}
 
      $findOrInsertInUnsafeRowMap
+
+     $findOrInsertInDomainObjMap
 
      $incCounter
 

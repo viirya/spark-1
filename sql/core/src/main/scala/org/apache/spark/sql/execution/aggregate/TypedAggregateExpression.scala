@@ -24,7 +24,8 @@ import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedDe
 import org.apache.spark.sql.catalyst.encoders.encoderFor
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
-import org.apache.spark.sql.catalyst.expressions.objects.Invoke
+import org.apache.spark.sql.catalyst.expressions.codegen.ExprCode
+import org.apache.spark.sql.catalyst.expressions.objects.{Invoke, LambdaVariable}
 import org.apache.spark.sql.expressions.Aggregator
 import org.apache.spark.sql.types._
 
@@ -91,6 +92,32 @@ case class TypedAggregateExpression(
     val zero = Literal.fromObject(aggregator.zero, bufferExternalType)
     bufferSerializer.map(ReferenceToExpressions(_, zero :: Nil))
   }
+
+  /**
+   * Re-written update/mergeExpressions used for Wholestage codegen.
+   * It replaces bufferSerializer and bufferDeserializer to reduce duplicate serialization
+   * and deserialization. bufferDeserializer is replaced to ReferenceToExpressions referring
+   * the value of deserialized domain object. bufferSerializer is replaced to the [[Invoke]]
+   * contained in it.
+   */
+  private def codegenUpdateExpressions(
+      deserializedExpr: ExprCode,
+      expressions: Seq[Expression]): Seq[Expression] = {
+    val deserializedVar =
+      LambdaVariable(deserializedExpr.value, deserializedExpr.isNull, bufferExternalType)
+
+    expressions.map { u =>
+      u.transformUp {
+        case e if e.semanticEquals(bufferDeserializer) => deserializedVar
+      }.asInstanceOf[ReferenceToExpressions].children.head
+    }
+  }
+
+  def updateExpressionsForCodegen(deserializedExpr: ExprCode): Seq[Expression] =
+    codegenUpdateExpressions(deserializedExpr, updateExpressions)
+
+  def mergeExpressionsForCodegen(deserializedExpr: ExprCode): Seq[Expression] =
+    codegenUpdateExpressions(deserializedExpr, mergeExpressions)
 
   override lazy val updateExpressions: Seq[Expression] = {
     val reduced = Invoke(
