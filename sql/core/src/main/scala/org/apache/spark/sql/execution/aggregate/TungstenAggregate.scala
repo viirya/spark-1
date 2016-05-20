@@ -663,7 +663,7 @@ case class TungstenAggregate(
 
     // Rewritten TypedAggregateExpression's update/merge expressions to remove buffer serializers
     // and deserializers.
-    val vectorizedRewrittenTypedUpdateExprs = 
+    val vectorizedRewrittenTypedUpdateExprs =
       typedAggExprs.zip(vectorizedBufferDeserializers).flatMap {
         case (e, d) =>
           e.mode match {
@@ -676,7 +676,7 @@ case class TungstenAggregate(
           }
       }
 
-    val unsafeRewrittenTypedUpdateExprs = 
+    val unsafeRewrittenTypedUpdateExprs =
       typedAggExprs.zip(unsafeBufferDeserializers).flatMap {
         case (e, d) =>
           e.mode match {
@@ -705,6 +705,8 @@ case class TungstenAggregate(
       val code = unsafeRowKeyCode.code
       unsafeRowKeyCode.code = ""
       code
+    } else {
+      ""
     }
 
     val updateExpr = typedUpdateExprs ++ nonTypedUpdateExprs
