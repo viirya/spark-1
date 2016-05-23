@@ -283,6 +283,9 @@ case class TungstenAggregate(
   private var hashMapTerm: String = _
   private var sorterTerm: String = _
 
+  // The name for storing domain objects for typed aggregation function.
+  private var domainObjMap: String = _
+
   /**
    * This is called by generated Java class, should be public.
    */
@@ -548,6 +551,23 @@ case class TungstenAggregate(
         bufferSchema.foreach(i => schema = schema.add(i))
         val generateRow = GenerateUnsafeProjection.createCode(ctx, schema.toAttributes.zipWithIndex
           .map { case (attr, i) => BoundReference(i, attr.dataType, attr.nullable) })
+        // Generate key for domain object map
+        val generateKeyRow = GenerateUnsafeProjection.createCode(ctx, groupingKeySchema.toAttributes
+          .zipWithIndex.map { case (attr, i) => BoundReference(i, attr.dataType, attr.nullable) })
+        val serializedBackToBuffer =
+          if (domainObjMap != "") {
+            s"""
+               |   ${generateKeyRow.code}
+               |   if ($domainObjMap.contains(${generateKeyRow.value})) {
+               |     java.util.ArrayList<Object> objects =
+                       $domainObjMap.get(${generateKeyRow.value});
+               |     // Serialize back to row.
+               |   }
+             """.stripMargin
+          } else {
+            ""
+          }
+
         Option(
           s"""
              | while ($iterTermForVectorizedHashMap.hasNext()) {
@@ -556,6 +576,7 @@ case class TungstenAggregate(
              |     (org.apache.spark.sql.execution.vectorized.ColumnarBatch.Row)
              |     $iterTermForVectorizedHashMap.next();
              |   ${generateRow.code}
+             |   ${serializedBackToBuffer}
              |   ${consume(ctx, Seq.empty, {generateRow.value})}
              |
              |   if (shouldStop()) return;
@@ -612,6 +633,15 @@ case class TungstenAggregate(
     ctx.currentVars = input
     val hashEval = BindReferences.bindReference(hashExpr, child.output).genCode(ctx)
 
+    val updateExprs = aggregateExpressions.flatMap { e =>
+      e.mode match {
+        case Partial | Complete =>
+          e.aggregateFunction.asInstanceOf[DeclarativeAggregate].updateExpressions
+        case PartialMerge | Final =>
+          e.aggregateFunction.asInstanceOf[DeclarativeAggregate].mergeExpressions
+      }
+    }
+
     // Special handling for TypedAggregateExpression
     val (typedAggExprs, nonTypedAggExprs) = aggregateExpressions.partition { e =>
       e.aggregateFunction match {
@@ -631,20 +661,35 @@ case class TungstenAggregate(
     }
 
     val nonTypedUpdateExprs = nonTypedAggExprs.flatMap { e =>
-      e.mode match {
+      val exprs = e.mode match {
         case Partial | Complete =>
           e.aggregateFunction.asInstanceOf[DeclarativeAggregate].updateExpressions
         case PartialMerge | Final =>
           e.aggregateFunction.asInstanceOf[DeclarativeAggregate].mergeExpressions
       }
+      exprs.map { expr =>
+        val index = updateExprs.indexOf(expr)
+        (expr, index)
+      }
     }
 
-    println(s"typedUpdateExprs: $typedUpdateExprs")
-    println(s"nonTypedUpdateExprs: $nonTypedUpdateExprs")
+    // println(s"typedUpdateExprs: $typedUpdateExprs")
+    // println(s"nonTypedUpdateExprs: $nonTypedUpdateExprs")
 
     val bufferSerializers = typedAggExprs.flatMap { e =>
-        e.aggregateFunction.asInstanceOf[TypedAggregateExpression].bufferSerializer
+      val typedExpr = e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
+      typedExpr.bufferSerializer.zipWithIndex.map { case (ser: NamedExpression, index: Int) =>
+        val offset = e.mode match {
+          case Partial | Complete =>
+            updateExprs.indexOf(typedExpr.updateExpressions(index))
+          case PartialMerge | Final =>
+            updateExprs.indexOf(typedExpr.mergeExpressions(index))
+        }
+        (ser, offset + index)
+      }
     }
+
+    println(s"bufferSerializer: $bufferSerializers")
 
     val bufferDeserializers = typedAggExprs.map { e =>
         e.aggregateFunction.asInstanceOf[TypedAggregateExpression].bufferDeserializer
@@ -654,15 +699,15 @@ case class TungstenAggregate(
     ctx.currentVars = new Array[ExprCode](aggregateBufferAttributes.length) ++ input
 
     val boundDeserializers = bufferDeserializers.map(BindReferences.bindReference(_, inputAttr))
-    println(s"boundDeserializers: $boundDeserializers")
+    // println(s"boundDeserializers: $boundDeserializers")
 
     ctx.INPUT_ROW = vectorizedRowBuffer
     val vectorizedBufferDeserializers = boundDeserializers.map(_.genCode(ctx))
     ctx.INPUT_ROW = unsafeRowBuffer
     val unsafeBufferDeserializers = boundDeserializers.map(_.genCode(ctx))
 
-    println(s"vectorizedBufferDeserializers: $vectorizedBufferDeserializers")
-    println(s"unsafeBufferDeserializers: $unsafeBufferDeserializers")
+    // println(s"vectorizedBufferDeserializers: $vectorizedBufferDeserializers")
+    // println(s"unsafeBufferDeserializers: $unsafeBufferDeserializers")
 
     val objectArray = ctx.freshName("objectArray")
 
@@ -693,11 +738,11 @@ case class TungstenAggregate(
                 .mergeExpressionsForCodegen(d, objectArray, idx)
           }
       }
-    println(s"vectorizedRewrittenTypedUpdateExprs: $vectorizedRewrittenTypedUpdateExprs")
-    println(s"unsafeRewrittenTypedUpdateExprs: $unsafeRewrittenTypedUpdateExprs")
+    // println(s"vectorizedRewrittenTypedUpdateExprs: $vectorizedRewrittenTypedUpdateExprs")
+    // println(s"unsafeRewrittenTypedUpdateExprs: $unsafeRewrittenTypedUpdateExprs")
 
     // Create a map for retrieving domain objects with grouping keys.
-    val domainObjMap = if (typedUpdateExprs.nonEmpty) {
+    domainObjMap = if (typedUpdateExprs.nonEmpty) {
       val mapVariable = ctx.freshName("domainObjMap")
       ctx.addMutableState("java.util.HashMap<ByteBuffer, ArrayList<Object>>",
         mapVariable, s"$mapVariable = new java.util.HashMap<ByteBuffer, ArrayList<Object>>();")
@@ -749,16 +794,17 @@ case class TungstenAggregate(
     val updateRowInVectorizedHashMap: Option[String] = {
       if (isVectorizedHashMapEnabled) {
         ctx.INPUT_ROW = vectorizedRowBuffer
-        val boundUpdateExpr = nonTypedUpdateExprs.map(BindReferences.bindReference(_, inputAttr))
+        val boundUpdateExpr =
+          nonTypedUpdateExprs.map(x => BindReferences.bindReference(x._1, inputAttr))
         val subExprs = ctx.subexpressionEliminationForWholeStageCodegen(boundUpdateExpr)
         val effectiveCodes = subExprs.codes.mkString("\n")
         val vectorizedRowEvals = ctx.withSubExprEliminationExprs(subExprs.states) {
           boundUpdateExpr.map(_.genCode(ctx))
         }
         val updateVectorizedRow = vectorizedRowEvals.zipWithIndex.map { case (ev, i) =>
-          val dt = nonTypedUpdateExprs(i).dataType
-          ctx.updateColumn(vectorizedRowBuffer, dt, i, ev, nonTypedUpdateExprs(i).nullable,
-            isVectorized = true)
+          val dt = nonTypedUpdateExprs(i)._1.dataType
+          ctx.updateColumn(vectorizedRowBuffer, dt, nonTypedUpdateExprs(i)._2, ev,
+            nonTypedUpdateExprs(i)._1.nullable, isVectorized = true)
         }
         Option(
           s"""
@@ -806,15 +852,17 @@ case class TungstenAggregate(
 
     val updateRowInUnsafeRowMap: String = {
       ctx.INPUT_ROW = unsafeRowBuffer
-      val boundUpdateExpr = nonTypedUpdateExprs.map(BindReferences.bindReference(_, inputAttr))
+      val boundUpdateExpr =
+        nonTypedUpdateExprs.map(x => BindReferences.bindReference(x._1, inputAttr))
       val subExprs = ctx.subexpressionEliminationForWholeStageCodegen(boundUpdateExpr)
       val effectiveCodes = subExprs.codes.mkString("\n")
       val unsafeRowBufferEvals = ctx.withSubExprEliminationExprs(subExprs.states) {
         boundUpdateExpr.map(_.genCode(ctx))
       }
       val updateUnsafeRowBuffer = unsafeRowBufferEvals.zipWithIndex.map { case (ev, i) =>
-        val dt = nonTypedUpdateExprs(i).dataType
-        ctx.updateColumn(unsafeRowBuffer, dt, i, ev, nonTypedUpdateExprs(i).nullable)
+        val dt = nonTypedUpdateExprs(i)._1.dataType
+        ctx.updateColumn(unsafeRowBuffer, dt, nonTypedUpdateExprs(i)._2, ev,
+          nonTypedUpdateExprs(i)._1.nullable)
       }
       s"""
          |// common sub-expressions
