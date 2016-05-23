@@ -102,9 +102,11 @@ case class TypedAggregateExpression(
    */
   private def codegenUpdateExpressions(
       deserializedExpr: ExprCode,
+      objectArray: String,
+      ordinal: Int,
       expressions: Seq[Expression]): Seq[Expression] = {
     val deserializedVar =
-      LambdaVariable(deserializedExpr.value, deserializedExpr.isNull, bufferExternalType)
+      LambdaVariable(s"$objectArray.get($ordinal)", deserializedExpr.isNull, bufferExternalType)
 
     expressions.map { u =>
       u.transformUp {
@@ -113,11 +115,17 @@ case class TypedAggregateExpression(
     }
   }
 
-  def updateExpressionsForCodegen(deserializedExpr: ExprCode): Seq[Expression] =
-    codegenUpdateExpressions(deserializedExpr, updateExpressions)
+  def updateExpressionsForCodegen(
+      deserializedExpr: ExprCode,
+      objectArray: String,
+      ordinal: Int): Seq[Expression] =
+    codegenUpdateExpressions(deserializedExpr, objectArray, ordinal, updateExpressions)
 
-  def mergeExpressionsForCodegen(deserializedExpr: ExprCode): Seq[Expression] =
-    codegenUpdateExpressions(deserializedExpr, mergeExpressions)
+  def mergeExpressionsForCodegen(
+      deserializedExpr: ExprCode,
+      objectArray: String,
+      ordinal: Int): Seq[Expression] =
+    codegenUpdateExpressions(deserializedExpr, objectArray, ordinal, mergeExpressions)
 
   override lazy val updateExpressions: Seq[Expression] = {
     val reduced = Invoke(

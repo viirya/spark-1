@@ -661,31 +661,36 @@ case class TungstenAggregate(
     ctx.INPUT_ROW = unsafeRowBuffer
     val unsafeBufferDeserializers = boundDeserializers.map(_.genCode(ctx))
 
+    println(s"vectorizedBufferDeserializers: $vectorizedBufferDeserializers")
+    println(s"unsafeBufferDeserializers: $unsafeBufferDeserializers")
+
+    val objectArray = ctx.freshName("objectArray")
+
     // Rewritten TypedAggregateExpression's update/merge expressions to remove buffer serializers
     // and deserializers.
     val vectorizedRewrittenTypedUpdateExprs =
-      typedAggExprs.zip(vectorizedBufferDeserializers).flatMap {
-        case (e, d) =>
+      typedAggExprs.zipWithIndex.zip(vectorizedBufferDeserializers).flatMap {
+        case ((e, idx), d) =>
           e.mode match {
             case Partial | Complete =>
               e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
-                .updateExpressionsForCodegen(d)
+                .updateExpressionsForCodegen(d, objectArray, idx)
             case PartialMerge | Final =>
               e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
-                .mergeExpressionsForCodegen(d)
+                .mergeExpressionsForCodegen(d, objectArray, idx)
           }
       }
 
     val unsafeRewrittenTypedUpdateExprs =
-      typedAggExprs.zip(unsafeBufferDeserializers).flatMap {
-        case (e, d) =>
+      typedAggExprs.zipWithIndex.zip(unsafeBufferDeserializers).flatMap {
+        case ((e, idx), d) =>
           e.mode match {
             case Partial | Complete =>
               e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
-                .updateExpressionsForCodegen(d)
+                .updateExpressionsForCodegen(d, objectArray, idx)
             case PartialMerge | Final =>
               e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
-                .mergeExpressionsForCodegen(d)
+                .mergeExpressionsForCodegen(d, objectArray, idx)
           }
       }
     println(s"vectorizedRewrittenTypedUpdateExprs: $vectorizedRewrittenTypedUpdateExprs")
@@ -694,8 +699,8 @@ case class TungstenAggregate(
     // Create a map for retrieving domain objects with grouping keys.
     val domainObjMap = if (typedUpdateExprs.nonEmpty) {
       val mapVariable = ctx.freshName("domainObjMap")
-      ctx.addMutableState("java.util.HashMap<ByteBuffer, Object>",
-        mapVariable, s"$mapVariable = new HashMap<ByteBuffer, Object>();")
+      ctx.addMutableState("java.util.HashMap<ByteBuffer, ArrayList<Object>>",
+        mapVariable, s"$mapVariable = new java.util.HashMap<ByteBuffer, ArrayList<Object>>();")
       mapVariable
     } else {
       ""
@@ -709,7 +714,8 @@ case class TungstenAggregate(
       ""
     }
 
-    val updateExpr = typedUpdateExprs ++ nonTypedUpdateExprs
+    // val updateExpr = vectorizedRewrittenTypedUpdateExprs ++ unsafeRewrittenTypedUpdateExprs ++
+    //  nonTypedUpdateExprs
 
     val (checkFallbackForGeneratedHashMap, checkFallbackForBytesToBytesMap, resetCounter,
     incCounter) = if (testFallbackStartsAt.isDefined) {
@@ -743,15 +749,15 @@ case class TungstenAggregate(
     val updateRowInVectorizedHashMap: Option[String] = {
       if (isVectorizedHashMapEnabled) {
         ctx.INPUT_ROW = vectorizedRowBuffer
-        val boundUpdateExpr = updateExpr.map(BindReferences.bindReference(_, inputAttr))
+        val boundUpdateExpr = nonTypedUpdateExprs.map(BindReferences.bindReference(_, inputAttr))
         val subExprs = ctx.subexpressionEliminationForWholeStageCodegen(boundUpdateExpr)
         val effectiveCodes = subExprs.codes.mkString("\n")
         val vectorizedRowEvals = ctx.withSubExprEliminationExprs(subExprs.states) {
           boundUpdateExpr.map(_.genCode(ctx))
         }
         val updateVectorizedRow = vectorizedRowEvals.zipWithIndex.map { case (ev, i) =>
-          val dt = updateExpr(i).dataType
-          ctx.updateColumn(vectorizedRowBuffer, dt, i, ev, updateExpr(i).nullable,
+          val dt = nonTypedUpdateExprs(i).dataType
+          ctx.updateColumn(vectorizedRowBuffer, dt, i, ev, nonTypedUpdateExprs(i).nullable,
             isVectorized = true)
         }
         Option(
@@ -800,15 +806,15 @@ case class TungstenAggregate(
 
     val updateRowInUnsafeRowMap: String = {
       ctx.INPUT_ROW = unsafeRowBuffer
-      val boundUpdateExpr = updateExpr.map(BindReferences.bindReference(_, inputAttr))
+      val boundUpdateExpr = nonTypedUpdateExprs.map(BindReferences.bindReference(_, inputAttr))
       val subExprs = ctx.subexpressionEliminationForWholeStageCodegen(boundUpdateExpr)
       val effectiveCodes = subExprs.codes.mkString("\n")
       val unsafeRowBufferEvals = ctx.withSubExprEliminationExprs(subExprs.states) {
         boundUpdateExpr.map(_.genCode(ctx))
       }
       val updateUnsafeRowBuffer = unsafeRowBufferEvals.zipWithIndex.map { case (ev, i) =>
-        val dt = updateExpr(i).dataType
-        ctx.updateColumn(unsafeRowBuffer, dt, i, ev, updateExpr(i).nullable)
+        val dt = nonTypedUpdateExprs(i).dataType
+        ctx.updateColumn(unsafeRowBuffer, dt, i, ev, nonTypedUpdateExprs(i).nullable)
       }
       s"""
          |// common sub-expressions
@@ -824,19 +830,44 @@ case class TungstenAggregate(
     val findOrInsertInDomainObjMap: String = {
       if (typedUpdateExprs.nonEmpty) {
         s"""
-           | val keyBytes = ByteBuffer.wrap($unsafeRowKeys.getBytes());
+           | java.nio.ByteBuffer keyBytes = java.nio.ByteBuffer.wrap($unsafeRowKeys.getBytes());
+           | java.util.ArrayList<Object> $objectArray = null;
            | if ($domainObjMap.containsKey(keyBytes)) {
+           |   $objectArray = (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
            | } else {
            |   // Get domain object and put into map.
+           |   $objectArray = new java.util.ArrayList<Object>();
            |   if ($vectorizedRowBuffer != null) {
-           |     ${vectorizedBufferDeserializers.mkString("\n")}
+           |     ${vectorizedBufferDeserializers.map(_.code).mkString("\n")}
+           |     ${vectorizedBufferDeserializers.map(d => s"$objectArray.add(${d.value});")
+                   .mkString("\n")}
            |   } else {
-           |     ${unsafeBufferDeserializers.mkString("\n")}
+           |     ${unsafeBufferDeserializers.map(_.code).mkString("\n")}
+           |     ${unsafeBufferDeserializers.map(d => s"$objectArray.add(${d.value});")
+                   .mkString("\n")}
            |   }
-           |   $domainObjMap.put(keyBytes, );
+           |   $domainObjMap.put(keyBytes, $objectArray);
            | }
          """.stripMargin
       } else {
+        ""
+      }
+    }
+
+    // We only need to use unsafeRewrittenTypedUpdateExprs here.
+    val rewrittenTypedUpdateExprs =
+      unsafeRewrittenTypedUpdateExprs.map(BindReferences.bindReference(_, inputAttr).genCode(ctx))
+    val domainObjUpdateExprs = rewrittenTypedUpdateExprs.zipWithIndex.map { case (expr, idx) =>
+      s"$objectArray.set($idx, ${expr.value});"
+    }
+    // Generate codes used to update domain objects.
+    val updateDomainObjects: String = {
+      if (typedUpdateExprs.nonEmpty) {
+        s"""
+           | ${rewrittenTypedUpdateExprs.map(_.code).mkString("\n")}
+           | ${domainObjUpdateExprs.mkString("\n")}
+         """.stripMargin
+       } else {
         ""
       }
     }
@@ -866,6 +897,8 @@ case class TungstenAggregate(
        // update unsafe row
        $updateRowInUnsafeRowMap
      }
+
+     $updateDomainObjects
      """
   }
 
