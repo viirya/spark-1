@@ -283,8 +283,10 @@ case class TungstenAggregate(
   private var hashMapTerm: String = _
   private var sorterTerm: String = _
 
-  // The name for storing domain objects for typed aggregation function.
+  // The name for storing domain objects for typed aggregation functions.
   private var domainObjMap: String = _
+  // The serializer expressions of typed aggregation functions.
+  private var bufferSerializers: Seq[(NamedExpression, Int)] = _
 
   /**
    * This is called by generated Java class, should be public.
@@ -554,6 +556,9 @@ case class TungstenAggregate(
         // Generate key for domain object map
         val generateKeyRow = GenerateUnsafeProjection.createCode(ctx, groupingKeySchema.toAttributes
           .zipWithIndex.map { case (attr, i) => BoundReference(i, attr.dataType, attr.nullable) })
+        val serializerCodes = bufferSerializers.map { case (ser, _) =>
+          s"${ser.genCode(ctx).code}"
+        }.mkString("\n")
         val serializedBackToBuffer =
           if (domainObjMap != "") {
             s"""
@@ -562,6 +567,7 @@ case class TungstenAggregate(
                |     java.util.ArrayList<Object> objects =
                        $domainObjMap.get(${generateKeyRow.value});
                |     // Serialize back to row.
+               |     $serializerCodes
                |   }
              """.stripMargin
           } else {
@@ -587,6 +593,22 @@ case class TungstenAggregate(
       } else None
     }
 
+    ctx.INPUT_ROW = bufferTerm
+    ctx.currentVars = null
+    val test = bufferSerializers.map { case (ser, _) =>
+      ser.genCode(ctx).code
+    }
+    println(s"test: $test")
+    val serializerCodes = bufferSerializers.map { case (ser, _) =>
+      ser.genCode(ctx)
+    }
+    println(s"serializerCodes: $serializerCodes")
+    val evaluatedSerializers = serializerCodes.map(_.code).mkString("\n")
+    val updateToRow = bufferSerializers.zip(serializerCodes).map { case ((ser, index), exprCode) =>
+      ctx.updateColumn(bufferTerm, ser.dataType, index, exprCode, ser.nullable)
+    }.mkString("\n").trim
+    println(s"updateToRow: $updateToRow")
+
     val aggTime = metricTerm(ctx, "aggTime")
     val beforeAgg = ctx.freshName("beforeAgg")
     s"""
@@ -604,6 +626,9 @@ case class TungstenAggregate(
        $numOutput.add(1);
        UnsafeRow $keyTerm = (UnsafeRow) $iterTerm.getKey();
        UnsafeRow $bufferTerm = (UnsafeRow) $iterTerm.getValue();
+       // Evaluate Serializers
+       ${evaluatedSerializers}
+       // Serialize back to row
        $outputCode
 
        if (shouldStop()) return;
@@ -676,7 +701,7 @@ case class TungstenAggregate(
     // println(s"typedUpdateExprs: $typedUpdateExprs")
     // println(s"nonTypedUpdateExprs: $nonTypedUpdateExprs")
 
-    val bufferSerializers = typedAggExprs.flatMap { e =>
+    bufferSerializers = typedAggExprs.flatMap { e =>
       val typedExpr = e.aggregateFunction.asInstanceOf[TypedAggregateExpression]
       typedExpr.bufferSerializer.zipWithIndex.map { case (ser: NamedExpression, index: Int) =>
         val offset = e.mode match {
