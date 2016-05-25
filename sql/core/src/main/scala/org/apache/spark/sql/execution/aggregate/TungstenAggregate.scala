@@ -563,9 +563,11 @@ case class TungstenAggregate(
           if (domainObjMap != "") {
             s"""
                |   ${generateKeyRow.code}
-               |   if ($domainObjMap.contains(${generateKeyRow.value})) {
+               |   java.nio.ByteBuffer keyBytes =
+                     java.nio.ByteBuffer.wrap(${generateKeyRow.value}.getBytes());
+               |   if ($domainObjMap.containsKey(keyBytes)) {
                |     java.util.ArrayList<Object> objects =
-                       $domainObjMap.get(${generateKeyRow.value});
+                       (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
                |     // Serialize back to row.
                |     $serializerCodes
                |   }
@@ -593,8 +595,13 @@ case class TungstenAggregate(
       } else None
     }
 
-    ctx.INPUT_ROW = bufferTerm
-    ctx.currentVars = null
+    // Evaluate serializers for typed aggregation functions.
+    // We bind serializer expressions to the array used to store domain objects.
+    val objectArray = ctx.freshName("objectArray")
+    ctx.currentVars = bufferSerializers.map { case (ser, index) =>
+      val javaType = s"(${ctx.boxedType(ser.dataType)})"
+      ExprCode("", "false", s"$javaType$objectArray.get($index)")
+    }
     val test = bufferSerializers.map { case (ser, _) =>
       ser.genCode(ctx).code
     }
@@ -608,6 +615,24 @@ case class TungstenAggregate(
       ctx.updateColumn(bufferTerm, ser.dataType, index, exprCode, ser.nullable)
     }.mkString("\n").trim
     println(s"updateToRow: $updateToRow")
+
+    val serializedBackToBuffer =
+      if (domainObjMap != "") {
+        s"""
+           |   java.nio.ByteBuffer keyBytes =
+                 java.nio.ByteBuffer.wrap(${keyTerm}.getBytes());
+           |   if ($domainObjMap.containsKey(keyBytes)) {
+           |     java.util.ArrayList<Object> $objectArray =
+                   (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
+           |     // Evaluate Serializers
+           |     ${evaluatedSerializers}
+           |     // Serialize back to row
+           |     ${updateToRow}
+           |   }
+         """.stripMargin
+      } else {
+        ""
+      }
 
     val aggTime = metricTerm(ctx, "aggTime")
     val beforeAgg = ctx.freshName("beforeAgg")
@@ -626,9 +651,7 @@ case class TungstenAggregate(
        $numOutput.add(1);
        UnsafeRow $keyTerm = (UnsafeRow) $iterTerm.getKey();
        UnsafeRow $bufferTerm = (UnsafeRow) $iterTerm.getValue();
-       // Evaluate Serializers
-       ${evaluatedSerializers}
-       // Serialize back to row
+       $serializedBackToBuffer
        $outputCode
 
        if (shouldStop()) return;
