@@ -580,7 +580,8 @@ case class TungstenAggregate(
           .zipWithIndex.map { case (attr, i) => BoundReference(i, attr.dataType, attr.nullable) })
         val updateToRow = bufferSerializers.zip(serializerCodes).map {
           case ((ser, index), exprCode) =>
-            ctx.updateColumn(generateRow.value, ser.dataType, index, exprCode, ser.nullable)
+            ctx.updateColumn(generateRow.value, ser.dataType, index + groupingKeySchema.size,
+              exprCode, ser.nullable)
         }.mkString("\n").trim
 
         val serializedBackToBuffer =
@@ -594,10 +595,14 @@ case class TungstenAggregate(
                |     System.out.println("keyBytes[" + i + "] = " + keyBytes.get(i));
                |   }
                |   System.out.println("size of $domainObjMap = " + $domainObjMap.size());
-               |   if ($domainObjMap.containsKey(keyBytes)) {
+               |   System.out.println("unsaferow key = " + ${generateKeyRow.value});
+               |   for (java.util.Iterator it = $domainObjMap.keySet().iterator(); it.hasNext();) {
+               |     System.out.println("key in map = " + it.next());
+               |   }
+               |   if ($domainObjMap.containsKey(${generateKeyRow.value})) {
                |     System.out.println("(2) found key!");
                |     java.util.ArrayList<Object> $objectArray =
-                       (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
+                       (java.util.ArrayList<Object>)$domainObjMap.get(${generateKeyRow.value});
                |     // Serialize back to row.
                |     $updateToRow
                |     $showData
@@ -616,8 +621,8 @@ case class TungstenAggregate(
              |   org.apache.spark.sql.execution.vectorized.ColumnarBatch.Row $row =
              |     (org.apache.spark.sql.execution.vectorized.ColumnarBatch.Row)
              |     $iterTermForVectorizedHashMap.next();
-             |   ${serializedBackToBuffer}
              |   ${generateRow.code}
+             |   ${serializedBackToBuffer}
              |   ${consume(ctx, Seq.empty, {generateRow.value})}
              |
              |   if (shouldStop()) return;
@@ -638,9 +643,9 @@ case class TungstenAggregate(
         s"""
            |   java.nio.ByteBuffer keyBytes =
                  java.nio.ByteBuffer.wrap(${keyTerm}.getBytes());
-           |   if ($domainObjMap.containsKey(keyBytes)) {
+           |   if ($domainObjMap.containsKey(${keyTerm})) {
            |     java.util.ArrayList<Object> $objectArray =
-                   (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
+                   (java.util.ArrayList<Object>)$domainObjMap.get(${keyTerm});
            |     // Evaluate Serializers
            |     ${evaluatedSerializers}
            |     // Serialize back to row
@@ -810,8 +815,8 @@ case class TungstenAggregate(
     // Create a map for retrieving domain objects with grouping keys.
     domainObjMap = if (typedUpdateExprs.nonEmpty) {
       val mapVariable = ctx.freshName("domainObjMap")
-      ctx.addMutableState("java.util.HashMap<ByteBuffer, ArrayList<Object>>",
-        mapVariable, s"$mapVariable = new java.util.HashMap<ByteBuffer, ArrayList<Object>>();")
+      ctx.addMutableState("java.util.HashMap<UnsafeRow, ArrayList<Object>>",
+        mapVariable, s"$mapVariable = new java.util.HashMap<UnsafeRow, ArrayList<Object>>();")
       mapVariable
     } else {
       ""
@@ -964,9 +969,13 @@ case class TungstenAggregate(
            | for (int i = 0; i < keyBytes.capacity(); i++) {
            |   System.out.println("keyBytes[" + i + "] = " + keyBytes.get(i));
            | }
-           | if ($domainObjMap.containsKey(keyBytes)) {
+           | System.out.println("unsaferow key = " + $unsafeRowKeys);
+           | for (java.util.Iterator it = $domainObjMap.keySet().iterator(); it.hasNext();) {
+           |   System.out.println("key in map = " + it.next());
+           | }
+           | if ($domainObjMap.containsKey($unsafeRowKeys)) {
            |   System.out.println("Found key!");
-           |   $objectArray = (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
+           |   $objectArray = (java.util.ArrayList<Object>)$domainObjMap.get($unsafeRowKeys);
            | } else {
            |   System.out.println("Not found key!");
            |   // Get domain object and put into map.
@@ -980,7 +989,7 @@ case class TungstenAggregate(
            |     ${unsafeBufferDeserializers.map(d => s"$objectArray.add(${d.value});")
                    .mkString("\n")}
            |   }
-           |   $domainObjMap.put(keyBytes, $objectArray);
+           |   $domainObjMap.put($unsafeRowKeys.copy(), $objectArray);
            |   ${unsafeBufferDeserializers.zipWithIndex.map { case (_, idx) =>
                 s"""System.out.println("init value at " + $idx + " = " + $objectArray.get($idx));"""
                }.mkString("\n")}
