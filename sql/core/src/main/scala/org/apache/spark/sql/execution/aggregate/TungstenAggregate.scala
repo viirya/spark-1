@@ -543,6 +543,27 @@ case class TungstenAggregate(
     // so `copyResult` should be reset to `false`.
     ctx.copyResult = false
 
+    // Evaluate serializers for typed aggregation functions.
+    // We bind serializer expressions to the array used to store domain objects.
+    val objectArray = ctx.freshName("objectArray")
+    ctx.currentVars = bufferSerializers.map { case (ser, index) =>
+      val javaType = s"(${ctx.boxedType(ser.dataType)})"
+      ExprCode("", "false", s"$javaType$objectArray.get($index)")
+    }
+    val showData = bufferSerializers.map { case (ser, index) =>
+      val javaType = s"(${ctx.boxedType(ser.dataType)})"
+      s"""System.out.println("$objectArray[$index] = " + $javaType$objectArray.get($index));"""
+    }.mkString("\n")
+    val test = bufferSerializers.map { case (ser, _) =>
+      ser.genCode(ctx).code
+    }
+    println(s"test: $test")
+    val serializerCodes = bufferSerializers.map { case (ser, _) =>
+      ser.genCode(ctx)
+    }
+    println(s"serializerCodes: $serializerCodes")
+    val evaluatedSerializers = serializerCodes.map(_.code).mkString("\n")
+
     // Iterate over the aggregate rows and convert them from ColumnarBatch.Row to UnsafeRow
     def outputFromGeneratedMap: Option[String] = {
       if (isVectorizedHashMapEnabled) {
@@ -553,23 +574,35 @@ case class TungstenAggregate(
         bufferSchema.foreach(i => schema = schema.add(i))
         val generateRow = GenerateUnsafeProjection.createCode(ctx, schema.toAttributes.zipWithIndex
           .map { case (attr, i) => BoundReference(i, attr.dataType, attr.nullable) })
+
         // Generate key for domain object map
         val generateKeyRow = GenerateUnsafeProjection.createCode(ctx, groupingKeySchema.toAttributes
           .zipWithIndex.map { case (attr, i) => BoundReference(i, attr.dataType, attr.nullable) })
-        val serializerCodes = bufferSerializers.map { case (ser, _) =>
-          s"${ser.genCode(ctx).code}"
-        }.mkString("\n")
+        val updateToRow = bufferSerializers.zip(serializerCodes).map {
+          case ((ser, index), exprCode) =>
+            ctx.updateColumn(generateRow.value, ser.dataType, index, exprCode, ser.nullable)
+        }.mkString("\n").trim
+
         val serializedBackToBuffer =
           if (domainObjMap != "") {
             s"""
                |   ${generateKeyRow.code}
                |   java.nio.ByteBuffer keyBytes =
                      java.nio.ByteBuffer.wrap(${generateKeyRow.value}.getBytes());
+               |   System.out.println("keyBytes = " + keyBytes.hashCode());
+               |   for (int i = 0; i < keyBytes.capacity(); i++) {
+               |     System.out.println("keyBytes[" + i + "] = " + keyBytes.get(i));
+               |   }
+               |   System.out.println("size of $domainObjMap = " + $domainObjMap.size());
                |   if ($domainObjMap.containsKey(keyBytes)) {
-               |     java.util.ArrayList<Object> objects =
+               |     System.out.println("(2) found key!");
+               |     java.util.ArrayList<Object> $objectArray =
                        (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
                |     // Serialize back to row.
-               |     $serializerCodes
+               |     $updateToRow
+               |     $showData
+               |   } else {
+               |     System.out.println("(2)not found key!");
                |   }
              """.stripMargin
           } else {
@@ -583,8 +616,8 @@ case class TungstenAggregate(
              |   org.apache.spark.sql.execution.vectorized.ColumnarBatch.Row $row =
              |     (org.apache.spark.sql.execution.vectorized.ColumnarBatch.Row)
              |     $iterTermForVectorizedHashMap.next();
-             |   ${generateRow.code}
              |   ${serializedBackToBuffer}
+             |   ${generateRow.code}
              |   ${consume(ctx, Seq.empty, {generateRow.value})}
              |
              |   if (shouldStop()) return;
@@ -595,22 +628,6 @@ case class TungstenAggregate(
       } else None
     }
 
-    // Evaluate serializers for typed aggregation functions.
-    // We bind serializer expressions to the array used to store domain objects.
-    val objectArray = ctx.freshName("objectArray")
-    ctx.currentVars = bufferSerializers.map { case (ser, index) =>
-      val javaType = s"(${ctx.boxedType(ser.dataType)})"
-      ExprCode("", "false", s"$javaType$objectArray.get($index)")
-    }
-    val test = bufferSerializers.map { case (ser, _) =>
-      ser.genCode(ctx).code
-    }
-    println(s"test: $test")
-    val serializerCodes = bufferSerializers.map { case (ser, _) =>
-      ser.genCode(ctx)
-    }
-    println(s"serializerCodes: $serializerCodes")
-    val evaluatedSerializers = serializerCodes.map(_.code).mkString("\n")
     val updateToRow = bufferSerializers.zip(serializerCodes).map { case ((ser, index), exprCode) =>
       ctx.updateColumn(bufferTerm, ser.dataType, index, exprCode, ser.nullable)
     }.mkString("\n").trim
@@ -627,6 +644,7 @@ case class TungstenAggregate(
            |     // Evaluate Serializers
            |     ${evaluatedSerializers}
            |     // Serialize back to row
+           |     $showData
            |     ${updateToRow}
            |   }
          """.stripMargin
@@ -922,15 +940,35 @@ case class TungstenAggregate(
            """.stripMargin
     }
 
+    // Generate key for domain object map
+    // val keepVars = ctx.currentVars
+    // ctx.currentVars = null
+    // ctx.INPUT_ROW = vectorizedRowBuffer
+    val generateKeyRow = GenerateUnsafeProjection.createCode(ctx, groupingKeySchema.toAttributes
+      .zipWithIndex.map { case (attr, i) => BoundReference(i, attr.dataType, attr.nullable) })
+    val genKeyForDomainObjMap = if (isVectorizedHashMapEnabled) {
+      generateKeyRow.code
+    } else {
+      ""
+    }
+
+    // ctx.currentVars = keepVars
+
     // Next, we generate code to probe and update the domain object map.
     val findOrInsertInDomainObjMap: String = {
       if (typedUpdateExprs.nonEmpty) {
         s"""
            | java.nio.ByteBuffer keyBytes = java.nio.ByteBuffer.wrap($unsafeRowKeys.getBytes());
            | java.util.ArrayList<Object> $objectArray = null;
+           | System.out.println("keyBytes = " + keyBytes.hashCode());
+           | for (int i = 0; i < keyBytes.capacity(); i++) {
+           |   System.out.println("keyBytes[" + i + "] = " + keyBytes.get(i));
+           | }
            | if ($domainObjMap.containsKey(keyBytes)) {
+           |   System.out.println("Found key!");
            |   $objectArray = (java.util.ArrayList<Object>)$domainObjMap.get(keyBytes);
            | } else {
+           |   System.out.println("Not found key!");
            |   // Get domain object and put into map.
            |   $objectArray = new java.util.ArrayList<Object>();
            |   if ($vectorizedRowBuffer != null) {
@@ -943,7 +981,11 @@ case class TungstenAggregate(
                    .mkString("\n")}
            |   }
            |   $domainObjMap.put(keyBytes, $objectArray);
+           |   ${unsafeBufferDeserializers.zipWithIndex.map { case (_, idx) =>
+                s"""System.out.println("init value at " + $idx + " = " + $objectArray.get($idx));"""
+               }.mkString("\n")}
            | }
+           | System.out.println("size of $domainObjMap = " + $domainObjMap.size());
          """.stripMargin
       } else {
         ""
@@ -954,7 +996,10 @@ case class TungstenAggregate(
     val rewrittenTypedUpdateExprs =
       unsafeRewrittenTypedUpdateExprs.map(BindReferences.bindReference(_, inputAttr).genCode(ctx))
     val domainObjUpdateExprs = rewrittenTypedUpdateExprs.zipWithIndex.map { case (expr, idx) =>
-      s"$objectArray.set($idx, ${expr.value});"
+      s"""System.out.println("before update at " + $idx + " = " + $objectArray.get($idx));""" +
+      s"""System.out.println("index = " + $idx + " value = " + ${expr.value});\n""" +
+      s"$objectArray.set($idx, ${expr.value});" +
+      s"""System.out.println("before update at " + $idx + " = " + $objectArray.get($idx));"""
     }
     // Generate codes used to update domain objects.
     val updateDomainObjects: String = {
