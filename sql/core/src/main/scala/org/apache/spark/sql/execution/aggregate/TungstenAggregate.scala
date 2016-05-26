@@ -557,21 +557,9 @@ case class TungstenAggregate(
       ExprCode("", s"$objectArray.get(${b.ordinal}) == null",
         s"($javaType$objectArray.get(${b.ordinal}))")
     }.distinct
-    println(s"currentVars: ${ctx.currentVars}")
-    val showData = bufferSerializers.map { b =>
-      val javaType = s"(${ctx.boxedType(b.sourceDataType)})"
-      s"""System.out.println("$objectArray[${b.ordinal}] = " +
-        $javaType$objectArray.get(${b.ordinal}));"""
-    }.distinct.mkString("\n")
-    println(s"showData: $showData")
-    val test = bufferSerializers.map { b =>
-      b.expr.genCode(ctx).code
-    }
-    println(s"test: $test")
     val serializerCodes = bufferSerializers.map { b =>
       b.expr.genCode(ctx)
     }
-    println(s"serializerCodes: $serializerCodes")
     val evaluatedSerializers = serializerCodes.map(_.code).mkString("\n")
 
     // Iterate over the aggregate rows and convert them from ColumnarBatch.Row to UnsafeRow
@@ -634,7 +622,6 @@ case class TungstenAggregate(
       ctx.updateColumn(bufferTerm, b.expr.dataType, b.index,
         exprCode, b.expr.nullable)
     }.mkString("\n").trim
-    println(s"updateToRow: $updateToRow")
 
     val serializedBackToBuffer =
       if (domainObjMap != "") {
@@ -718,8 +705,6 @@ case class TungstenAggregate(
       }
     }
 
-    println(s"typedAggExprs: $typedAggExprs")
-
     // only have DeclarativeAggregate
     val typedUpdateExprs = typedAggExprs.flatMap { e =>
       e.mode match {
@@ -743,9 +728,6 @@ case class TungstenAggregate(
       }
     }
 
-    // println(s"typedUpdateExprs: $typedUpdateExprs")
-    // println(s"nonTypedUpdateExprs: $nonTypedUpdateExprs")
-
     val objectArray = ctx.freshName("objectArray")
 
     bufferSerializers = typedAggExprs.zipWithIndex.flatMap { case (e, ordinal) =>
@@ -762,8 +744,6 @@ case class TungstenAggregate(
       }
     }
 
-    println(s"bufferSerializer: $bufferSerializers")
-
     val bufferDeserializers = typedAggExprs.map { e =>
         e.aggregateFunction.asInstanceOf[TypedAggregateExpression].bufferDeserializer
     }
@@ -772,15 +752,11 @@ case class TungstenAggregate(
     ctx.currentVars = new Array[ExprCode](aggregateBufferAttributes.length) ++ input
 
     val boundDeserializers = bufferDeserializers.map(BindReferences.bindReference(_, inputAttr))
-    // println(s"boundDeserializers: $boundDeserializers")
 
     ctx.INPUT_ROW = vectorizedRowBuffer
     val vectorizedBufferDeserializers = boundDeserializers.map(_.genCode(ctx))
     ctx.INPUT_ROW = unsafeRowBuffer
     val unsafeBufferDeserializers = boundDeserializers.map(_.genCode(ctx))
-
-    // println(s"vectorizedBufferDeserializers: $vectorizedBufferDeserializers")
-    // println(s"unsafeBufferDeserializers: $unsafeBufferDeserializers")
 
     // Rewritten TypedAggregateExpression's update/merge expressions to remove buffer serializers
     // and deserializers.
@@ -809,8 +785,6 @@ case class TungstenAggregate(
                 .mergeExpressionsForCodegen(d, objectArray, idx)
           }
       }
-    // println(s"vectorizedRewrittenTypedUpdateExprs: $vectorizedRewrittenTypedUpdateExprs")
-    println(s"unsafeRewrittenTypedUpdateExprs: $unsafeRewrittenTypedUpdateExprs")
 
     // Create a map for retrieving domain objects with grouping keys.
     domainObjMap = if (typedUpdateExprs.nonEmpty) {
@@ -829,9 +803,6 @@ case class TungstenAggregate(
     } else {
       ""
     }
-
-    // val updateExpr = vectorizedRewrittenTypedUpdateExprs ++ unsafeRewrittenTypedUpdateExprs ++
-    //  nonTypedUpdateExprs
 
     val (checkFallbackForGeneratedHashMap, checkFallbackForBytesToBytesMap, resetCounter,
     incCounter) = if (testFallbackStartsAt.isDefined) {
