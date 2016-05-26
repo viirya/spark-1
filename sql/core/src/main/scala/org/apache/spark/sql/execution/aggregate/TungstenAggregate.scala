@@ -602,7 +602,7 @@ case class TungstenAggregate(
                      java.nio.ByteBuffer.wrap(${generateKeyRow.value}.getBytes());
                |   if ($domainObjMap.containsKey(${generateKeyRow.value})) {
                |     java.util.ArrayList<Object> $objectArray =
-                       (java.util.ArrayList<Object>)$domainObjMap.get(${generateKeyRow.value});
+                       (java.util.ArrayList<Object>)$domainObjMap.remove(${generateKeyRow.value});
                |     // Serialize back to row.
                |     $updateToRow
                |   }
@@ -643,7 +643,7 @@ case class TungstenAggregate(
                  java.nio.ByteBuffer.wrap(${keyTerm}.getBytes());
            |   if ($domainObjMap.containsKey(${keyTerm})) {
            |     java.util.ArrayList<Object> $objectArray =
-                   (java.util.ArrayList<Object>)$domainObjMap.get(${keyTerm});
+                   (java.util.ArrayList<Object>)$domainObjMap.remove(${keyTerm});
            |     // Evaluate Serializers
            |     ${evaluatedSerializers}
            |     // Serialize back to row
