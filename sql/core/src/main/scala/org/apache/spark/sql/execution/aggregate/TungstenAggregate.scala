@@ -556,13 +556,13 @@ case class TungstenAggregate(
       val javaType = s"(${ctx.boxedType(b.sourceDataType)})"
       ExprCode("", s"$objectArray.get(${b.ordinal}) == null",
         s"($javaType$objectArray.get(${b.ordinal}))")
-    }
+    }.distinct
     println(s"currentVars: ${ctx.currentVars}")
     val showData = bufferSerializers.map { b =>
       val javaType = s"(${ctx.boxedType(b.sourceDataType)})"
       s"""System.out.println("$objectArray[${b.ordinal}] = " +
         $javaType$objectArray.get(${b.ordinal}));"""
-    }.mkString("\n")
+    }.distinct.mkString("\n")
     println(s"showData: $showData")
     val test = bufferSerializers.map { b =>
       b.expr.genCode(ctx).code
@@ -600,23 +600,11 @@ case class TungstenAggregate(
                |   ${generateKeyRow.code}
                |   java.nio.ByteBuffer keyBytes =
                      java.nio.ByteBuffer.wrap(${generateKeyRow.value}.getBytes());
-               |   System.out.println("keyBytes = " + keyBytes.hashCode());
-               |   for (int i = 0; i < keyBytes.capacity(); i++) {
-               |     System.out.println("keyBytes[" + i + "] = " + keyBytes.get(i));
-               |   }
-               |   System.out.println("size of $domainObjMap = " + $domainObjMap.size());
-               |   System.out.println("unsaferow key = " + ${generateKeyRow.value});
-               |   for (java.util.Iterator it = $domainObjMap.keySet().iterator(); it.hasNext();) {
-               |     System.out.println("key in map = " + it.next());
-               |   }
                |   if ($domainObjMap.containsKey(${generateKeyRow.value})) {
-               |     System.out.println("(2) found key!");
                |     java.util.ArrayList<Object> $objectArray =
                        (java.util.ArrayList<Object>)$domainObjMap.get(${generateKeyRow.value});
                |     // Serialize back to row.
                |     $updateToRow
-               |   } else {
-               |     System.out.println("(2)not found key!");
                |   }
              """.stripMargin
           } else {
@@ -659,7 +647,7 @@ case class TungstenAggregate(
            |     // Evaluate Serializers
            |     ${evaluatedSerializers}
            |     // Serialize back to row
-           |     ${updateToRow}
+           |     $updateToRow
            |   }
          """.stripMargin
       } else {
@@ -730,6 +718,8 @@ case class TungstenAggregate(
       }
     }
 
+    println(s"typedAggExprs: $typedAggExprs")
+
     // only have DeclarativeAggregate
     val typedUpdateExprs = typedAggExprs.flatMap { e =>
       e.mode match {
@@ -795,7 +785,7 @@ case class TungstenAggregate(
     // Rewritten TypedAggregateExpression's update/merge expressions to remove buffer serializers
     // and deserializers.
     val vectorizedRewrittenTypedUpdateExprs =
-      typedAggExprs.zipWithIndex.zip(vectorizedBufferDeserializers).flatMap {
+      typedAggExprs.zipWithIndex.zip(vectorizedBufferDeserializers).map {
         case ((e, idx), d) =>
           e.mode match {
             case Partial | Complete =>
@@ -808,7 +798,7 @@ case class TungstenAggregate(
       }
 
     val unsafeRewrittenTypedUpdateExprs =
-      typedAggExprs.zipWithIndex.zip(unsafeBufferDeserializers).flatMap {
+      typedAggExprs.zipWithIndex.zip(unsafeBufferDeserializers).map {
         case ((e, idx), d) =>
           e.mode match {
             case Partial | Complete =>
@@ -820,7 +810,7 @@ case class TungstenAggregate(
           }
       }
     // println(s"vectorizedRewrittenTypedUpdateExprs: $vectorizedRewrittenTypedUpdateExprs")
-    // println(s"unsafeRewrittenTypedUpdateExprs: $unsafeRewrittenTypedUpdateExprs")
+    println(s"unsafeRewrittenTypedUpdateExprs: $unsafeRewrittenTypedUpdateExprs")
 
     // Create a map for retrieving domain objects with grouping keys.
     domainObjMap = if (typedUpdateExprs.nonEmpty) {
@@ -975,19 +965,9 @@ case class TungstenAggregate(
         s"""
            | java.nio.ByteBuffer keyBytes = java.nio.ByteBuffer.wrap($unsafeRowKeys.getBytes());
            | java.util.ArrayList<Object> $objectArray = null;
-           | System.out.println("keyBytes = " + keyBytes.hashCode());
-           | for (int i = 0; i < keyBytes.capacity(); i++) {
-           |   System.out.println("keyBytes[" + i + "] = " + keyBytes.get(i));
-           | }
-           | System.out.println("unsaferow key = " + $unsafeRowKeys);
-           | for (java.util.Iterator it = $domainObjMap.keySet().iterator(); it.hasNext();) {
-           |   System.out.println("key in map = " + it.next());
-           | }
            | if ($domainObjMap.containsKey($unsafeRowKeys)) {
-           |   System.out.println("Found key!");
            |   $objectArray = (java.util.ArrayList<Object>)$domainObjMap.get($unsafeRowKeys);
            | } else {
-           |   System.out.println("Not found key!");
            |   // Get domain object and put into map.
            |   $objectArray = new java.util.ArrayList<Object>();
            |   if ($vectorizedRowBuffer != null) {
@@ -1000,11 +980,7 @@ case class TungstenAggregate(
                    .mkString("\n")}
            |   }
            |   $domainObjMap.put($unsafeRowKeys.copy(), $objectArray);
-           |   ${unsafeBufferDeserializers.zipWithIndex.map { case (_, idx) =>
-                s"""System.out.println("init value at " + $idx + " = " + $objectArray.get($idx));"""
-               }.mkString("\n")}
            | }
-           | System.out.println("size of $domainObjMap = " + $domainObjMap.size());
          """.stripMargin
       } else {
         ""
@@ -1015,10 +991,7 @@ case class TungstenAggregate(
     val rewrittenTypedUpdateExprs =
       unsafeRewrittenTypedUpdateExprs.map(BindReferences.bindReference(_, inputAttr).genCode(ctx))
     val domainObjUpdateExprs = rewrittenTypedUpdateExprs.zipWithIndex.map { case (expr, idx) =>
-      s"""System.out.println("before update at " + $idx + " = " + $objectArray.get($idx));""" +
-      s"""System.out.println("index = " + $idx + " value = " + ${expr.value});\n""" +
-      s"$objectArray.set($idx, ${expr.value}); \n" +
-      s"""System.out.println("before update at " + $idx + " = " + $objectArray.get($idx));"""
+      s"$objectArray.set($idx, ${expr.value});"
     }
     // Generate codes used to update domain objects.
     val updateDomainObjects: String = {

@@ -94,6 +94,21 @@ case class TypedAggregateExpression(
   }
 
   /**
+   * Re-written buffer serializers for Wholestage codegen.
+   * It changes the ordinal of BoundReference to the corresponding ordinal in the array
+   * used to store domain objects.
+   */
+  def bufferSerializerForCodegen(objectArray: String, offset: Int): Seq[NamedExpression] = {
+    bufferSerializer.map { s =>
+      s.transformUp {
+        case b: BoundReference => BoundReference(b.ordinal + offset, b.dataType, b.nullable)
+          // LambdaVariable(s"$objectArray.get(${b.ordinal})",
+          //  s"$objectArray.get(${b.ordinal}) == null", bufferExternalType)
+      }.asInstanceOf[NamedExpression]
+    }
+  }
+
+  /**
    * Re-written update/mergeExpressions used for Wholestage codegen.
    * It replaces bufferSerializer and bufferDeserializer to reduce duplicate serialization
    * and deserialization. bufferDeserializer is replaced to ReferenceToExpressions referring
@@ -104,7 +119,7 @@ case class TypedAggregateExpression(
       deserializedExpr: ExprCode,
       objectArray: String,
       ordinal: Int,
-      expressions: Seq[Expression]): Seq[Expression] = {
+      expressions: Seq[Expression]): Expression = {
     val deserializedVar =
       LambdaVariable(s"$objectArray.get($ordinal)", deserializedExpr.isNull, bufferExternalType)
 
@@ -112,19 +127,19 @@ case class TypedAggregateExpression(
       u.transformUp {
         case e if e.semanticEquals(bufferDeserializer) => deserializedVar
       }.asInstanceOf[ReferenceToExpressions].children.head
-    }
+    }.head
   }
 
   def updateExpressionsForCodegen(
       deserializedExpr: ExprCode,
       objectArray: String,
-      ordinal: Int): Seq[Expression] =
+      ordinal: Int): Expression =
     codegenUpdateExpressions(deserializedExpr, objectArray, ordinal, updateExpressions)
 
   def mergeExpressionsForCodegen(
       deserializedExpr: ExprCode,
       objectArray: String,
-      ordinal: Int): Seq[Expression] =
+      ordinal: Int): Expression =
     codegenUpdateExpressions(deserializedExpr, objectArray, ordinal, mergeExpressions)
 
   override lazy val updateExpressions: Seq[Expression] = {
