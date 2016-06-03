@@ -47,13 +47,6 @@ import org.apache.spark.sql.types.StructType;
  */
 public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBase<Object> {
   /**
-   * Batch of rows that we assemble and the current index we've returned. Every time this
-   * batch is used up (batchIdx == numBatched), we populated the batch.
-   */
-  private int batchIdx = 0;
-  private int numBatched = 0;
-
-  /**
    * For each request column, the reader to read this column. This is NULL if this column
    * is missing from the file, in which case we populate the attribute with NULL.
    */
@@ -68,37 +61,6 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
    * The number of rows that have been reading, including the current in flight row group.
    */
   private long totalCountLoadedSoFar = 0;
-
-  /**
-   * For each column, true if the column is missing in the file and we'll instead return NULLs.
-   */
-  private boolean[] missingColumns;
-
-  /**
-   * columnBatch object that is used for batch decoding. This is created on first use and triggers
-   * batched decoding. It is not valid to interleave calls to the batched interface with the row
-   * by row RecordReader APIs.
-   * This is only enabled with additional flags for development. This is still a work in progress
-   * and currently unsupported cases will fail with potentially difficult to diagnose errors.
-   * This should be only turned on for development to work on this feature.
-   *
-   * When this is set, the code will branch early on in the RecordReader APIs. There is no shared
-   * code between the path that uses the MR decoders and the vectorized ones.
-   *
-   * TODOs:
-   *  - Implement v2 page formats (just make sure we create the correct decoders).
-   */
-  private ColumnarBatch columnarBatch;
-
-  /**
-   * If true, this class returns batches instead of rows.
-   */
-  private boolean returnColumnarBatch;
-
-  /**
-   * The default config on whether columnarBatch should be offheap.
-   */
-  private static final MemoryMode DEFAULT_MEMORY_MODE = MemoryMode.ON_HEAP;
 
   /**
    * Implementation of RecordReader API.
@@ -120,6 +82,40 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     super.initialize(path, columns);
     initializeInternal();
   }
+
+  @Override
+  public void initBatch(MemoryMode memMode, StructType partitionColumns,
+                        InternalRow partitionValues) {
+    StructType batchSchema = new StructType();
+    for (StructField f: sparkSchema.fields()) {
+      batchSchema = batchSchema.add(f);
+    }
+    if (partitionColumns != null) {
+      for (StructField f : partitionColumns.fields()) {
+        batchSchema = batchSchema.add(f);
+      }
+    }
+
+    columnarBatch = ColumnarBatch.allocate(batchSchema, memMode);
+    if (partitionColumns != null) {
+      int partitionIdx = sparkSchema.fields().length;
+      for (int i = 0; i < partitionColumns.fields().length; i++) {
+        ColumnVectorUtils.populate(columnarBatch.column(i + partitionIdx), partitionValues, i);
+        columnarBatch.column(i + partitionIdx).setIsConstant();
+      }
+    }
+
+    // Initialize missing columns with nulls.
+    if (missingColumns != null) {
+      for (int i = 0; i < missingColumns.length; i++) {
+        if (missingColumns[i]) {
+          columnarBatch.column(i).putNulls(0, columnarBatch.capacity());
+          columnarBatch.column(i).setIsConstant();
+        }
+      }
+    }
+  }
+ 
 
   @Override
   public void close() throws IOException {
@@ -155,70 +151,9 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
   }
 
   /**
-   * Returns the ColumnarBatch object that will be used for all rows returned by this reader.
-   * This object is reused. Calling this enables the vectorized reader. This should be called
-   * before any calls to nextKeyValue/nextBatch.
-   */
-
-  // Creates a columnar batch that includes the schema from the data files and the additional
-  // partition columns appended to the end of the batch.
-  // For example, if the data contains two columns, with 2 partition columns:
-  // Columns 0,1: data columns
-  // Column 2: partitionValues[0]
-  // Column 3: partitionValues[1]
-  public void initBatch(MemoryMode memMode, StructType partitionColumns,
-                        InternalRow partitionValues) {
-    StructType batchSchema = new StructType();
-    for (StructField f: sparkSchema.fields()) {
-      batchSchema = batchSchema.add(f);
-    }
-    if (partitionColumns != null) {
-      for (StructField f : partitionColumns.fields()) {
-        batchSchema = batchSchema.add(f);
-      }
-    }
-
-    columnarBatch = ColumnarBatch.allocate(batchSchema, memMode);
-    if (partitionColumns != null) {
-      int partitionIdx = sparkSchema.fields().length;
-      for (int i = 0; i < partitionColumns.fields().length; i++) {
-        ColumnVectorUtils.populate(columnarBatch.column(i + partitionIdx), partitionValues, i);
-        columnarBatch.column(i + partitionIdx).setIsConstant();
-      }
-    }
-
-    // Initialize missing columns with nulls.
-    for (int i = 0; i < missingColumns.length; i++) {
-      if (missingColumns[i]) {
-        columnarBatch.column(i).putNulls(0, columnarBatch.capacity());
-        columnarBatch.column(i).setIsConstant();
-      }
-    }
-  }
-
-  public void initBatch() {
-    initBatch(DEFAULT_MEMORY_MODE, null, null);
-  }
-
-  public void initBatch(StructType partitionColumns, InternalRow partitionValues) {
-    initBatch(DEFAULT_MEMORY_MODE, partitionColumns, partitionValues);
-  }
-
-  public ColumnarBatch resultBatch() {
-    if (columnarBatch == null) initBatch();
-    return columnarBatch;
-  }
-
-  /*
-   * Can be called before any rows are returned to enable returning columnar batches directly.
-   */
-  public void enableReturningBatches() {
-    returnColumnarBatch = true;
-  }
-
-  /**
    * Advances to the next batch of rows. Returns false if there are no more.
    */
+  @Override
   public boolean nextBatch() throws IOException {
     columnarBatch.reset();
     if (rowsReturned >= totalRowCount) return false;

@@ -61,6 +61,7 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
 import org.apache.parquet.schema.Types;
+import org.apache.spark.sql.execution.vectorized.ColumnarBatchEnabledRecordReader;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -71,7 +72,8 @@ import org.apache.spark.sql.types.StructType;
  * TODO: move this to the parquet-mr project. There are performance benefits of doing it
  * this way, albeit at a higher cost to implement. This base class is reusable.
  */
-public abstract class SpecificParquetRecordReaderBase<T> extends RecordReader<Void, T> {
+public abstract class SpecificParquetRecordReaderBase<T>
+    extends ColumnarBatchEnabledRecordReader<Void, T> {
   protected Path file;
   protected MessageType fileSchema;
   protected MessageType requestedSchema;
