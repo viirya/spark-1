@@ -243,10 +243,11 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     missingColumns = new boolean[requestedSchema.getFieldCount()];
     for (int i = 0; i < requestedSchema.getFieldCount(); ++i) {
       Type t = requestedSchema.getFields().get(i);
+      /*
       if (!t.isPrimitive() || t.isRepetition(Type.Repetition.REPEATED)) {
         throw new UnsupportedOperationException("Complex types not supported.");
       }
-
+      */
       String[] colPath = requestedSchema.getPaths().get(i);
       if (fileSchema.containsPath(colPath)) {
         ColumnDescriptor fd = fileSchema.getColumnDescription(colPath);

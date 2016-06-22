@@ -393,6 +393,14 @@ public final class OnHeapColumnVector extends ColumnVector {
   }
 
   @Override
+  public int putIntArray(int rowId, byte[] value, int offset, int length) {
+    int result = arrayData().appendInts(length, value, offset);
+    arrayOffsets[rowId] = result;
+    arrayLengths[rowId] = length;
+    return result;
+  }
+
+  @Override
   public void reserve(int requiredCapacity) {
     if (requiredCapacity > capacity) reserveInternal(requiredCapacity * 2);
   }

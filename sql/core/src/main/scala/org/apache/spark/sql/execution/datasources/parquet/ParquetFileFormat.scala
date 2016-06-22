@@ -331,8 +331,8 @@ private[sql] class ParquetFileFormat
     // a subset of the types (no complex types).
     val resultSchema = StructType(partitionSchema.fields ++ requiredSchema.fields)
     val enableVectorizedReader: Boolean =
-      sparkSession.sessionState.conf.parquetVectorizedReaderEnabled &&
-      resultSchema.forall(_.dataType.isInstanceOf[AtomicType])
+      sparkSession.sessionState.conf.parquetVectorizedReaderEnabled // &&
+      // resultSchema.forall(_.dataType.isInstanceOf[AtomicType])
     // Whole stage codegen (PhysicalRDD) is able to deal with batches directly
     val returningBatch = supportBatch(sparkSession, resultSchema)
 

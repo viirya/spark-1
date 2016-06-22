@@ -414,6 +414,14 @@ public final class OffHeapColumnVector extends ColumnVector {
   }
 
   @Override
+  public int putIntArray(int rowId, byte[] value, int offset, int length) {
+    int result = arrayData().appendInts(length, value, offset);
+    Platform.putInt(null, lengthData + 4 * rowId, length);
+    Platform.putInt(null, offsetData + 4 * rowId, result);
+    return result;
+  }
+
+  @Override
   public void loadBytes(ColumnVector.Array array) {
     if (array.tmpByteArray.length < array.length) array.tmpByteArray = new byte[array.length];
     Platform.copyMemory(

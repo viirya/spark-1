@@ -30,6 +30,8 @@ import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.PrimitiveType;
 
 import org.apache.spark.sql.execution.vectorized.ColumnVector;
+import org.apache.spark.sql.types.ArrayType;
+import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.DecimalType;
 
@@ -171,6 +173,7 @@ public class VectorizedColumnReader {
           decodeDictionaryIds(0, rowId, column, column.getDictionaryIds());
         }
         column.setDictionary(null);
+        System.out.println("descriptor.getType(): " + descriptor.getType());
         switch (descriptor.getType()) {
           case BOOLEAN:
             readBooleanBatch(rowId, num, column);
@@ -326,6 +329,16 @@ public class VectorizedColumnReader {
     } else if (column.dataType() == DataTypes.ShortType) {
       defColumn.readShorts(
           num, column, rowId, maxDefLevel, (VectorizedValuesReader) dataColumn);
+    } else if (column.isArray()) {
+      System.out.println("isArray");
+      System.out.println(column.dataType());
+      DataType elementType = ((ArrayType)column.dataType()).elementType();
+      if (elementType == DataTypes.IntegerType || elementType == DataTypes.DateType ||
+          DecimalType.is32BitDecimalType(elementType)) {
+        System.out.println("defColumn.readIntArrays");
+        defColumn.readIntArrays(
+          num, column, rowId, maxDefLevel, (VectorizedValuesReader) dataColumn);
+      }
     } else {
       throw new NotImplementedException("Unimplemented type: " + column.dataType());
     }

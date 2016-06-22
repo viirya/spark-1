@@ -533,6 +533,11 @@ public abstract class ColumnVector implements AutoCloseable {
     return putByteArray(rowId, value, 0, value.length);
   }
 
+  public abstract int putIntArray(int rowId, byte[] value, int offset, int count);
+  public final int putIntArray(int rowId, byte[] value) {
+    return putIntArray(rowId, value, 0, value.length);
+  }
+
   /**
    * Returns the value for rowId.
    */
@@ -719,6 +724,14 @@ public abstract class ColumnVector implements AutoCloseable {
     reserve(elementsAppended + length);
     int result = elementsAppended;
     putInts(elementsAppended, length, src, offset);
+    elementsAppended += length;
+    return result;
+  }
+
+  public final int appendInts(int length, byte[] src, int offset) {
+    reserve(elementsAppended + length);
+    int result = elementsAppended;
+    putIntsLittleEndian(elementsAppended, length, src, offset);
     elementsAppended += length;
     return result;
   }
@@ -956,6 +969,7 @@ public abstract class ColumnVector implements AutoCloseable {
         childType = DataTypes.ByteType;
         childCapacity *= DEFAULT_ARRAY_LENGTH;
       }
+      System.out.println("dataType: " + type + " childType: " + childType);
       this.childColumns = new ColumnVector[1];
       this.childColumns[0] = ColumnVector.allocate(childCapacity, childType, memMode);
       this.resultArray = new Array(this.childColumns[0]);

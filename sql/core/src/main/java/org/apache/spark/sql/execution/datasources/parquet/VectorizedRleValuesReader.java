@@ -390,6 +390,37 @@ public final class VectorizedRleValuesReader extends ValuesReader
     }
   }
 
+  public void readIntArrays(int total, ColumnVector c, int rowId, int level,
+                        VectorizedValuesReader data) {
+    System.out.println("readIntArrays");
+    int left = total;
+    while (left > 0) {
+      if (this.currentCount == 0) this.readNextGroup();
+      int n = Math.min(left, this.currentCount);
+      switch (mode) {
+        case RLE:
+          if (currentValue == level) {
+            data.readIntArray(n, c, rowId);
+          } else {
+            c.putNulls(rowId, n);
+          }
+          break;
+        case PACKED:
+          for (int i = 0; i < n; ++i) {
+            if (currentBuffer[currentBufferIdx++] == level) {
+              data.readIntArray(1, c, rowId + i);
+            } else {
+              c.putNull(rowId + i);
+            }
+          }
+          break;
+      }
+      rowId += n;
+      left -= n;
+      currentCount -= n;
+    }
+  }
+
   public void readBinarys(int total, ColumnVector c, int rowId, int level,
                         VectorizedValuesReader data) {
     int left = total;
@@ -496,6 +527,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
 
   @Override
   public void readBinary(int total, ColumnVector c, int rowId) {
+    throw new UnsupportedOperationException("only readInts is valid.");
+  }
+ 
+  @Override
+  public void readIntArray(int total, ColumnVector c, int rowId) {
     throw new UnsupportedOperationException("only readInts is valid.");
   }
 
