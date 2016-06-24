@@ -130,7 +130,7 @@ class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext
       sql("SELECT _2[0], _2[1] FROM t").show()
     }
   }
-
+  /*
   test("nested data - array of array data") {
     val data = (1 to 10).map(i => (i, Seq(Seq(i))))
     withParquetTable(data, "t") {
@@ -144,7 +144,7 @@ class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext
       sql("SELECT _2[0] FROM t").show()
     }
   }
-
+  */
   /*
   test("nested data - array of struct") {
     val data = (1 to 10).map(i => Tuple1(Seq(i -> "val_$i")))
