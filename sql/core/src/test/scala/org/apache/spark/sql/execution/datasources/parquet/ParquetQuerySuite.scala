@@ -125,7 +125,21 @@ class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext
   }
 
   test("nested data - struct with array field") {
-    val data = (1 to 10).map(i => (i, Seq(i)))
+    val data = (1 to 10).map(i => (i, Seq(i, i + 1)))
+    withParquetTable(data, "t") {
+      sql("SELECT _2[0], _2[1] FROM t").show()
+    }
+  }
+
+  test("nested data - array of array data") {
+    val data = (1 to 10).map(i => (i, Seq(Seq(i))))
+    withParquetTable(data, "t") {
+      sql("SELECT _2[0] FROM t").show()
+    }
+  }
+
+  test("nested data - array of nested data") {
+    val data = (1 to 10).map(i => (i, Seq((i, i + 1))))
     withParquetTable(data, "t") {
       sql("SELECT _2[0] FROM t").show()
     }

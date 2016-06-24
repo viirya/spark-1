@@ -70,6 +70,11 @@ public class VectorizedColumnReader {
   private final int maxDefLevel;
 
   /**
+   * Maximum repetition level for this column.
+   */
+  private final int maxRepLevel;
+
+  /**
    * Repetition/Definition/Value readers.
    */
   private SpecificParquetRecordReaderBase.IntIterator repetitionLevelColumn;
@@ -98,6 +103,7 @@ public class VectorizedColumnReader {
     this.descriptor = descriptor;
     this.pageReader = pageReader;
     this.maxDefLevel = descriptor.getMaxDefinitionLevel();
+    this.maxRepLevel = descriptor.getMaxRepetitionLevel();
 
     DictionaryPage dictionaryPage = pageReader.readDictionaryPage();
     if (dictionaryPage != null) {
@@ -116,10 +122,9 @@ public class VectorizedColumnReader {
       throw new IOException("totalValueCount == 0");
     }
   }
-
+  
   /**
    * Advances to the next value. Returns true if the value is non-null.
-   */
   private boolean next() throws IOException {
     if (valuesRead >= endOfPageValueCount) {
       if (valuesRead >= totalValueCount) {
@@ -133,11 +138,12 @@ public class VectorizedColumnReader {
     //repetitionLevel = repetitionLevelColumn.nextInt();
     return definitionLevelColumn.nextInt() == maxDefLevel;
   }
+  */
 
   /**
    * Reads `total` values from this columnReader into column.
    */
-  void readBatch(int total, ColumnVector column) throws IOException {
+  public void readBatch(int total, ColumnVector column) throws IOException {
     int rowId = 0;
     while (total > 0) {
       // Compute the number of values we want to read in this page.
@@ -148,6 +154,7 @@ public class VectorizedColumnReader {
       }
       int num = Math.min(total, leftInPage);
       if (useDictionary) {
+        System.out.println("useDictionary");
         // Read and decode dictionary ids.
         ColumnVector dictionaryIds = column.reserveDictionaryIds(total);
         defColumn.readIntegers(
@@ -215,6 +222,7 @@ public class VectorizedColumnReader {
    */
   private void decodeDictionaryIds(int rowId, int num, ColumnVector column,
                                    ColumnVector dictionaryIds) {
+    System.out.println("decodeDictionaryIds descriptor.getType(): " + descriptor.getType());
     switch (descriptor.getType()) {
       case INT32:
         if (column.dataType() == DataTypes.IntegerType ||

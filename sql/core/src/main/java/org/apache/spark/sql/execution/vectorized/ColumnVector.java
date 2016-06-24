@@ -16,6 +16,7 @@
  */
 package org.apache.spark.sql.execution.vectorized;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 
@@ -27,6 +28,7 @@ import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.util.ArrayData;
 import org.apache.spark.sql.catalyst.util.MapData;
+import org.apache.spark.sql.execution.datasources.parquet.VectorizedColumnReader;
 import org.apache.spark.sql.types.*;
 import org.apache.spark.unsafe.types.CalendarInterval;
 import org.apache.spark.unsafe.types.UTF8String;
@@ -840,6 +842,28 @@ public abstract class ColumnVector implements AutoCloseable {
   public final ColumnVector getChildColumn(int ordinal) { return childColumns[ordinal]; }
 
   /**
+   * Returns the number of childColumns.
+   */
+  public final int getChildColumnNums() {
+    if (childColumns == null) {
+      return 0;
+    } else {
+      return childColumns.length;
+    }
+  }
+
+  /**
+   * Returns whether this ColumnVector represents complex types such as Array, Map, Struct.
+   */
+  public final boolean isComplex() {
+    if (type instanceof ArrayType || type instanceof StructType || type instanceof MapType) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
    * Returns the elements appended.
    */
   public final int getElementsAppended() { return elementsAppended; }
@@ -917,6 +941,39 @@ public abstract class ColumnVector implements AutoCloseable {
    * Reusable column for ids of dictionary.
    */
   protected ColumnVector dictionaryIds;
+
+  /**
+   * Associated VectorizedColumnReader which is used to load data into this ColumnVector.
+   * If this is a complex type such as array or struct, the VectorizedColumnReader will be
+   * null.
+   */
+  protected VectorizedColumnReader columnReader;
+
+  /**
+   * Update the columnReader.
+   */
+  public void setColumnReader(VectorizedColumnReader columnReader) {
+    this.columnReader = columnReader;
+  }
+
+  /**
+   * Returns if this ColumnVector has initialized VectorizedColumnReader.
+   */
+  public boolean hasColumnReader() {
+    return this.columnReader != null;
+  }
+
+  /**
+   * Reads `total` values from associated columnReader into this column.
+   */
+  public void readBatch(int total) throws IOException {
+    if (this.columnReader != null) {
+      this.columnReader.readBatch(total, this);
+    } else {
+      throw new RuntimeException("The reader of this ColumnVector is not initialized yet. " +
+        "Failed to call readBatch().");
+    }
+  }
 
   /**
    * Update the dictionary.

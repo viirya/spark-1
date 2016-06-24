@@ -165,8 +165,8 @@ public class VectorizedPlainValuesReader extends ValuesReader implements Vectori
       int len = readInteger();
       int start = offset;
       System.out.println("len = " + len + " start: " + start + " buffer: " + buffer);
-      offset += len;
-      v.putIntArray(rowId + i, buffer, start - Platform.BYTE_ARRAY_OFFSET, len);
+      // offset += len;
+      // v.putIntArray(rowId + i, buffer, start - Platform.BYTE_ARRAY_OFFSET, len);
     }
   }
  
