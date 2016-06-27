@@ -31,6 +31,7 @@ import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.execution.vectorized.ColumnVectorUtils;
 import org.apache.spark.sql.execution.vectorized.ColumnarBatch;
+import org.apache.spark.sql.execution.vectorized.ColumnVector;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 
@@ -226,13 +227,10 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     checkEndOfRowGroup();
 
     int num = (int) Math.min((long) columnarBatch.capacity(), totalCountLoadedSoFar - rowsReturned);
+    System.out.println("columnarBatch.capacity: " + columnarBatch.capacity());
+    System.out.println("num in nextBatch: " + num);
     for (int i = 0; i < columnarBatch.numFields(); i++) {
-      if (columnarBatch.column(i).hasColumnReader()) {
-        System.out.println("column " + i + " at columnarBatch has ColumnReader");
-        columnarBatch.column(i).readBatch(num);
-      } else {
-        System.out.println("column " + i + " at columnarBatch has no ColumnReader");
-      }
+      readBatchOnColumnVector(columnarBatch.column(i), num);
     }
 
     rowsReturned += num;
@@ -242,16 +240,29 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     return true;
   }
 
+  private void readBatchOnColumnVector(ColumnVector column, int num) throws IOException {
+    if (column.hasColumnReader()) {
+      System.out.println("column at columnarBatch has ColumnReader");
+      column.readBatch(num);
+    } else {
+      System.out.println("column at columnarBatch has no ColumnReader");
+      for (int j = 0; j < column.getChildColumnNums(); j++) {
+        readBatchOnColumnVector(column.getChildColumn(j), num);
+      }
+    }
+  }
+
   private void initializeInternal() throws IOException, UnsupportedOperationException {
     /**
      * Check that the requested schema is supported.
      */
-    missingColumns = new boolean[requestedSchema.getFieldCount()];
+    missingColumns = new boolean[requestedSchema.getColumns().size()];
     System.out.println("requestedSchema.getFieldCount: " + requestedSchema.getFieldCount());
     System.out.println("requestedSchema.getColumns().size: " + requestedSchema.getColumns().size());
-    for (int i = 0; i < requestedSchema.getFieldCount(); ++i) {
-      Type t = requestedSchema.getFields().get(i);
-      System.out.println("type: " + t + " t.isPrimitive: " + t.isPrimitive());
+    // For loop on each physical columns.
+    for (int i = 0; i < requestedSchema.getColumns().size(); ++i) {
+      // Type t = requestedSchema.getFields().get(i);
+      // System.out.println("type: " + t + " t.isPrimitive: " + t.isPrimitive());
       /*
       if (!t.isPrimitive() || t.isRepetition(Type.Repetition.REPEATED)) {
         throw new UnsupportedOperationException("Complex types not supported.");
@@ -275,6 +286,22 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     }
   }
 
+  private int setupColumnReader(
+      ColumnVector column,
+      VectorizedColumnReader[] columnReaders,
+      int readerIdx) {
+    if (column.isComplex()) {
+      System.out.println("column has childColumn");
+      column.setColumnReader(null);
+      for (int j = 0; j < column.getChildColumnNums(); j++) {
+        readerIdx = setupColumnReader(column.getChildColumn(j), columnReaders, readerIdx);
+      }
+    } else {
+      column.setColumnReader(columnReaders[readerIdx++]);
+    }
+    return readerIdx;
+  }
+
   private void checkEndOfRowGroup() throws IOException {
     if (rowsReturned != totalCountLoadedSoFar) return;
     PageReadStore pages = reader.readNextRowGroup();
@@ -296,9 +323,12 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
 
     // Associate ColumnReaders to ColumnVectors in ColumnarBatch.
     int readerIdx = 0;
+    int partitionIdx = sparkSchema.fields().length;
     for (int i = 0; i < columnarBatch.numFields(); i++) {
+      if (i >= partitionIdx) break;
       if (missingColumns[i]) continue;
-
+      readerIdx = setupColumnReader(columnarBatch.column(i), columnReaders, readerIdx);
+      /*
       if (columnarBatch.column(i).isComplex()) {
         System.out.println("columnarBatch.column(" + i + ")" + " has childColumn");
         columnarBatch.column(i).setColumnReader(null);
@@ -309,6 +339,7 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
         System.out.println("columnarBatch.column(" + i + ")" + " has no childColumn");
         columnarBatch.column(i).setColumnReader(columnReaders[readerIdx++]);
       }
+      */
     }
     assert readerIdx == columnReaders.length :
       "Incorrect matching between ColumnReaders and ColumnVectors";
