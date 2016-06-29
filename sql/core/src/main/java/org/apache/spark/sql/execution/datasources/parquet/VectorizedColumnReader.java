@@ -86,7 +86,8 @@ public class VectorizedColumnReader {
   // Only set if vectorized decoding is true. This is used instead of the row by row decoding
   // with `definitionLevelColumn`.
   private VectorizedRleValuesReader defColumn;
-
+  private VectorizedRleValuesReader defColumnCopy;
+ 
   /**
    * Total number of values in this column (in this row group).
    */
@@ -150,6 +151,7 @@ public class VectorizedColumnReader {
     boolean isNestedColumn = column.getParentColumn() != null;
     System.out.println("Is nestedColumn: " + isNestedColumn);
     boolean isRepeatedColumn = maxRepLevel > 0;
+    System.out.println("Is repeatedColumn: " + isRepeatedColumn);
     int rowId = 0;
     int valuesReadInPage = 0;
     int repeatedRowId = 0;
@@ -622,7 +624,9 @@ public class VectorizedColumnReader {
       
       for (int i = 0; i < valuesReadInPage; i++) {
         int repLevel = repetitionLevelColumn.nextInt();
-        System.out.println("repLevel: " + repLevel + " maxRepLevel: " + maxRepLevel);
+        int defLevel = definitionLevelColumn.nextInt();
+        System.out.println("repLevel: " + repLevel + " maxRepLevel: " + maxRepLevel +
+          "defLevel: " + defLevel);
 
         if (i > 0) {
           insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
@@ -636,13 +640,26 @@ public class VectorizedColumnReader {
             offset = offsets.get(maxRepLevel);
           }
           
-          if (!column.isNullAt(offset)) {
+          // if (!column.isNullAt(offset) || repLevel != 0) {
+          if (!(defLevel == 0 && column.isNullAt(offset))) {
             int repCount = 0;
             if (reptitionMap.containsKey(maxRepLevel)) {
               repCount = reptitionMap.get(maxRepLevel);
             }
             reptitionMap.put(maxRepLevel, repCount + 1);
+          } else {
+            ColumnVector topColumn = column.getParentColumn();
+            while (topColumn.getParentColumn() != null) {
+              topColumn = topColumn.getParentColumn();
+            }
+            int rowId = 0;
+            if (beginRowIds.containsKey(0)) {
+              rowId = beginRowIds.get(0);
+            }
+            topColumn.putNull(rowId);
+            beginRowIds.put(0, rowId + 1);
           }
+          // }
         } else {
           // Update the repetition counts.
           if (reptitionMap.containsKey(repLevel)) {
@@ -652,7 +669,7 @@ public class VectorizedColumnReader {
           }
         }
       }
-        
+      System.out.println("insert the last array");  
       // Insert the last array
       insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
         0, maxRepLevel);
@@ -665,6 +682,7 @@ public class VectorizedColumnReader {
     this.pageValueCount = page.getValueCount();
     ValuesReader rlReader = page.getRlEncoding().getValuesReader(descriptor, REPETITION_LEVEL);
     ValuesReader dlReader;
+    ValuesReader dlReaderCopy;
 
     // Initialize the decoders.
     if (page.getDlEncoding() != Encoding.RLE && descriptor.getMaxDefinitionLevel() != 0) {
@@ -672,14 +690,17 @@ public class VectorizedColumnReader {
     }
     int bitWidth = BytesUtils.getWidthFromMaxInt(descriptor.getMaxDefinitionLevel());
     this.defColumn = new VectorizedRleValuesReader(bitWidth);
+    this.defColumnCopy = new VectorizedRleValuesReader(bitWidth);
     dlReader = this.defColumn;
+    dlReaderCopy = this.defColumnCopy;
     this.repetitionLevelColumn = new ValuesReaderIntIterator(rlReader);
-    this.definitionLevelColumn = new ValuesReaderIntIterator(dlReader);
+    this.definitionLevelColumn = new ValuesReaderIntIterator(dlReaderCopy);
     try {
       byte[] bytes = page.getBytes().toByteArray();
       rlReader.initFromPage(pageValueCount, bytes, 0);
       int next = rlReader.getNextOffset();
       dlReader.initFromPage(pageValueCount, bytes, next);
+      dlReaderCopy.initFromPage(pageValueCount, bytes, next);
       next = dlReader.getNextOffset();
       initDataReader(page.getValueEncoding(), bytes, next);
     } catch (IOException e) {
@@ -694,8 +715,11 @@ public class VectorizedColumnReader {
 
     int bitWidth = BytesUtils.getWidthFromMaxInt(descriptor.getMaxDefinitionLevel());
     this.defColumn = new VectorizedRleValuesReader(bitWidth);
-    this.definitionLevelColumn = new ValuesReaderIntIterator(this.defColumn);
+    this.defColumnCopy = new VectorizedRleValuesReader(bitWidth);
+    this.definitionLevelColumn = new ValuesReaderIntIterator(this.defColumnCopy);
     this.defColumn.initFromBuffer(
+        this.pageValueCount, page.getDefinitionLevels().toByteArray());
+    this.defColumnCopy.initFromBuffer(
         this.pageValueCount, page.getDefinitionLevels().toByteArray());
     try {
       initDataReader(page.getDataEncoding(), page.getData().toByteArray(), 0);

@@ -63,7 +63,7 @@ class ParquetProtobufCompatibilitySuite extends ParquetCompatibilityTest with Sh
       readResourceParquetFile("proto-struct-with-array.parquet"),
       Row(10, 9, Seq.empty, null, Row(9), Seq(Row(9), Row(10))))
   }
-
+  /*
   test("unannotated array of struct with unannotated array") {
     checkAnswer(
       readResourceParquetFile("nested-array-struct.parquet"),
@@ -81,4 +81,5 @@ class ParquetProtobufCompatibilitySuite extends ParquetCompatibilityTest with Sh
         Row(Seq("good", "bye")),
         Row(Seq("one", "two", "three"))))
   }
+  */
 }

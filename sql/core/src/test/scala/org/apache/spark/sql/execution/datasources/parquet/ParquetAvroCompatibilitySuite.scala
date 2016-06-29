@@ -166,7 +166,7 @@ class ParquetAvroCompatibilitySuite extends ParquetCompatibilityTest with Shared
   ignore("nullable arrays (parquet-avro 1.7.0 does not properly support this)") {
     // TODO Complete this test case after upgrading to parquet-mr 1.8+
   }
-
+  /*
   test("SPARK-10136 array of primitive array") {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
@@ -270,4 +270,5 @@ class ParquetAvroCompatibilitySuite extends ParquetCompatibilityTest with Shared
       checkAnswer(spark.read.parquet(path).filter('suit === "SPADES"), Row("SPADES"))
     }
   }
+  */
 }
