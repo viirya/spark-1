@@ -126,34 +126,13 @@ public class VectorizedColumnReader {
   }
   
   /**
-   * Advances to the next value. Returns true if the value is non-null.
-  private boolean next() throws IOException {
-    if (valuesRead >= endOfPageValueCount) {
-      if (valuesRead >= totalValueCount) {
-        // How do we get here? Throw end of stream exception?
-        return false;
-      }
-      readPage();
-    }
-    ++valuesRead;
-    // TODO: Don't read for flat schemas
-    //repetitionLevel = repetitionLevelColumn.nextInt();
-    return definitionLevelColumn.nextInt() == maxDefLevel;
-  }
-  */
-
-  /**
    * Reads `total` values from this columnReader into column.
    */
   public void readBatch(int total, ColumnVector column) throws IOException {
-    System.out.println("want to read total: " + total);
-    boolean isNestedColumn = column.getParentColumn() != null;
-    System.out.println("Is nestedColumn: " + isNestedColumn);
     boolean isRepeatedColumn = maxRepLevel > 0;
     int rowId = 0;
     int valuesReadInPage = 0;
     int repeatedRowId = 0;
-    // int offset = 0;
 
     Map<Integer, Integer> beginRowIds = new HashMap<Integer, Integer>();
     Map<Integer, Integer> offsets = new HashMap<Integer, Integer>();
@@ -163,8 +142,6 @@ public class VectorizedColumnReader {
     // we can't just read 5 integers. Instead, we have to read the integers until 5 arrays are put
     // into this array column.
     while ((isRepeatedColumn && repeatedRowId < total) || (!isRepeatedColumn && total > 0)) {
-      System.out.println("endOfPageValueCount: " + endOfPageValueCount +
-        " valuesRead: " + valuesRead);
       // Compute the number of values we want to read in this page.
       int leftInPage = (int) (endOfPageValueCount - valuesRead);
       // When we reach the end of this page, we update repetition info of this column
@@ -174,9 +151,8 @@ public class VectorizedColumnReader {
         if (valuesReadInPage > 0 && isRepeatedColumn) {
           updateReptitionInfo(column, beginRowIds, offsets, valuesReadInPage, total);
           repeatedRowId = beginRowIds.get(1);
-          System.out.println("nested column row id: " + repeatedRowId);
-          // offset += rowId;
           valuesReadInPage = 0;
+
           if (repeatedRowId == total) {
             return;
           }
@@ -185,9 +161,7 @@ public class VectorizedColumnReader {
         leftInPage = (int) (endOfPageValueCount - valuesRead);
       }
       int num = Math.min(total, leftInPage);
-      System.out.println("reading num: " + num + " values, leftInPage: " + leftInPage);
       if (useDictionary) {
-        System.out.println("useDictionary");
         // Read and decode dictionary ids.
         int dictionaryCapacity = Math.max(total, rowId + num);
         ColumnVector dictionaryIds = column.reserveDictionaryIds(dictionaryCapacity);
@@ -203,10 +177,8 @@ public class VectorizedColumnReader {
           // Column vector supports lazy decoding of dictionary values so just set the dictionary.
           // We can't do this if rowId != 0 AND the column doesn't have a dictionary (i.e. some
           // non-dictionary encoded values have already been added).
-          System.out.println("lazy decoding of dictionary");
           column.setDictionary(dictionary);
         } else {
-          System.out.println("decodeDictionaryIds");
           decodeDictionaryIds(rowId, num, column, dictionaryIds);
         }
       } else {
@@ -216,7 +188,6 @@ public class VectorizedColumnReader {
           decodeDictionaryIds(0, rowId, column, column.getDictionaryIds());
         }
         column.setDictionary(null);
-        System.out.println("descriptor.getType(): " + descriptor.getType());
         switch (descriptor.getType()) {
           case BOOLEAN:
             readBooleanBatch(rowId, num, column);
@@ -267,7 +238,6 @@ public class VectorizedColumnReader {
    */
   private void decodeDictionaryIds(int rowId, int num, ColumnVector column,
                                    ColumnVector dictionaryIds) {
-    System.out.println("decodeDictionaryIds descriptor.getType(): " + descriptor.getType());
     switch (descriptor.getType()) {
       case INT32:
         if (column.dataType() == DataTypes.IntegerType ||
@@ -382,18 +352,6 @@ public class VectorizedColumnReader {
     } else if (column.dataType() == DataTypes.ShortType) {
       defColumn.readShorts(
           num, column, rowId, maxDefLevel, (VectorizedValuesReader) dataColumn);
-    /*
-    } else if (column.isArray()) {
-      System.out.println("isArray");
-      System.out.println(column.dataType());
-      DataType elementType = ((ArrayType)column.dataType()).elementType();
-      if (elementType == DataTypes.IntegerType || elementType == DataTypes.DateType ||
-          DecimalType.is32BitDecimalType(elementType)) {
-        System.out.println("defColumn.readIntArrays");
-        defColumn.readIntArrays(
-          num, column, rowId, maxDefLevel, (VectorizedValuesReader) dataColumn);
-      }
-    */
     } else {
       throw new NotImplementedException("Unimplemented type: " + column.dataType());
     }
@@ -554,7 +512,6 @@ public class VectorizedColumnReader {
       int total,
       int repLevel,
       int maxRepLevel) throws IOException {
-    System.out.println("insertArrayForRepetition");
     ColumnVector curColumn = column;
     for (int j = maxRepLevel; j > repLevel; j--) {
       curColumn = curColumn.getParentArrayColumn();
@@ -571,9 +528,6 @@ public class VectorizedColumnReader {
         if (offsets.containsKey(j)) {
           offset = offsets.get(j);
         }
-    
-        System.out.println("putArray => rowId: " + rowId + " offset: " + offset +
-          " repCount: " + repCount + " for replevel: " + j);
     
         curColumn.putArray(rowId, offset, repCount);
     
@@ -615,14 +569,8 @@ public class VectorizedColumnReader {
 
     ColumnVector parentCol = column.getParentColumn();
     if (parentCol != null) {
-      System.out.println("parentCol is not null");
-      // int baseLevel = column.getBaseLevel();
-      // int repCount = 0;
-      // int rowId = beginRowId;
-      
       for (int i = 0; i < valuesReadInPage; i++) {
         int repLevel = repetitionLevelColumn.nextInt();
-        System.out.println("repLevel: " + repLevel + " maxRepLevel: " + maxRepLevel);
 
         if (i > 0) {
           insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
@@ -656,8 +604,6 @@ public class VectorizedColumnReader {
       // Insert the last array
       insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
         0, maxRepLevel);
-    } else {
-      System.out.println("parentCol is null");
     }
   }
 

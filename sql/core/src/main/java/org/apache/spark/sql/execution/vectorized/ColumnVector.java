@@ -518,11 +518,8 @@ public abstract class ColumnVector implements AutoCloseable {
    * Returns the array at rowid.
    */
   public final Array getArray(int rowId) {
-    // System.out.println("getArray: " + rowId);
     resultArray.length = getArrayLength(rowId);
     resultArray.offset = getArrayOffset(rowId);
-    // System.out.println("resultArray.length: " + resultArray.length);
-    // System.out.println("resultArray.offset: " + resultArray.offset);
     return resultArray;
   }
 
@@ -910,12 +907,6 @@ public abstract class ColumnVector implements AutoCloseable {
   protected boolean isConstant;
 
   /**
-   * The level of this column. It will be used to compare with definition level and
-   * repetition level when reading data into this column.
-   */
-  // protected int baseLevel;
-
-  /**
    * Default size of each array length value. This grows as necessary.
    */
   protected static final int DEFAULT_ARRAY_LENGTH = 4;
@@ -998,13 +989,6 @@ public abstract class ColumnVector implements AutoCloseable {
   }
 
   /**
-   * Returns the base level of this column.
-   */
-  // public int getBaseLevel() {
-  //  return this.baseLevel;
-  // }
-
-  /**
    * Returns if this ColumnVector has initialized VectorizedColumnReader.
    */
   public boolean hasColumnReader() {
@@ -1016,7 +1000,6 @@ public abstract class ColumnVector implements AutoCloseable {
    */
   public void readBatch(int total) throws IOException {
     if (this.columnReader != null) {
-      System.out.println("call readBatch in ColumnVector");
       this.columnReader.readBatch(total, this);
     } else {
       throw new RuntimeException("The reader of this ColumnVector is not initialized yet. " +
@@ -1062,10 +1045,8 @@ public abstract class ColumnVector implements AutoCloseable {
    * type.
    */
   protected ColumnVector(int capacity, DataType type, MemoryMode memMode) {
-    System.out.println("capacity: " + capacity);
     this.capacity = capacity;
     this.type = type;
-    // this.baseLevel = baseLevel;
 
     if (type instanceof ArrayType || type instanceof BinaryType || type instanceof StringType
         || DecimalType.isByteArrayDecimalType(type)) {
@@ -1077,7 +1058,6 @@ public abstract class ColumnVector implements AutoCloseable {
         childType = DataTypes.ByteType;
         childCapacity *= DEFAULT_ARRAY_LENGTH;
       }
-      System.out.println("dataType: " + type + " childType: " + childType);
       this.childColumns = new ColumnVector[1];
       this.childColumns[0] = ColumnVector.allocate(childCapacity, childType, memMode);
       this.childColumns[0].setParentColumn(this);

@@ -44,5 +44,4 @@ public interface VectorizedValuesReader {
   void readFloats(int total, ColumnVector c, int rowId);
   void readDoubles(int total, ColumnVector c, int rowId);
   void readBinary(int total, ColumnVector c, int rowId);
-  void readIntArray(int total, ColumnVector c, int rowId);
 }

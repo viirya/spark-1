@@ -159,18 +159,6 @@ public class VectorizedPlainValuesReader extends ValuesReader implements Vectori
   }
 
   @Override
-  public final void readIntArray(int total, ColumnVector v, int rowId) {
-    System.out.println("readIntArray in VectorizedPlainValuesReader");
-    for (int i = 0; i < total; i++) {
-      int len = readInteger();
-      int start = offset;
-      System.out.println("len = " + len + " start: " + start + " buffer: " + buffer);
-      // offset += len;
-      // v.putIntArray(rowId + i, buffer, start - Platform.BYTE_ARRAY_OFFSET, len);
-    }
-  }
- 
-  @Override
   public final void readBinary(int total, ColumnVector v, int rowId) {
     for (int i = 0; i < total; i++) {
       int len = readInteger();

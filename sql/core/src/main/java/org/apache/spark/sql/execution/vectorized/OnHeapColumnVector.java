@@ -211,7 +211,6 @@ public final class OnHeapColumnVector extends ColumnVector {
 
   @Override
   public void putInts(int rowId, int count, int[] src, int srcIndex) {
-    System.out.println("rowId: " + rowId);
     System.arraycopy(src, srcIndex, intData, rowId, count);
   }
 
@@ -371,14 +370,8 @@ public final class OnHeapColumnVector extends ColumnVector {
 
   @Override
   public void putArray(int rowId, int offset, int length) {
-    // System.out.println("before putArray");
-    // System.out.println("arrayOffsets[" + rowId + "] = " + arrayOffsets[rowId]);
-    // System.out.println("arrayLengths[" + rowId + "] = " + arrayLengths[rowId]);
     arrayOffsets[rowId] = offset;
     arrayLengths[rowId] = length;
-    // System.out.println("after putArray");
-    // System.out.println("arrayOffsets[" + rowId + "] = " + arrayOffsets[rowId]);
-    // System.out.println("arrayLengths[" + rowId + "] = " + arrayLengths[rowId]);
   }
 
   @Override
