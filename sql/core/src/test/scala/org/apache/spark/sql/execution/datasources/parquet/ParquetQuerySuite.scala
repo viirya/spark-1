@@ -161,6 +161,13 @@ class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext
     }
   }
 
+  test("nested data - array of struct2") {
+    val data = (1 to 10).map(i => (i, Seq((i, s"val_$i"))))
+    withParquetTable(data, "t") {
+      sql("SELECT _2[0] FROM t").show()
+    }
+  }
+
   test("SPARK-1913 regression: columns only referenced by pushed down filters should remain") {
     withParquetTable((1 to 10).map(Tuple1.apply), "t") {
       checkAnswer(sql("SELECT _1 FROM t WHERE _1 < 10"), (1 to 9).map(Row.apply(_)))

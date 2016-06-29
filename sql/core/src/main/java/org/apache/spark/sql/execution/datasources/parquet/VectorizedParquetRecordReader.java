@@ -190,12 +190,49 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     }
 
     // Initialize missing columns with nulls.
-    for (int i = 0; i < missingColumns.length; i++) {
-      if (missingColumns[i]) {
-        columnarBatch.column(i).putNulls(0, columnarBatch.capacity());
-        columnarBatch.column(i).setIsConstant();
+    System.out.println("Initialize missing columns: " + missingColumns.length);
+    int missingColumnIdx = 0;
+    int partitionIdxBase = missingColumns.length;
+    if (partitionColumns != null) {
+      partitionIdxBase = sparkSchema.fields().length;
+    }
+    System.out.println("partitionIdxBase: " + partitionIdxBase);
+    for (int i = 0; i < columnarBatch.numFields(); i++) {
+      System.out.println("For field: " + i);
+      if (i < partitionIdxBase) {
+        System.out.println("Not partition field");
+        missingColumnIdx = initColumnWithNulls(columnarBatch.column(i), missingColumnIdx);
+      } else {
+        System.out.println("Is partition field");
       }
     }
+  }
+
+  private int initColumnWithNulls(ColumnVector column, int missingColumnIdx) {
+    if (column.isComplex()) {
+      for (int j = 0; j < column.getChildColumnNums(); j++) {
+        System.out.println("For childColumn: " + j);
+        missingColumnIdx = initColumnWithNulls(column.getChildColumn(j), missingColumnIdx);
+        /*
+        if (missingColumns[missingColumnIdx++]) {
+          System.out.println("Is missing column");
+          column.getChildColumn(j).putNulls(0, columnarBatch.capacity());
+          column.getChildColumn(j).setIsConstant();
+        } else {
+          System.out.println("Is not missing column");
+        }
+        */
+      }
+    } else {
+      if (missingColumns[missingColumnIdx++]) {
+        System.out.println("Is missing column");
+        column.putNulls(0, columnarBatch.capacity());
+        column.setIsConstant();
+      } else {
+        System.out.println("Is not missing column");
+      }
+    }
+    return missingColumnIdx;
   }
 
   public void initBatch() {
@@ -230,6 +267,7 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     System.out.println("columnarBatch.capacity: " + columnarBatch.capacity());
     System.out.println("num in nextBatch: " + num);
     for (int i = 0; i < columnarBatch.numFields(); i++) {
+      System.out.println("nextBatch on " + i + " field");
       readBatchOnColumnVector(columnarBatch.column(i), num);
     }
 
@@ -247,6 +285,7 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     } else {
       System.out.println("column at columnarBatch has no ColumnReader");
       for (int j = 0; j < column.getChildColumnNums(); j++) {
+        System.out.println("readBatchOnColumnVector on child column: " + j);
         readBatchOnColumnVector(column.getChildColumn(j), num);
       }
     }
@@ -284,6 +323,9 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
         missingColumns[i] = true;
       }
     }
+    for (int i = 0; i < missingColumns.length; i++) {
+      System.out.println("missingColumns " + i + ": " + missingColumns[i]);
+    }
   }
 
   private int setupColumnReader(
@@ -291,13 +333,20 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
       VectorizedColumnReader[] columnReaders,
       int readerIdx) {
     if (column.isComplex()) {
-      System.out.println("column has childColumn");
+      System.out.println("setupColumnReader: column has childColumn");
       column.setColumnReader(null);
       for (int j = 0; j < column.getChildColumnNums(); j++) {
         readerIdx = setupColumnReader(column.getChildColumn(j), columnReaders, readerIdx);
       }
     } else {
-      column.setColumnReader(columnReaders[readerIdx++]);
+      System.out.println("setupColumnReader: column has no childColumn");
+      if (!missingColumns[readerIdx]) {
+        System.out.println("setupColumnReader: set reader " + readerIdx);
+        column.setColumnReader(columnReaders[readerIdx++]);
+      } else {
+        System.out.println("skip setColumnReader for missing column");
+        readerIdx++;
+      }
     }
     return readerIdx;
   }
@@ -316,7 +365,7 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     columnReaders = new VectorizedColumnReader[columns.size()];
 
     for (int i = 0; i < columns.size(); ++i) {
-      // if (missingColumns[i]) continue;
+      if (missingColumns[i]) continue;
       columnReaders[i] = new VectorizedColumnReader(columns.get(i),
           pages.getPageReader(columns.get(i)));
     }
@@ -326,7 +375,6 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     int partitionIdx = sparkSchema.fields().length;
     for (int i = 0; i < columnarBatch.numFields(); i++) {
       if (i >= partitionIdx) break;
-      if (missingColumns[i]) continue;
       readerIdx = setupColumnReader(columnarBatch.column(i), columnReaders, readerIdx);
       /*
       if (columnarBatch.column(i).isComplex()) {
@@ -341,8 +389,8 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
       }
       */
     }
-    assert readerIdx == columnReaders.length :
-      "Incorrect matching between ColumnReaders and ColumnVectors";
+    // assert readerIdx == columnReaders.length :
+    //  "Incorrect matching between ColumnReaders and ColumnVectors";
     totalCountLoadedSoFar += pages.getRowCount();
   }
 }

@@ -149,6 +149,7 @@ public class VectorizedColumnReader {
     System.out.println("want to read total: " + total);
     boolean isNestedColumn = column.getParentColumn() != null;
     System.out.println("Is nestedColumn: " + isNestedColumn);
+    boolean isRepeatedColumn = maxRepLevel > 0;
     int rowId = 0;
     int valuesReadInPage = 0;
     int repeatedRowId = 0;
@@ -161,7 +162,7 @@ public class VectorizedColumnReader {
     // read `total` repeated columns. Eg., if we want to read 5 records of an array of int column.
     // we can't just read 5 integers. Instead, we have to read the integers until 5 arrays are put
     // into this array column.
-    while ((isNestedColumn && repeatedRowId < total) || (!isNestedColumn && total > 0)) {
+    while ((isRepeatedColumn && repeatedRowId < total) || (!isRepeatedColumn && total > 0)) {
       System.out.println("endOfPageValueCount: " + endOfPageValueCount +
         " valuesRead: " + valuesRead);
       // Compute the number of values we want to read in this page.
@@ -170,15 +171,15 @@ public class VectorizedColumnReader {
       // and then read next page.
       if (leftInPage == 0) {
         // Update repetition info for this column.
-        if (valuesReadInPage > 0) {
+        if (valuesReadInPage > 0 && isRepeatedColumn) {
           updateReptitionInfo(column, beginRowIds, offsets, valuesReadInPage, total);
           repeatedRowId = beginRowIds.get(1);
           System.out.println("nested column row id: " + repeatedRowId);
           // offset += rowId;
           valuesReadInPage = 0;
-        }
-        if (repeatedRowId == total) {
-          return;
+          if (repeatedRowId == total) {
+            return;
+          }
         }
         readPage();
         leftInPage = (int) (endOfPageValueCount - valuesRead);
@@ -249,7 +250,7 @@ public class VectorizedColumnReader {
       valuesReadInPage += num;
       valuesRead += num;
       rowId += num;
-      if (!isNestedColumn) {
+      if (!isRepeatedColumn) {
         total -= num;
       }
     }
