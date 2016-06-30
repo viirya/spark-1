@@ -179,7 +179,7 @@ public class VectorizedColumnReader {
           System.out.println("nested column row id: " + repeatedRowId);
           // offset += rowId;
           valuesReadInPage = 0;
-          if (repeatedRowId == total) {
+          if (repeatedRowId >= total) {
             return;
           }
         }
@@ -587,7 +587,7 @@ public class VectorizedColumnReader {
         reptitionMap.put(j, repCount);
         beginRowIds.put(j, rowId);
 
-        if (j - 1 > 0) {
+        if (j - 1 >= 0) {
           int nextRepCount = 0;
           if (reptitionMap.containsKey(j - 1)) {
             nextRepCount = reptitionMap.get(j - 1);
@@ -621,47 +621,65 @@ public class VectorizedColumnReader {
       // int baseLevel = column.getBaseLevel();
       // int repCount = 0;
       // int rowId = beginRowId;
-      
+      boolean began = false;
+
       for (int i = 0; i < valuesReadInPage; i++) {
         int repLevel = repetitionLevelColumn.nextInt();
         int defLevel = definitionLevelColumn.nextInt();
         System.out.println("repLevel: " + repLevel + " maxRepLevel: " + maxRepLevel +
-          "defLevel: " + defLevel);
+          " defLevel: " + defLevel + " maxDefLevel: " + maxDefLevel);
 
-        if (i > 0) {
+        if (began) {
           insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
             repLevel, maxRepLevel);
+        } else {
+          began = true;
         }
 
-        // Update the repetition count for maxRepLevel.
+        // Update the repetition count.
         if (repLevel < maxRepLevel) {
           int offset = 0;
           if (offsets.containsKey(maxRepLevel)) {
             offset = offsets.get(maxRepLevel);
           }
-          
-          // if (!column.isNullAt(offset) || repLevel != 0) {
-          if (!(defLevel == 0 && column.isNullAt(offset))) {
+          // If there is a null defined at definition level 0.
+          if (defLevel == 0 && column.isNullAt(offset)) {
+            if (maxDefLevel == 1) {
+              // For compatability with unannotated array.
+              insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
+                repLevel, maxRepLevel);
+            } else {
+              System.out.println("insert null record at definition 0");
+              ColumnVector topColumn = column.getParentColumn();
+              while (topColumn.getParentColumn() != null) {
+                topColumn = topColumn.getParentColumn();
+              }
+              int rowId = 0;
+              if (beginRowIds.containsKey(1)) {
+                rowId = beginRowIds.get(1);
+              }
+              topColumn.putNull(rowId);
+              beginRowIds.put(1, rowId + 1);
+              
+              for (int j = 2; j <= maxRepLevel; j++) {
+                rowId = 0;
+                if (beginRowIds.containsKey(j)) {
+                  rowId = beginRowIds.get(j);
+                }
+                beginRowIds.put(j, rowId + 1);
+              }
+              
+              offsets.put(maxRepLevel, offset + 1);
+            }
+            began = false;
+          } else {
             int repCount = 0;
             if (reptitionMap.containsKey(maxRepLevel)) {
               repCount = reptitionMap.get(maxRepLevel);
             }
             reptitionMap.put(maxRepLevel, repCount + 1);
-          } else {
-            ColumnVector topColumn = column.getParentColumn();
-            while (topColumn.getParentColumn() != null) {
-              topColumn = topColumn.getParentColumn();
-            }
-            int rowId = 0;
-            if (beginRowIds.containsKey(0)) {
-              rowId = beginRowIds.get(0);
-            }
-            topColumn.putNull(rowId);
-            beginRowIds.put(0, rowId + 1);
           }
-          // }
         } else {
-          // Update the repetition counts.
           if (reptitionMap.containsKey(repLevel)) {
             reptitionMap.put(repLevel, reptitionMap.get(repLevel) + 1);
           } else {
@@ -669,10 +687,12 @@ public class VectorizedColumnReader {
           }
         }
       }
-      System.out.println("insert the last array");  
-      // Insert the last array
-      insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
-        0, maxRepLevel);
+      if (began) {
+        System.out.println("insert the last array");
+        // Insert the last array
+        insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
+          0, maxRepLevel);
+      }
     } else {
       System.out.println("parentCol is null");
     }
