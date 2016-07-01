@@ -910,6 +910,11 @@ public abstract class ColumnVector implements AutoCloseable {
   protected boolean isConstant;
 
   /**
+   * Max definition level of this column. This value is valid only if this is a nested column.
+   */
+  protected int defLevel;
+
+  /**
    * The level of this column. It will be used to compare with definition level and
    * repetition level when reading data into this column.
    */
@@ -1072,7 +1077,13 @@ public abstract class ColumnVector implements AutoCloseable {
       DataType childType;
       int childCapacity = capacity;
       if (type instanceof ArrayType) {
+        ArrayType arrayType = (ArrayType)type;
+        if (arrayType.metadata().contains("defLevel")) {
+          this.defLevel = (int)arrayType.metadata().getLong("defLevel");
+        }
+        System.out.println("defLevel: " + defLevel);
         childType = ((ArrayType)type).elementType();
+        this.defLevel = defLevel;
       } else {
         childType = DataTypes.ByteType;
         childCapacity *= DEFAULT_ARRAY_LENGTH;
@@ -1084,9 +1095,18 @@ public abstract class ColumnVector implements AutoCloseable {
       this.resultArray = new Array(this.childColumns[0]);
       this.resultStruct = null;
     } else if (type instanceof StructType) {
+      StructType structType = (StructType)type;
+      if (structType.metadata().contains("defLevel")) {
+        this.defLevel = (int)structType.metadata().getLong("defLevel");
+      }
       StructType st = (StructType)type;
       this.childColumns = new ColumnVector[st.fields().length];
       for (int i = 0; i < childColumns.length; ++i) {
+        int fieldDefLevel = 0;
+        if (st.fields()[i].metadata().contains("defLevel")) {
+          fieldDefLevel = (int)st.fields()[i].metadata().getLong("defLevel");
+        }
+
         this.childColumns[i] =
           ColumnVector.allocate(capacity, st.fields()[i].dataType(), memMode);
         this.childColumns[i].setParentColumn(this);

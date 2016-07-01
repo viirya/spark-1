@@ -37,7 +37,7 @@ import org.apache.spark.util.Utils
  */
 class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext {
   import testImplicits._
-
+  /*
   test("simple select queries") {
     withParquetTable((0 until 10).map(i => (i, i.toString)), "t") {
       checkAnswer(sql("SELECT _1 FROM t where t._1 > 5"), (6 until 10).map(Row.apply(_)))
@@ -124,6 +124,14 @@ class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext
     }
   }
 
+  test("nested data - struct with array of array field") {
+    val data = (1 to 10).map(i => (i, Seq(Seq(i, i + 1))))
+    withParquetTable(data, "t") {
+      sql("SELECT _2[0] FROM t").show()
+    }
+  }
+  */
+
   test("nested data - struct with array field") {
     val data = (1 to 10).map(i => (i, Seq(i, i + 1)))
     withParquetTable(data, "t") {
@@ -167,7 +175,7 @@ class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext
       sql("SELECT _2[0] FROM t").show()
     }
   }
-
+  /*
   test("SPARK-1913 regression: columns only referenced by pushed down filters should remain") {
     withParquetTable((1 to 10).map(Tuple1.apply), "t") {
       checkAnswer(sql("SELECT _1 FROM t WHERE _1 < 10"), (1 to 9).map(Row.apply(_)))
@@ -701,6 +709,7 @@ class ParquetQuerySuite extends QueryTest with ParquetTest with SharedSQLContext
       }
     }
   }
+  */
 }
 
 object TestingUDT {
