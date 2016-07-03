@@ -883,6 +883,11 @@ public abstract class ColumnVector implements AutoCloseable {
   public final void setIsConstant() { isConstant = true; }
 
   /**
+   * Returns definition level for this column. This value is valid only if isComplex() return true.
+   */
+  public final int getDefLevel() { return defLevel; }
+
+  /**
    * Maximum number of rows that can be stored in this column.
    */
   protected int capacity;
@@ -994,12 +999,12 @@ public abstract class ColumnVector implements AutoCloseable {
   /**
    * Returns the nearest parent column which is an Array column.
    */
-  public ColumnVector getParentArrayColumn() {
-    ColumnVector arrayCol = this.parentColumn;
-    while (arrayCol != null && !arrayCol.isArray()) {
-      arrayCol = arrayCol.parentColumn;
+  public ColumnVector getNearestParentArrayColumn() {
+    ColumnVector parentCol = this.parentColumn;
+    while (parentCol != null && !parentCol.isArray()) {
+      parentCol = parentCol.parentColumn;
     }
-    return arrayCol;
+    return parentCol;
   }
 
   /**
@@ -1095,8 +1100,10 @@ public abstract class ColumnVector implements AutoCloseable {
       this.resultArray = new Array(this.childColumns[0]);
       this.resultStruct = null;
     } else if (type instanceof StructType) {
+      System.out.println("dataType: " + type);
       StructType structType = (StructType)type;
       if (structType.metadata().contains("defLevel")) {
+        System.out.println("defLevel: " + defLevel);
         this.defLevel = (int)structType.metadata().getLong("defLevel");
       }
       StructType st = (StructType)type;

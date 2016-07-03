@@ -160,20 +160,43 @@ public class VectorizedColumnReader {
     Map<Integer, Integer> beginRowIds = new HashMap<Integer, Integer>();
     Map<Integer, Integer> offsets = new HashMap<Integer, Integer>();
 
-    // If we are going to read data in repeated column, the stop condition is that we
-    // read `total` repeated columns. Eg., if we want to read 5 records of an array of int column.
-    // we can't just read 5 integers. Instead, we have to read the integers until 5 arrays are put
-    // into this array column.
-    while ((isRepeatedColumn && repeatedRowId < total) || (!isRepeatedColumn && total > 0)) {
-      System.out.println("endOfPageValueCount: " + endOfPageValueCount +
-        " valuesRead: " + valuesRead);
+    while (true) {
       // Compute the number of values we want to read in this page.
       int leftInPage = (int) (endOfPageValueCount - valuesRead);
       // When we reach the end of this page, we update repetition info of this column
       // and then read next page.
       if (leftInPage == 0) {
         // Update repetition info for this column.
-        if (valuesReadInPage > 0 && isRepeatedColumn) {
+        if (valuesReadInPage > 0 && isNestedColumn) {
+          updateReptitionInfo(column, beginRowIds, offsets, valuesReadInPage, total);
+          if (beginRowIds.containsKey(1)) {
+            repeatedRowId = beginRowIds.get(1);
+            System.out.println("nested column row id: " + repeatedRowId);
+          }
+          valuesReadInPage = 0;
+        }
+      }
+      // (isNestedColumn && repeatedRowId < total) || (!isNestedColumn && total > 0)) {
+      // Stop condition:
+      // If we are going to read data in repeated column, the stop condition is that we
+      // read `total` repeated columns. Eg., if we want to read 5 records of an array of int column.
+      // we can't just read 5 integers. Instead, we have to read the integers until 5 arrays are put
+      // into this array column.
+      if (isRepeatedColumn) {
+        if (repeatedRowId >= total) break;
+      } else {
+        if (total <= 0) break;
+      }
+      System.out.println("endOfPageValueCount: " + endOfPageValueCount +
+        " valuesRead: " + valuesRead);
+      // Compute the number of values we want to read in this page.
+      // int leftInPage = (int) (endOfPageValueCount - valuesRead);
+      // When we reach the end of this page, we update repetition info of this column
+      // and then read next page.
+      if (leftInPage == 0) {
+        /*
+        // Update repetition info for this column.
+        if (valuesReadInPage > 0 && isNestedColumn) {
           updateReptitionInfo(column, beginRowIds, offsets, valuesReadInPage, total);
           repeatedRowId = beginRowIds.get(1);
           System.out.println("nested column row id: " + repeatedRowId);
@@ -183,6 +206,7 @@ public class VectorizedColumnReader {
             return;
           }
         }
+        */
         readPage();
         leftInPage = (int) (endOfPageValueCount - valuesRead);
       }
@@ -256,12 +280,11 @@ public class VectorizedColumnReader {
         total -= num;
       }
     }
-    /*
     if (valuesReadInPage > 0) {
       // Update repetition info for this column.
-      repeatedRowId = updateReptitionInfo(column, repeatedRowId, valuesReadInPage, offset);
+      // repeatedRowId = updateReptitionInfo(column, repeatedRowId, valuesReadInPage, offset);
+      // updateReptitionInfo(column, beginRowIds, offsets, valuesReadInPage, total);
     }
-    */
   }
 
   /**
@@ -559,7 +582,8 @@ public class VectorizedColumnReader {
     System.out.println("insertArrayForRepetition");
     ColumnVector curColumn = column;
     for (int j = maxRepLevel; j > repLevel; j--) {
-      curColumn = curColumn.getParentArrayColumn();
+      System.out.println("repLevel: " + j);
+      curColumn = curColumn.getNearestParentArrayColumn();
       if (curColumn != null && curColumn.isArray()) {
         int rowId = 0;
         if (beginRowIds.containsKey(j)) {
@@ -587,7 +611,7 @@ public class VectorizedColumnReader {
         reptitionMap.put(j, repCount);
         beginRowIds.put(j, rowId);
 
-        if (j - 1 >= 0) {
+        if (j >= 1) {
           int nextRepCount = 0;
           if (reptitionMap.containsKey(j - 1)) {
             nextRepCount = reptitionMap.get(j - 1);
@@ -636,12 +660,91 @@ public class VectorizedColumnReader {
           began = true;
         }
 
-        // Update the repetition count.
-        if (repLevel < maxRepLevel) {
+        // When definition level is less than max definition level.
+        // It means null value.
+        if (defLevel < maxDefLevel) {
           int offset = 0;
           if (offsets.containsKey(maxRepLevel)) {
             offset = offsets.get(maxRepLevel);
           }
+          assert column.isNullAt(offset): "Parquet encoding error!";
+          System.out.println("Found null! isNullAt: " + column.isNullAt(offset));
+
+          // For compatability:
+          // repeated elements are not wrapped in a group.
+          if (column.getParentColumn().getDefLevel() == maxDefLevel) {
+            insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
+              repLevel, maxRepLevel);
+            offsets.put(maxRepLevel, offset + 1);
+          } else {
+            if (defLevel == 0) {
+              // A null record.
+              System.out.println("insert null record at definition 0");
+              // Obtain most-top column (repetition level 1).
+              ColumnVector topColumn = column.getParentColumn();
+              while (topColumn.getParentColumn() != null) {
+                topColumn = topColumn.getParentColumn();
+              }
+              int rowId = 0;
+              if (beginRowIds.containsKey(1)) {
+                rowId = beginRowIds.get(1);
+              }
+              // Insert null record and increase row id at repetition level 1.
+              topColumn.putNull(rowId);
+              beginRowIds.put(1, rowId + 1);
+              // Increse row id at later repetition levels.
+              for (int j = 2; j <= maxRepLevel; j++) {
+                rowId = 0;
+                if (beginRowIds.containsKey(j)) {
+                  rowId = beginRowIds.get(j);
+                }
+                beginRowIds.put(j, rowId + 1);
+              }
+              // Move to next offset in max repetition level as we processed the current value.
+              offsets.put(maxRepLevel, offset + 1);
+            
+              began = false;
+            } else {
+              // Null value at definition level > 0.
+            }
+          }
+        } else {
+          // Determine the repetition level of non-null values.
+
+          // A new record begins with non-null value.
+          if (maxRepLevel == 0) {
+            // A required record at root level.
+            int repCount = 0;
+            if (reptitionMap.containsKey(1)) {
+              repCount = reptitionMap.get(1);
+            }
+            reptitionMap.put(1, repCount + 1);
+            insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
+              0, 1);
+          } else if (repLevel < maxRepLevel) {
+            // Update the repetition count for max repetition level.
+            int repCount = 0;
+            if (reptitionMap.containsKey(maxRepLevel)) {
+              repCount = reptitionMap.get(maxRepLevel);
+            }
+            reptitionMap.put(maxRepLevel, repCount + 1);
+          } else {
+            // Repeated values. We increase repetition count.
+            if (reptitionMap.containsKey(repLevel)) {
+              reptitionMap.put(repLevel, reptitionMap.get(repLevel) + 1);
+            } else {
+              reptitionMap.put(repLevel, 1);
+            }
+          }
+        }
+        /*
+        // A new record begins.
+        if (maxRepLevel == 0 || repLevel < maxRepLevel) {
+          int offset = 0;
+          if (offsets.containsKey(maxRepLevel)) {
+            offset = offsets.get(maxRepLevel);
+          }
+
           // If there is a null defined at definition level 0.
           if (defLevel == 0 && column.isNullAt(offset)) {
             if (maxDefLevel == 1) {
@@ -673,6 +776,7 @@ public class VectorizedColumnReader {
             }
             began = false;
           } else {
+            // Update the repetition count.
             int repCount = 0;
             if (reptitionMap.containsKey(maxRepLevel)) {
               repCount = reptitionMap.get(maxRepLevel);
@@ -680,12 +784,14 @@ public class VectorizedColumnReader {
             reptitionMap.put(maxRepLevel, repCount + 1);
           }
         } else {
+          // Repeated values. We increase repetition count.
           if (reptitionMap.containsKey(repLevel)) {
             reptitionMap.put(repLevel, reptitionMap.get(repLevel) + 1);
           } else {
             reptitionMap.put(repLevel, 1);
           }
         }
+        */
       }
       if (began) {
         System.out.println("insert the last array");

@@ -109,11 +109,12 @@ private[parquet] class ParquetSchemaConverter(
     }
 
     if (path.isEmpty) {
+      println("struct 1: path is empty")
       StructType(fields)
     } else {
       val builder = new MetadataBuilder()
       val defLevel = messageType.getMaxDefinitionLevel(path: _*)
-      println(s"path: ${path.mkString(", ")}     defLevel: $defLevel")
+      println(s"struct 2: path: ${path.mkString(", ")}     defLevel: $defLevel")
       val metadata = builder.putLong("defLevel", defLevel).build()
       StructType(fields.toArray, metadata)
     }
@@ -251,7 +252,7 @@ private[parquet] class ParquetSchemaConverter(
         if (isElementType(repeatedType, field.getName)) {
           val defLevel = messageType.getMaxDefinitionLevel(path: _*)
           val metadata = builder.putLong("defLevel", defLevel).build()
-          println(s"path: ${path.mkString(", ")}     defLevel: $defLevel")
+          println(s"array 1: path: ${path.mkString(", ")}     defLevel: $defLevel")
           ArrayType(convertField(repeatedType, messageType, path), containsNull = false,
             metadata = metadata)
         } else {
@@ -260,7 +261,7 @@ private[parquet] class ParquetSchemaConverter(
           val curPath = path ++ Seq(repeatedType.getName)
           val defLevel = messageType.getMaxDefinitionLevel(curPath: _*)
           val metadata = builder.putLong("defLevel", defLevel).build()
-          println(s"curPath: ${curPath.mkString(", ")}     defLevel: $defLevel")
+          println(s"array2: curPath: ${curPath.mkString(", ")}     defLevel: $defLevel")
           ArrayType(convertField(elementType, messageType, curPath), containsNull = optional,
             metadata = metadata)
         }
@@ -286,9 +287,13 @@ private[parquet] class ParquetSchemaConverter(
 
         val valueType = keyValueType.getType(1)
         val valueOptional = valueType.isRepetition(OPTIONAL)
+        val keyPath = path ++ Seq(keyValueType.getName)
+        val valuePath = path ++ Seq(keyValueType.getName)
+        println(s"keyPath: $keyPath")
+        println(s"valuePath: $valuePath")
         MapType(
-          convertField(keyType, messageType, path),
-          convertField(valueType, messageType, path),
+          convertField(keyType, messageType, keyPath),
+          convertField(valueType, messageType, valuePath),
           valueContainsNull = valueOptional)
 
       case _ =>
