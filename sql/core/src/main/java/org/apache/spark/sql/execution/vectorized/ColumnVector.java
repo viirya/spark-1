@@ -888,6 +888,11 @@ public abstract class ColumnVector implements AutoCloseable {
   public final int getDefLevel() { return defLevel; }
 
   /**
+   * Returns repetition level for this column. This value is valid only if isComplex() return true.
+   */
+  public final int getRepLevel() { return repLevel; }
+
+  /**
    * Maximum number of rows that can be stored in this column.
    */
   protected int capacity;
@@ -918,6 +923,11 @@ public abstract class ColumnVector implements AutoCloseable {
    * Max definition level of this column. This value is valid only if this is a nested column.
    */
   protected int defLevel;
+
+  /**
+   * Max repetition level of this column. This value is valid only if this is a nested column.
+   */
+  protected int repLevel;
 
   /**
    * The level of this column. It will be used to compare with definition level and
@@ -1085,8 +1095,9 @@ public abstract class ColumnVector implements AutoCloseable {
         ArrayType arrayType = (ArrayType)type;
         if (arrayType.metadata().contains("defLevel")) {
           this.defLevel = (int)arrayType.metadata().getLong("defLevel");
+          this.repLevel = (int)arrayType.metadata().getLong("repLevel");
+          System.out.println("defLevel: " + defLevel + " repLevel: " + repLevel);
         }
-        System.out.println("defLevel: " + defLevel);
         childType = ((ArrayType)type).elementType();
         this.defLevel = defLevel;
       } else {
@@ -1103,8 +1114,9 @@ public abstract class ColumnVector implements AutoCloseable {
       System.out.println("dataType: " + type);
       StructType structType = (StructType)type;
       if (structType.metadata().contains("defLevel")) {
-        System.out.println("defLevel: " + defLevel);
         this.defLevel = (int)structType.metadata().getLong("defLevel");
+        this.repLevel = (int)structType.metadata().getLong("repLevel");
+        System.out.println("defLevel: " + defLevel + " repLevel: " + repLevel);
       }
       StructType st = (StructType)type;
       this.childColumns = new ColumnVector[st.fields().length];
