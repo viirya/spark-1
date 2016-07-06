@@ -97,7 +97,7 @@ private[parquet] class ParquetSchemaConverter(
           // println(s"field name: ${field.getName}")
           val defLevel = messageType.getMaxDefinitionLevel(curPath: _*)
           val repLevel = messageType.getMaxRepetitionLevel(curPath: _*)
-          println(s"curPath: ${curPath.mkString(", ")}     defLevel: $defLevel")
+          println(s"curPath: ${curPath.mkString(", ")}     defLevel: $defLevel repLevel: $repLevel")
           val metadata = builder.putLong("defLevel", defLevel).putLong("repLevel", repLevel).build()
 
           // A repeated field that is neither contained by a `LIST`- or `MAP`-annotated group nor
@@ -116,7 +116,7 @@ private[parquet] class ParquetSchemaConverter(
       val builder = new MetadataBuilder()
       val defLevel = messageType.getMaxDefinitionLevel(path: _*)
       val repLevel = messageType.getMaxRepetitionLevel(path: _*)
-      println(s"struct 2: path: ${path.mkString(", ")}     defLevel: $defLevel")
+      println(s"struct 2: path: ${path.mkString(", ")}     defLevel: $defLevel repLevel: $repLevel")
       val metadata = builder.putLong("defLevel", defLevel).putLong("repLevel", repLevel).build()
       StructType(fields.toArray, metadata)
     }
@@ -255,17 +255,19 @@ private[parquet] class ParquetSchemaConverter(
           val defLevel = messageType.getMaxDefinitionLevel(path: _*)
           val repLevel = messageType.getMaxRepetitionLevel(path: _*)
           val metadata = builder.putLong("defLevel", defLevel).putLong("repLevel", repLevel).build()
-          println(s"array 1: path: ${path.mkString(", ")}     defLevel: $defLevel")
+          println(s"array 1: path: ${path.mkString(", ")}     defLevel: $defLevel" +
+            s"repLevel: $repLevel")
           ArrayType(convertField(repeatedType, messageType, path), containsNull = false,
             metadata = metadata)
         } else {
           val elementType = repeatedType.asGroupType().getType(0)
           val optional = elementType.isRepetition(OPTIONAL)
           val curPath = path ++ Seq(repeatedType.getName)
-          val defLevel = messageType.getMaxDefinitionLevel(curPath: _*)
-          val repLevel = messageType.getMaxRepetitionLevel(curPath: _*)
+          val defLevel = messageType.getMaxDefinitionLevel(path: _*)
+          val repLevel = messageType.getMaxRepetitionLevel(path: _*)
           val metadata = builder.putLong("defLevel", defLevel).putLong("repLevel", repLevel).build()
-          println(s"array2: curPath: ${curPath.mkString(", ")}     defLevel: $defLevel")
+          println(s"array2: curPath: ${curPath.mkString(", ")}     defLevel: $defLevel" +
+            s" repLevel: $repLevel")
           ArrayType(convertField(elementType, messageType, curPath), containsNull = optional,
             metadata = metadata)
         }

@@ -633,6 +633,7 @@ object PrefixSpanModel extends Loader[PrefixSpanModel[_]] {
         StructField("freq", LongType))
       val schema = StructType(fields)
       val rowDataRDD = model.freqSequences.map { x =>
+        println(s"x.sequence: ${x.sequence}")
         Row(x.sequence, x.freq)
       }
       spark.createDataFrame(rowDataRDD, schema).write.parquet(Loader.dataPath(path))

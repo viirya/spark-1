@@ -384,6 +384,7 @@ class PrefixSpanSuite extends SparkFunSuite with MLlibTestSparkContext {
       val newSet = newModel.freqSequences.collect().map { x =>
         (x.sequence.map(_.toSet).toSeq, x.freq)
       }.toSet
+      println(s"newSet: $newSet")
       assert(originalSet === newSet)
     } finally {
       Utils.deleteRecursively(tempDir)
