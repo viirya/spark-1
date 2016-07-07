@@ -693,6 +693,7 @@ public class VectorizedColumnReader {
             // offsets.put(maxRepLevel, offset + 1);
             insertRepeatedArray(column, rowIds, offsets, reptitionMap, total, repLevel);
             offsets.put(maxRepLevel, offset + 1);
+            prevRepLevel = -1;
           } else if (defLevel == 0) {
             // A null record at root level.
             System.out.println("insert null record at definition 0");

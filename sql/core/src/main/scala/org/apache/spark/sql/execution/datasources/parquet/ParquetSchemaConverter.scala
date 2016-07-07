@@ -263,7 +263,7 @@ private[parquet] class ParquetSchemaConverter(
           val elementType = repeatedType.asGroupType().getType(0)
           val optional = elementType.isRepetition(OPTIONAL)
           val curPath = path ++ Seq(repeatedType.getName)
-          val defLevel = messageType.getMaxDefinitionLevel(path: _*)
+          val defLevel = messageType.getMaxDefinitionLevel(curPath: _*)
           val repLevel = messageType.getMaxRepetitionLevel(path: _*)
           val metadata = builder.putLong("defLevel", defLevel).putLong("repLevel", repLevel).build()
           println(s"array2: curPath: ${curPath.mkString(", ")}     defLevel: $defLevel" +
