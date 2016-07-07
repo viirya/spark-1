@@ -687,14 +687,17 @@ public class VectorizedColumnReader {
           }
           System.out.println("Found null! isNullAt: " + column.isNullAt(offset));
 
-          if (column.getParentColumn().getDefLevel() == maxDefLevel) {
+          // This physical column is required.
+          if (column.getParentColumn().getDefLevel() == maxDefLevel && maxRepLevel > 0) {
             // insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
             //  repLevel, maxRepLevel);
             // offsets.put(maxRepLevel, offset + 1);
+            System.out.println("null case 1");
             insertRepeatedArray(column, rowIds, offsets, reptitionMap, total, repLevel);
             offsets.put(maxRepLevel, offset + 1);
             prevRepLevel = -1;
           } else if (defLevel == 0) {
+            System.out.println("null case 2");
             // A null record at root level.
             System.out.println("insert null record at definition 0");
             // Obtain most-top column (repetition level 1).
@@ -707,6 +710,12 @@ public class VectorizedColumnReader {
             if (rowIds.containsKey(1)) {
               rowId = rowIds.get(1);
             }
+            int repCount = 0;
+            if (reptitionMap.containsKey(1)) {
+              repCount = reptitionMap.get(1);
+            }
+            reptitionMap.put(1, 0);
+            rowId += repCount;
             // Insert null record and increase row id.
             topColumn.putNull(rowId);
             rowIds.put(1, rowId + 1);
@@ -725,6 +734,7 @@ public class VectorizedColumnReader {
 
             prevRepLevel = -1;
           } else if (repLevel == maxRepLevel) {
+            System.out.println("null case 3");
             // A null value at max repetition level.
             // This null value is repeated in a wrapping group. Simply increase repetition count.
             int repCount = 0;
@@ -733,6 +743,7 @@ public class VectorizedColumnReader {
             }
             reptitionMap.put(repLevel, repCount + 1);
           } else {
+            System.out.println("null case 4");
             // Null value at definition level > 0.
             System.out.println("Null value at definition level > 0.");
             int repCount = 0;
