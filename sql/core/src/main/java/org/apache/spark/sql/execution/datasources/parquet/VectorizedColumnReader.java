@@ -687,8 +687,13 @@ public class VectorizedColumnReader {
           }
           System.out.println("Found null! isNullAt: " + column.isNullAt(offset));
 
-          // This physical column is required.
-          if (column.getParentColumn().getDefLevel() == maxDefLevel && maxRepLevel > 0) {
+          // The parent column has the same definition level as this physical column.
+          // It means that this physical column is required.
+          // When its value is null, then it means the parent column is an empty one. 
+          // Insert a nested record with empty content, e.g., an array of length 0.
+          if (column.getParentColumn().getDefLevel() == maxDefLevel &&
+            column.getParentColumn().getDefLevel() == defLevel) {
+            // column.getParentColumn().getRepLevel() == maxRepLevel) { // == maxRepLevel > 0) {
             // insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
             //  repLevel, maxRepLevel);
             // offsets.put(maxRepLevel, offset + 1);
