@@ -769,12 +769,9 @@ public class VectorizedColumnReader {
               topColumn = topColumn.getParentColumn();
             }
 
-            if (true || topColumn.isArray()) {
-              insertNullRecord(topColumn, rowIds, reptitionMap);
-              // Move to next offset in max repetition level as we processed the current value.
-              offsets.put(maxRepLevel, offset + 1);
-            }
-
+            insertNullRecord(topColumn, rowIds, reptitionMap);
+            // Move to next offset in max repetition level as we processed the current value.
+            offsets.put(maxRepLevel, offset + 1);
             prevRepLevel = -1;
           } else if (isLegacyArray(column) &&
             column.getNearestParentArrayColumn().getDefLevel() == defLevel) {
@@ -787,8 +784,6 @@ public class VectorizedColumnReader {
             column.getParentColumn().getDefLevel() == defLevel) {
             // A null element defined in the wrapping non-repeated group.
             System.out.println("null case 4");
-            // reptitionMap.put(maxRepLevel, reptitionMap.get(maxRepLevel) + 1);
-            // no-op.
             increaseRowId(rowIds, 1);
           } else {
             System.out.println("null case 5");
@@ -809,8 +804,6 @@ public class VectorizedColumnReader {
               repCount = reptitionMap.get(1);
             }
             reptitionMap.put(1, repCount + 1);
-            // insertArrayForRepetition(column, rowIds, offsets, reptitionMap, total,
-            //  0, 1);
             insertRepeatedArray(column, rowIds, offsets, reptitionMap, total, maxRepLevel - 1);
           } else {
             // Repeated values. We increase repetition count.
