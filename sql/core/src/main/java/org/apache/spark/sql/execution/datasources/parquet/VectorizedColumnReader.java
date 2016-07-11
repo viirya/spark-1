@@ -645,8 +645,11 @@ public class VectorizedColumnReader {
 
   private ColumnVector findInnerElementWithDefLevel(ColumnVector column, int defLevel) {
     while (true) {
+      if (column == null) {
+        return null;
+      }
       ColumnVector parent = column.getParentColumn();
-      if (parent != null && parent.getDefLevel() == defLevel) {
+      if (parent != null && parent.getDefLevel() <= defLevel) {
         ColumnVector outside = parent.getParentColumn();
         if (outside == null || outside.getDefLevel() < defLevel) {
           return column;
