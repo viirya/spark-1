@@ -666,6 +666,14 @@ public class VectorizedColumnReader {
     return false;
   }
 
+  private void increaseRowId(Map<Integer, Integer> rowIds, int level) {
+    int rowId = 0;
+    if (rowIds.containsKey(level)) {
+      rowId = rowIds.get(level);
+    }
+    rowIds.put(level, rowId + 1);
+  }
+
   private void insertNullRecord(
       ColumnVector column,
       Map<Integer, Integer> rowIds,
@@ -680,8 +688,11 @@ public class VectorizedColumnReader {
     if (rowIds.containsKey(repLevel)) {
       rowId = rowIds.get(repLevel);
     }
-    rowId += reptitionMap.get(repLevel);
-    reptitionMap.put(repLevel, 0);
+
+    if (reptitionMap.containsKey(repLevel)) {
+      rowId += reptitionMap.get(repLevel);
+      reptitionMap.put(repLevel, 0);
+    }
 
     column.putNull(rowId);
     rowIds.put(repLevel, rowId + 1);
@@ -793,7 +804,6 @@ public class VectorizedColumnReader {
             }
 
             prevRepLevel = -1;
-          /*
           } else if (column.getParentColumn().getDefLevel() == maxDefLevel &&
             column.getParentColumn().getRepLevel() == maxRepLevel) {
             // insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
@@ -804,7 +814,6 @@ public class VectorizedColumnReader {
             offsets.put(maxRepLevel, offset + 1);
             prevRepLevel = -1;
           // } else if (repLevel == maxRepLevel) {
-          */
           } else if (isLegacyArray(column) &&
             column.getNearestParentArrayColumn().getDefLevel() == defLevel) {
             // For a legacy array, if a null is defined at the repeated group column, it actually
@@ -818,6 +827,7 @@ public class VectorizedColumnReader {
             System.out.println("null case 4");
             // reptitionMap.put(maxRepLevel, reptitionMap.get(maxRepLevel) + 1);
             // no-op.
+            increaseRowId(rowIds, 1);
           } else {
             System.out.println("null case 5");
             ColumnVector parent = findInnerElementWithDefLevel(column, defLevel);
