@@ -770,50 +770,12 @@ public class VectorizedColumnReader {
             }
 
             if (true || topColumn.isArray()) {
-              /*
-              // Get its current row id.
-              int rowId = 0;
-              if (rowIds.containsKey(1)) {
-                rowId = rowIds.get(1);
-              }
-              int repCount = 0;
-              if (reptitionMap.containsKey(1)) {
-                repCount = reptitionMap.get(1);
-              }
-              reptitionMap.put(1, 0);
-              rowId += repCount;
-              // Insert null record and increase row id.
-              topColumn.putNull(rowId);
-              rowIds.put(1, rowId + 1);
-              */
-
               insertNullRecord(topColumn, rowIds, reptitionMap);
-
-              /*
-              // Increse row id at later repetition levels.
-              for (int j = 2; j <= maxRepLevel; j++) {
-                rowId = 0;
-                if (rowIds.containsKey(j)) {
-                  rowId = rowIds.get(j);
-                }
-                rowIds.put(j, rowId + 1);
-              }
-              */
               // Move to next offset in max repetition level as we processed the current value.
               offsets.put(maxRepLevel, offset + 1);
             }
 
             prevRepLevel = -1;
-          } else if (column.getParentColumn().getDefLevel() == maxDefLevel &&
-            column.getParentColumn().getRepLevel() == maxRepLevel) {
-            // insertArrayForRepetition(column, beginRowIds, offsets, reptitionMap, total,
-            //  repLevel, maxRepLevel);
-            // offsets.put(maxRepLevel, offset + 1);
-            System.out.println("null case 1");
-            insertRepeatedArray(column, rowIds, offsets, reptitionMap, total, repLevel);
-            offsets.put(maxRepLevel, offset + 1);
-            prevRepLevel = -1;
-          // } else if (repLevel == maxRepLevel) {
           } else if (isLegacyArray(column) &&
             column.getNearestParentArrayColumn().getDefLevel() == defLevel) {
             // For a legacy array, if a null is defined at the repeated group column, it actually
