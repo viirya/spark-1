@@ -727,7 +727,7 @@ public class VectorizedColumnReader {
     }
 
     if (column.getParentColumn() != null) {
-      int prevRepLevel = -1;
+      boolean newBeginning = true;
 
       for (int i = 0; i < valuesReadInPage; i++) {
         int repLevel = repetitionLevelColumn.nextInt();
@@ -735,18 +735,14 @@ public class VectorizedColumnReader {
         System.out.println("repLevel: " + repLevel + " maxRepLevel: " + maxRepLevel +
           " defLevel: " + defLevel + " maxDefLevel: " + maxDefLevel);
 
-        if (prevRepLevel >= 0) {
+        if (!newBeginning) {
           // When a new record begins at lower repetition level,
           // we insert array into repeated column.
           if (repLevel < maxRepLevel) {
             insertRepeatedArray(column, rowIds, offsets, reptitionMap, total, repLevel);
-          // } else if (maxRepLevel == column.getParentColumn().getRepLevel()) {
-            // If the elements has the same repetition level as the parent column,
-            // it means the parent column is repetition column but this column is not.
-          //  insertRepeatedArray(column, rowIds, offsets, reptitionMap, total, repLevel);
           }
         }
-        prevRepLevel = repLevel;
+        newBeginning = false;
 
         // When definition level is less than max definition level,
         // there is a null value.
@@ -772,7 +768,7 @@ public class VectorizedColumnReader {
             insertNullRecord(topColumn, rowIds, reptitionMap);
             // Move to next offset in max repetition level as we processed the current value.
             offsets.put(maxRepLevel, offset + 1);
-            prevRepLevel = -1;
+            newBeginning = true;
           } else if (isLegacyArray(column) &&
             column.getNearestParentArrayColumn().getDefLevel() == defLevel) {
             // For a legacy array, if a null is defined at the repeated group column, it actually
@@ -791,7 +787,7 @@ public class VectorizedColumnReader {
             if (parent != null) {
               insertNullRecord(parent, rowIds, reptitionMap);
               offsets.put(maxRepLevel, offset + 1);
-              prevRepLevel = -1;
+              newBeginning = true;
             }
           }
         } else {
@@ -815,7 +811,7 @@ public class VectorizedColumnReader {
           }
         }
       }
-      if (prevRepLevel >= 0) {
+      if (!newBeginning) {
         System.out.println("insert the last array");
         insertRepeatedArray(column, rowIds, offsets, reptitionMap, total, 0);
       }
