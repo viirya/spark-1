@@ -88,10 +88,17 @@ private[sql] class CacheManager extends Logging {
       tableName: Option[String] = None,
       storageLevel: StorageLevel = MEMORY_AND_DISK): Unit = writeLock {
     val planToCache = query.queryExecution.analyzed
+    cacheQueryForPlan(query.sparkSession, planToCache, tableName, storageLevel)
+  }
+
+  private[sql] def cacheQueryForPlan(
+      sparkSession: SparkSession,
+      planToCache: LogicalPlan,
+      tableName: Option[String] = None,
+      storageLevel: StorageLevel = MEMORY_AND_DISK): Unit = writeLock {
     if (lookupCachedData(planToCache).nonEmpty) {
       logWarning("Asked to cache already cached data.")
     } else {
-      val sparkSession = query.sparkSession
       cachedData +=
         CachedData(
           planToCache,

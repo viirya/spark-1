@@ -2037,6 +2037,37 @@ object EliminateSubqueryAliases extends Rule[LogicalPlan] {
 }
 
 /**
+ * Removes the [[SubqueryAlias]] operators which are used only once from the plan.
+ * The [[SubqueryAlias]] operators which are used more than once will be kept and put into cache
+ * later.
+ */
+object EliminateOneTimeSubqueryAliases extends Rule[LogicalPlan] {
+  val subqueries = ArrayBuffer[LogicalPlan]()
+  val duplicateSubqueries = ArrayBuffer[LogicalPlan]()
+  def apply(plan: LogicalPlan): LogicalPlan = {
+    // Collect the subqueries that are used more than once in the query.
+    plan.foreach {
+      case SubqueryAlias(_, child) =>
+        if (subqueries.indexWhere(s => s.sameResult(child)) >= 0) {
+          // If the plan with same results can be found.
+          duplicateSubqueries += child
+        } else {
+          // If it can't be found, add it into the list.
+          subqueries += child
+        }
+      case _ =>
+    }
+
+    // Only eliminate the subqueries that are used only once in the query.
+    plan transformUp {
+      case SubqueryAlias(_, child)
+          if duplicateSubqueries.indexWhere(s => s.sameResult(child)) < 0 =>
+        child
+    }
+  }
+}
+
+/**
  * Removes [[Union]] operators from the plan if it just has one child.
  */
 object EliminateUnions extends Rule[LogicalPlan] {
