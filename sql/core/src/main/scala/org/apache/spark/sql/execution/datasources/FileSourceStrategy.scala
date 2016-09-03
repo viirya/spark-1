@@ -92,12 +92,14 @@ object FileSourceStrategy extends Strategy with Logging {
       val filterAttributes = AttributeSet(afterScanFilters)
       val requiredExpressions: Seq[NamedExpression] = filterAttributes.toSeq ++ projects
       val requiredAttributes = AttributeSet(requiredExpressions)
-
+      println(s"requiredAttributes: $requiredAttributes")
+      println(s"requiredExpressions: $requiredExpressions")
       val readDataColumns =
         dataColumns
           .filter(requiredAttributes.contains)
           .filterNot(partitionColumns.contains)
       val outputSchema = readDataColumns.toStructType
+      println(s"outputSchema: $outputSchema")
       logInfo(s"Output Data Schema: ${outputSchema.simpleString(5)}")
 
       val pushedDownFilters = dataFilters.flatMap(DataSourceStrategy.translateFilter)

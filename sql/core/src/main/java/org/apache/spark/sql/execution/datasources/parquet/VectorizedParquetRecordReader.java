@@ -248,6 +248,7 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
 
     int num = (int) Math.min((long) columnarBatch.capacity(), totalCountLoadedSoFar - rowsReturned);
     for (int i = 0; i < columnarBatch.numFields(); i++) {
+      System.out.println("column dataType: " + columnarBatch.column(i).dataType());
       readBatchOnColumnVector(columnarBatch.column(i), num);
     }
 
@@ -313,6 +314,8 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
   }
 
   private void checkEndOfRowGroup() throws IOException {
+    System.out.println("rowsReturned: " + rowsReturned);
+    System.out.println("totalCountLoadedSoFar: " + totalCountLoadedSoFar);
     if (rowsReturned != totalCountLoadedSoFar) return;
     PageReadStore pages = reader.readNextRowGroup();
     if (pages == null) {
@@ -322,7 +325,9 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     // Return physical columns stored in Parquet file. Not logical fields.
     // For example, a nested StructType field in requestedSchema might have many columns.
     // A column is always a primitive type column.
+    // System.out.println("requestedSchema: " + requestedSchema);
     List<ColumnDescriptor> columns = requestedSchema.getColumns();
+    System.out.println("columns.size: " + columns.size());
     columnReaders = new VectorizedColumnReader[columns.size()];
 
     for (int i = 0; i < columns.size(); ++i) {

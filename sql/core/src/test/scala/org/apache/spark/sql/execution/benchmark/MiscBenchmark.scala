@@ -17,6 +17,9 @@
 
 package org.apache.spark.sql.execution.benchmark
 
+import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Benchmark
 
 /**
@@ -26,7 +29,32 @@ import org.apache.spark.util.Benchmark
  *
  * Benchmarks in this file are skipped in normal builds.
  */
-class MiscBenchmark extends BenchmarkBase {
+class MiscBenchmark extends BenchmarkBase with ParquetTest with SharedSQLContext {
+
+  test("parquet") {
+    /*
+    val N = 10000 // 50 << 10
+    withParquetTable((0 until N).map { i =>
+      ((i to i + 1000).toList, (i to i + 100).map(_.toString).toList,
+        (i to i + 1000).map(_.toDouble / 2).toList,
+        ((0 to 10).map(_.toString).toList, (0 to 10).map(_.toString).toList))
+    }, "t") {
+      val benchmark = new Benchmark("Vectorization Parquet for nested types", N)
+      benchmark.addCase("Vectorization Parquet reader", 10) { iter =>
+        sql("SELECT _1[10], _2[20], _3[30], _4._1[5], _4._2[5] FROM t").collect()
+      }
+      benchmark.run()
+    }
+    */
+    withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true") {
+      val file = "/home/viirya/repos/spark-1/testdata/SPARK-16362_sample_data.parquet/" +
+        "part-r-00000-22904593-bfc4-4845-87f0-fdfd581fcf2e.gz.parquet"
+      val df = spark.read.parquet(file)
+      df.printSchema()
+      df.createOrReplaceTempView("sample")
+      sql("SELECT request FROM sample LIMIT 5").show()
+    }
+  }
 
   ignore("filter & aggregate without group") {
     val N = 500L << 22

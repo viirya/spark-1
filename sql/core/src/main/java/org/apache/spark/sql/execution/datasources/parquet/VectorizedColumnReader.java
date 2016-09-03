@@ -124,10 +124,16 @@ public class VectorizedColumnReader {
       throw new IOException("totalValueCount == 0");
     }
   }
+
   /**
    * Whether this column is the element of a complex column.
    */
   boolean asComplexColElement;
+
+  /**
+   * Whether this column is a repeated column.
+   */
+  boolean isRepeatedColumn;
 
   /**
    * The flag used in constructing nested records. When it is true, the previous status
@@ -140,7 +146,9 @@ public class VectorizedColumnReader {
    */
   public void readBatch(int total, ColumnVector column) throws IOException {
     asComplexColElement = column.getParentColumn() != null;
-    boolean isRepeatedColumn = maxRepLevel > 0;
+    isRepeatedColumn = maxRepLevel > 0;
+    System.out.println("asComplexColElement: " + asComplexColElement +
+      " isRepeatedColumn: " + isRepeatedColumn);
     int rowId = 0;
     int repeatedRowId = 0;
     int remaining = total;
@@ -162,8 +170,10 @@ public class VectorizedColumnReader {
       // page.
       dictionaryIds = column.reserveDictionaryIds(total);
     }
-
+    System.out.println("total: " + total);
     while (true) {
+      System.out.println("endOfPageValueCount: " + endOfPageValueCount);
+      System.out.println("valuesRead: " + valuesRead);
       // Compute the number of values we want to read in this page.
       int leftInPage = (int) (endOfPageValueCount - valuesRead);
 
@@ -172,9 +182,12 @@ public class VectorizedColumnReader {
       // read `total` repeated columns. Eg., if we want to read 5 records of an array of int column.
       // we can't just read 5 integers. Instead, we have to read the integers until 5 arrays are put
       // into this array column.
-      if (isRepeatedColumn) {
+      System.out.println("leftInPage at beginning: " + leftInPage);
+      if (asComplexColElement) {
+        System.out.println("repeatedRowId: " + repeatedRowId);
         if (repeatedRowId == total) break;
       } else {
+        System.out.println("remaining: " + remaining);
         if (remaining == 0) break;
       }
 
@@ -192,6 +205,7 @@ public class VectorizedColumnReader {
           throw new IOException("Failed to read page. No page exists anymore!");
         }
         leftInPage = (int) (endOfPageValueCount - valuesRead);
+        System.out.println("leftInPage after readPage: " + leftInPage);
       }
 
       // Determine the number of values to read for this column in the current page.
@@ -201,10 +215,12 @@ public class VectorizedColumnReader {
         // this page for this column.
         num = constructComplexRecords(column, repetitions, rowIds, offsets, leftInPage, total);
         repeatedRowId = rowIds[1];
+        System.out.println("Complex num: " + num + " repeatedRowId: " + repeatedRowId);
       } else {
         // If this column is not a repeated/nested column, just read minimum of remaining values
         // and all values left in the current page.
         num = Math.min(remaining, leftInPage);
+        System.out.println("num: " + num);
       }
 
       if (isCurrentPageDictionaryEncoded) {
@@ -489,6 +505,7 @@ public class VectorizedColumnReader {
   }
 
   private boolean readPage() throws IOException {
+    System.out.println("readPage");
     DataPage page = pageReader.readPage();
     if (page == null) {
       return false;
@@ -721,6 +738,8 @@ public class VectorizedColumnReader {
     for (int i = 0; i < leftInPage; i++) {
       int repLevel = repetitionLevelColumn.nextInt();
       int defLevel = definitionLevelColumn.nextInt();
+      System.out.println("repLevel: " + repLevel + " defLevel: " + defLevel +
+        " maxRepLevel: " + maxRepLevel + " maxDefLevel: " + maxDefLevel);
 
       // If there are previous values and counts needed to be consider.
       if (!resetNestedRecord) {
@@ -740,6 +759,7 @@ public class VectorizedColumnReader {
         // The null value is defined at the root level.
         // Insert a null record.
         if (repLevel == 0 && defLevel == 0) {
+          System.out.println("case 1");
           ColumnVector parent = column.getParentColumn();
           if (parent != null && parent.getDefLevel() == maxDefLevel
             && parent.getRepLevel() == maxRepLevel) {
@@ -777,12 +797,15 @@ public class VectorizedColumnReader {
           resetNestedRecord = true;
         } else if (isLegacyArray(column) &&
           column.getNearestParentArrayColumn().getDefLevel() == defLevel) {
+          System.out.println("case 2");
           // For a legacy array, if a null is defined at the repeated group column, it actually
           // means an element with null value.
 
           repetitions[maxRepLevel]++;
         } else if (!column.getParentColumn().isArray() &&
           column.getParentColumn().getDefLevel() == defLevel) {
+          System.out.println("case 3");
+          insertRepeatedArray(column, rowIds, offsets, repetitions, total, repLevel);
           // A null element defined in the wrapping non-repeated group.
           rowIds[1]++;
         } else {
@@ -801,13 +824,16 @@ public class VectorizedColumnReader {
           // }
           ColumnVector parent = findInnerElementWithDefLevel(column, defLevel);
           if (parent != null) {
+            System.out.println("case 4");
             // Found the group with the same definition level.
             // Insert a null record at definition level.
             // E.g, R=0, D=1 for above schema.
             insertNullRecord(parent, rowIds, repetitions);
             offsets[maxRepLevel]++;
             resetNestedRecord = true;
+            System.out.println("rowIds[1]: " + rowIds[1]);
           } else {
+            System.out.println("case 5");
             // Found the group with lower definition level.
             // Insert an empty record.
             // E.g, R=0, D=2 for above schema.
@@ -822,8 +848,12 @@ public class VectorizedColumnReader {
         // A new record begins with non-null value.
         if (maxRepLevel == 0) {
           // A required record at root level.
-          repetitions[1]++;
           insertRepeatedArray(column, rowIds, offsets, repetitions, total, maxRepLevel - 1);
+          repetitions[1]++;
+          // offsets[1]++;
+          // resetNestedRecord = true;
+          // rowIds[1]++;
+          System.out.println("rowIds[1]: " + rowIds[1]);
         } else {
           // Repeated values. We increase repetition count.
           repetitions[maxRepLevel]++;
