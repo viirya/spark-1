@@ -32,6 +32,7 @@ private[sql] case class SubqueryExecHelper(executedPlan: SparkPlan) {
   def computeOrGetResult(): RDD[InternalRow] = this.synchronized {
     if (_computedOutput == null) {
       _computedOutput = executedPlan.execute()
+      _computedOutput.cache()
     }
     _computedOutput
   }
