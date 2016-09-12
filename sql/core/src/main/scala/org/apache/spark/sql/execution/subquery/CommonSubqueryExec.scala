@@ -22,7 +22,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{LeafExecNode, UnaryExecNode}
+import org.apache.spark.sql.execution.{LeafExecNode, SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.Utils
 
@@ -49,5 +49,10 @@ private[sql] case class CommonSubqueryExec(
     val subqueryOutput = subquery.computedOutput
     numOutputRows += subquery.numRows
     subqueryOutput
+  }
+
+  override def sameResult(plan: SparkPlan): Boolean = plan match {
+    case c: CommonSubqueryExec => subquery.child.sameResult(c.subquery.child)
+    case o => subquery.child.sameResult(o)
   }
 }

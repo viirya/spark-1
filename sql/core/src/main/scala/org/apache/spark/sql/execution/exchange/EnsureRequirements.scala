@@ -21,6 +21,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution._
+import org.apache.spark.sql.execution.subquery.CommonSubqueryExec
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -266,5 +267,37 @@ case class EnsureRequirements(conf: SQLConf) extends Rule[SparkPlan] {
         case _ => operator
       }
     case operator: SparkPlan => ensureDistributionAndOrdering(operator)
+  }
+}
+
+
+/**
+ * Pushs down [[ShuffleExchange]] on the top of [[CommonSubqueryExec]] to make them reusable.
+ */
+case object PushDownShuffleExchange extends Rule[SparkPlan] {
+  def apply(plan: SparkPlan): SparkPlan = plan.transformDown {
+    case operator @ ShuffleExchange(_, _: CommonSubqueryExec, _) => operator
+    case operator @ ShuffleExchange(partitioning, child, coordinator)
+        if child.find(_.isInstanceOf[CommonSubqueryExec]).isDefined =>
+      var exchangeHappened = false
+      var replaced = false
+      val transformed = child transformDown {
+        case subquery: CommonSubqueryExec if !replaced =>
+          if (exchangeHappened) {
+            subquery
+          } else {
+            replaced = true
+            ShuffleExchange(partitioning, subquery, coordinator)
+          }
+        case p: UnaryExecNode if p.outputPartitioning == p.child.outputPartitioning => p
+        case o =>
+          exchangeHappened = true
+          o
+      }
+      if (transformed.sameResult(child)) {
+        operator
+      } else {
+        transformed
+      }
   }
 }

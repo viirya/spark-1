@@ -29,7 +29,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, ReturnAnswer}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.command.{DescribeTableCommand, ExecutedCommandExec}
-import org.apache.spark.sql.execution.exchange.{EnsureRequirements, ReuseExchange}
+import org.apache.spark.sql.execution.exchange.{EnsureRequirements, PushDownShuffleExchange, ReuseExchange}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{BinaryType, DateType, DecimalType, TimestampType, _}
 import org.apache.spark.util.Utils
@@ -105,6 +105,7 @@ class QueryExecution(val sparkSession: SparkSession, val logical: LogicalPlan) {
     python.ExtractPythonUDFs,
     PlanSubqueries(sparkSession),
     EnsureRequirements(sparkSession.sessionState.conf),
+    PushDownShuffleExchange,
     CollapseCodegenStages(sparkSession.sessionState.conf),
     ReuseExchange(sparkSession.sessionState.conf),
     ReuseSubquery(sparkSession.sessionState.conf))
