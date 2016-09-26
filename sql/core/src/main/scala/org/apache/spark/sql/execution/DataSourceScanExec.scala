@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.execution
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.commons.lang3.StringUtils
@@ -28,11 +29,14 @@ import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
+import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, UnknownPartitioning}
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat => ParquetSource}
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.sources
 import org.apache.spark.sql.sources.{BaseRelation, Filter}
 import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.util.Utils
@@ -562,5 +566,157 @@ case class FileSourceScanExec(
         thisPredicates.zip(otherPredicates).forall(p => p._1.semanticEquals(p._2))
       result
     case _ => false
+  }
+}
+
+/**
+ * Represents a [[FileSourceScanExec]] operator reused in the query plan.
+ */
+case class ReusedFileSourceScanExec(
+  attributes: Seq[Attribute],
+  @transient fileScan: FileSourceScanExec) extends LeafExecNode {
+
+  override protected def innerChildren: Seq[QueryPlan[_]] = Seq(fileScan)
+  override def output: Seq[Attribute] = attributes
+  override def outputPartitioning: Partitioning = fileScan.outputPartitioning
+  override def outputOrdering: Seq[SortOrder] = fileScan.outputOrdering
+
+  private var scanResult: RDD[InternalRow] = null
+
+  protected override def doExecute(): RDD[InternalRow] = {
+    if (scanResult == null) {
+      scanResult = fileScan.execute().mapPartitionsInternal { iter =>
+        iter.map(_.copy())
+      }.cache()
+    }
+    scanResult
+  }
+}
+
+/**
+ * Finds out [[FileSourceScanExec]] operators which scan on the same relation. De-duplicate these
+ * [[FileSourceScanExec]] by concatenating their partition and data filters.
+ * There are conditions needed to be matched:
+ * 1. These [[FileSourceScanExec]] operators scan on the same relation.
+ * 2. These operators have the same output.
+ * 3. These operators have data filters and don't have partition filters OR
+ *    these operators have data filters and are reading the same partitions.
+ * 4. The partitions these operators scan are overlapping.
+ */
+case class ReuseFileSourceScan(conf: SQLConf) extends Rule[SparkPlan] {
+  private def reuseFileSourceScan(scan: FileSourceScanExec, key: FileSourceScanExec): Boolean = {
+    if (key.relation == scan.relation && key.output.length == scan.output.length &&
+        sameOutput(key.output, scan.output)) {
+      if (key.partitionFilters.isEmpty && scan.partitionFilters.isEmpty) {
+        return true
+      }
+      // Check if two scan operators have overlapping scanning partitions.
+      // We extract partition values and group them by its length.
+      // E.g., the partitions a=1,b=2 and a=2,b=1 will be in the same group.
+      val partitions1 = key.relation.location.listFiles(key.partitionFilters)
+        .map(_.values.toSeq(key.relation.partitionSchema)).groupBy(_.length)
+
+      val partitions2 = scan.relation.location.listFiles(scan.partitionFilters)
+        .map(_.values.toSeq(scan.relation.partitionSchema)).groupBy(_.length)
+
+      partitions1.forall { case (groupId, values) =>
+        partitions2.get(groupId).map { otherValues =>
+          // For each partition value, checking it with the partition values of the same group
+          // in other operators. See if there exists the same partition values.
+          if (otherValues.length > values.length) {
+            values.forall { value =>
+              otherValues.exists(value.zip(_).forall(x => x._1 == x._2))
+            }
+          } else {
+            otherValues.forall { value =>
+              values.exists(value.zip(_).forall(x => x._1 == x._2))
+            }
+          }
+        }.getOrElse(false)
+      }
+    } else {
+      false
+    }
+  }
+
+  val combinedScans = mutable.HashMap[ArrayBuffer[FileSourceScanExec], FileSourceScanExec]()
+
+  def apply(plan: SparkPlan): SparkPlan = {
+    val fileScans =
+      mutable.HashMap[FileSourceScanExec, ArrayBuffer[FileSourceScanExec]]()
+    // Grouping up the [[FileSourceScanExec]] operators which have the same relation and
+    // the same output.
+    plan foreach {
+      case scan: FileSourceScanExec if scan.dataFilters.nonEmpty =>
+        val scans = fileScans.find { case (k: FileSourceScanExec, v) =>
+          reuseFileSourceScan(scan, k)
+        }
+        if (scans.isDefined) {
+          scans.get._2 += scan
+        } else {
+          fileScans += (scan -> ArrayBuffer[FileSourceScanExec](scan))
+        }
+      case _ =>
+    }
+
+    // For each group, if there are more than one [[FileSourceScanExec]] operators, going to
+    // combine these operators together.
+    fileScans.values.foreach { scans =>
+      if (scans.length > 1) {
+        val dataFiltersForAll = scans.map(_.dataFilters).filter(_.nonEmpty).map { filters =>
+          filters.reduce(sources.And(_, _))
+        }.reduceOption((x, y) => sources.Or(x, y)).map(Seq(_))getOrElse(Seq.empty[Filter])
+
+        val partitionFiltersForAll =
+          scans.map(_.partitionFilters).filter(_.nonEmpty).map { filters =>
+            filters.reduce(And(_, _))
+          }.reduceOption((x, y) => Or(x, y)).map(Seq(_)).getOrElse(Seq.empty[Expression])
+
+        val table = scans.find(_.metastoreTableIdentifier.isDefined)
+          .map(_.metastoreTableIdentifier).getOrElse(None)
+        val combinedScan = FileSourceScanExec(
+          scans.head.relation,
+          scans.head.output,
+          scans.head.outputSchema,
+          partitionFiltersForAll,
+          dataFiltersForAll,
+          table)
+        combinedScans += (scans -> combinedScan)
+      }
+    }
+
+    // Replace [[FileSourceScanExec]] operator with corresponding combined [[FileSourceScanExec]],
+    // if any.
+    plan transformDown {
+      case scan: FileSourceScanExec =>
+        val partitionFilter = scan.partitionFilters.reduceOption(And)
+        findMatchedCombinedScan(scan).map { combined =>
+          val reused = ReusedFileSourceScanExec(scan.output, combined)
+          partitionFilter.map(FilterExec(_, reused)).getOrElse(reused)
+        }.getOrElse(scan)
+    }
+  }
+
+  private def findMatchedCombinedScan(original: FileSourceScanExec): Option[FileSourceScanExec] = {
+    combinedScans.foreach { case (replaced, combined) =>
+      if (replaced.find(_.sameResult(original)).isDefined) {
+        return Some(combined)
+      }
+    }
+    None
+  }
+
+  private def sameOutput(output1: Seq[Attribute], output2: Seq[Attribute]): Boolean = {
+    if (output1.length == output2.length) {
+      output1.zip(output2).find { case (attr1, attr2) =>
+        if (attr1.name != attr2.name || attr1.dataType != attr2.dataType) {
+          true
+        } else {
+          false
+        }
+      }.isEmpty
+    } else {
+      false
+    }
   }
 }

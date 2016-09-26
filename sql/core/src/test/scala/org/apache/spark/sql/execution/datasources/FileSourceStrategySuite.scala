@@ -30,7 +30,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, PredicateHelper}
 import org.apache.spark.sql.catalyst.util
-import org.apache.spark.sql.execution.{DataSourceScanExec, SparkPlan}
+import org.apache.spark.sql.execution.{DataSourceScanExec, ReusedFileSourceScanExec, SparkPlan}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources._
@@ -270,6 +270,61 @@ class FileSourceStrategySuite extends QueryTest with SharedSQLContext with Predi
       assert(partitions(0).files.size == 3)
       assert(partitions(1).files.size == 0)
       assert(partitions(2).files.size == 1)
+    }
+  }
+
+  test("Reuse FileSourceScanExec") {
+    withTempPath { path =>
+      val tempDir = path.getCanonicalPath
+      spark.range(100)
+        .selectExpr("id", "id as b")
+        .write
+        .partitionBy("id")
+        .parquet(tempDir)
+      spark.read.parquet(tempDir).createOrReplaceTempView("dedup")
+
+      // Scan the same partitions, both with data filters.
+      val df1 = sql("WITH s AS (SELECT * FROM dedup) SELECT * FROM s s1 CROSS JOIN s s2 " +
+        "WHERE s1.id < 10 AND s2.id < 10 AND s1.b = 5 AND s2.b = 8")
+
+      // Scan the overlapping partitions, both with data filters.
+      val df2 = sql("WITH s AS (SELECT * FROM dedup) SELECT * FROM s s1 CROSS JOIN s s2 " +
+        "WHERE s1.id < 10 AND s2.id = 5 AND s1.b = 5 AND s2.b = 8")
+
+      // Scan the same partitions, no data filters.
+      val df3 = sql("WITH s AS (SELECT * FROM dedup) SELECT * FROM s s1 CROSS JOIN s s2 " +
+        "WHERE s1.id < 10 AND s2.id < 10")
+
+      // Scan the overlapping partitions, no data filters.
+      val df4 = sql("WITH s AS (SELECT * FROM dedup) SELECT * FROM s s1 CROSS JOIN s s2 " +
+        "WHERE s1.id < 10 AND s2.id = 5")
+
+      // No partition filters, both with data filters.
+      val df5 = sql("WITH s AS (SELECT * FROM dedup) SELECT * FROM s s1 CROSS JOIN s s2 " +
+        "WHERE s1.b > 5 AND s2.b > 10")
+
+      // No partition filters, no data filters.
+      val df6 = sql("WITH s AS (SELECT * FROM dedup) SELECT * FROM s s1 CROSS JOIN s s2")
+
+      def findReusedScan(df: DataFrame): Boolean = {
+        df.queryExecution.executedPlan.find {
+          case _: ReusedFileSourceScanExec => true
+          case _ => false
+        }.isDefined
+      }
+
+      // Reused
+      assert(findReusedScan(df1))
+      // Reused
+      assert(findReusedScan(df2))
+      // Not reused
+      assert(!findReusedScan(df3))
+      // Not reused
+      assert(!findReusedScan(df4))
+      // Reused
+      assert(findReusedScan(df5))
+      // Not reused
+      assert(!findReusedScan(df6))
     }
   }
 
