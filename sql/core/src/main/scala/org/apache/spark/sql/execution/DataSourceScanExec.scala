@@ -639,6 +639,38 @@ case class ReuseFileSourceScan(conf: SQLConf) extends Rule[SparkPlan] {
     }
   }
 
+  private def combineFilters(scans: Seq[FileSourceScanExec]): (Seq[Filter], Seq[Expression]) = {
+    val (dataFilters, partitionFilters) = scans.map(s => (s.dataFilters, s.partitionFilters)).unzip
+
+    // For each group of data filters in each scan operator, we use an [[sources.And]] to reduce
+    // these filters into a single expression.
+    // Then we reduce the filter expression of all scan operators with [[sources.Or]].
+    val finalDataFilters = dataFilters.filter(_.nonEmpty).map { filters =>
+      filters.reduce(sources.And(_, _))
+    }.reduceOption { (x, y) =>
+      if (x == y) {
+        x
+      } else {
+        sources.Or(x, y)
+      }
+    }.map(Seq(_)).getOrElse(Seq.empty[Filter])
+
+    // For each group of partition filters in each scan operator, we use an [[And]] to reduce
+    // these filters into a single expression.
+    // Then we reduce the filter expression of all scan operators with [[Or]].
+    val finalPartitionFilters = partitionFilters.filter(_.nonEmpty).map { filters =>
+      filters.reduce(And(_, _))
+    }.reduceOption { (x, y) =>
+      if (x.semanticEquals(y)) {
+        x
+      } else {
+        Or(x, y)
+      }
+    }.map(Seq(_)).getOrElse(Seq.empty[Expression])
+
+    (finalDataFilters, finalPartitionFilters)
+  }
+
   val combinedScans = mutable.HashMap[ArrayBuffer[FileSourceScanExec], FileSourceScanExec]()
 
   def apply(plan: SparkPlan): SparkPlan = {
@@ -663,14 +695,7 @@ case class ReuseFileSourceScan(conf: SQLConf) extends Rule[SparkPlan] {
     // combine these operators together.
     fileScans.values.foreach { scans =>
       if (scans.length > 1) {
-        val dataFiltersForAll = scans.map(_.dataFilters).filter(_.nonEmpty).map { filters =>
-          filters.reduce(sources.And(_, _))
-        }.reduceOption((x, y) => sources.Or(x, y)).map(Seq(_))getOrElse(Seq.empty[Filter])
-
-        val partitionFiltersForAll =
-          scans.map(_.partitionFilters).filter(_.nonEmpty).map { filters =>
-            filters.reduce(And(_, _))
-          }.reduceOption((x, y) => Or(x, y)).map(Seq(_)).getOrElse(Seq.empty[Expression])
+        val (dataFiltersForAll, partitionFiltersForAll) = combineFilters(scans)
 
         val table = scans.find(_.metastoreTableIdentifier.isDefined)
           .map(_.metastoreTableIdentifier).getOrElse(None)
