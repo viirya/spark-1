@@ -255,19 +255,21 @@ class DatasetSuite extends QueryTest with SharedSQLContext {
   }
 
   test("filter DataSet[Row] with closure") {
-    spark.conf.set("spark.sql.closure.convertToExpr", "true")
-    val ds = Seq[(String, Integer)](("a", 1), ("b", 2), ("c", 3), (null, null)).toDF()
-    checkDataset(
-      ds.filter(r => !r.isNullAt(1) && r.getInt(1) == 2),
-      Row("b", 2))
+    withSQLConf("spark.sql.closure.convertToExpr" -> "true") {
+      val ds = Seq[(String, Integer)](("a", 1), ("b", 2), ("c", 3), (null, null)).toDF()
+      checkDataset(
+        ds.filter(r => !r.isNullAt(1) && r.getInt(1) == 2),
+        Row("b", 2))
+    }
   }
 
   test("filter DataSet[Tuple2] with closure") {
-    spark.conf.set("spark.sql.closure.convertToExpr", "true")
-    val ds = Seq[(String, Int)](("a", 1), ("b", 2), ("c", 3)).toDS()
-    checkDataset(
-      ds.filter(r => r._2 == 2),
-      ("b", 2))
+    withSQLConf("spark.sql.closure.convertToExpr" -> "true") {
+      val ds = Seq[(String, Int)](("a", 1), ("b", 2), ("c", 3)).toDS()
+      checkDataset(
+        ds.filter(r => r._2 == 2),
+        ("b", 2))
+    }
   }
 
   test("foreach") {

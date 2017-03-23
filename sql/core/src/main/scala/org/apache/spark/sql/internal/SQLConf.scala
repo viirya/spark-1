@@ -378,7 +378,8 @@ object SQLConf {
     .createWithDefault(false)
 
   val CLOSURE_CONVERTER = buildConf("spark.sql.closure.convertToExpr")
-    .doc("TODO: need to write")
+    .doc("When true, the bytecode of closures used in Datasets will be analyzed and converted " +
+         "to Catalyst expressions for more optimized executions.")
     .booleanConf
     .createWithDefault(false)
 
