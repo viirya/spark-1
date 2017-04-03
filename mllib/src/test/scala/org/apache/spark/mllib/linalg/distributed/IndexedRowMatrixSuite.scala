@@ -35,9 +35,17 @@ class IndexedRowMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
   ).map(x => IndexedRow(x._1, x._2))
   var indexedRows: RDD[IndexedRow] = _
 
+  val sparseData = Seq(
+    (0L, Vectors.dense(0.0, 1.0, 2.0).toSparse),
+    (1L, Vectors.dense(3.0, 4.0, 5.0).toSparse),
+    (3L, Vectors.dense(9.0, 0.0, 1.0).toSparse)
+  ).map(x => IndexedRow(x._1, x._2))
+  var indexedSparseRows: RDD[IndexedRow] = _
+
   override def beforeAll() {
     super.beforeAll()
     indexedRows = sc.parallelize(data, 2)
+    indexedSparseRows = sc.parallelize(sparseData, 2)
   }
 
   test("size") {
@@ -87,12 +95,35 @@ class IndexedRowMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
     assert(coordMat.toBreeze() === idxRowMat.toBreeze())
   }
 
-  test("toBlockMatrix") {
+  test("toBlockMatrix: DenseVector") {
     val idxRowMat = new IndexedRowMatrix(indexedRows)
     val blockMat = idxRowMat.toBlockMatrix(2, 2)
     assert(blockMat.numRows() === m)
     assert(blockMat.numCols() === n)
     assert(blockMat.toBreeze() === idxRowMat.toBreeze())
+
+    intercept[IllegalArgumentException] {
+      idxRowMat.toBlockMatrix(-1, 2)
+    }
+    intercept[IllegalArgumentException] {
+      idxRowMat.toBlockMatrix(2, 0)
+    }
+  }
+
+  test("toBlockMatrix: SparseVector") {
+    val idxRowMat = new IndexedRowMatrix(indexedSparseRows)
+
+    // Tests when n % colsPerBlock != 0
+    val blockMat = idxRowMat.toBlockMatrix(2, 2)
+    assert(blockMat.numRows() === m)
+    assert(blockMat.numCols() === n)
+    assert(blockMat.toBreeze() === idxRowMat.toBreeze())
+
+    // Tests when m % rowsPerBlock != 0
+    val blockMat2 = idxRowMat.toBlockMatrix(3, 1)
+    assert(blockMat2.numRows() === m)
+    assert(blockMat2.numCols() === n)
+    assert(blockMat2.toBreeze() === idxRowMat.toBreeze())
 
     intercept[IllegalArgumentException] {
       idxRowMat.toBlockMatrix(-1, 2)
