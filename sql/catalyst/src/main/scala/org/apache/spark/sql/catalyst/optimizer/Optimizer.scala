@@ -72,8 +72,8 @@ abstract class Optimizer(sessionCatalog: SessionCatalog, conf: CatalystConf)
       PullupCorrelatedPredicates) ::
     Batch("Subquery", Once,
       OptimizeSubqueries) ::
-    Batch("Barriers", Once,
-      OptimizeBarriers) ::
+    Batch("Remove Barriers", Once,
+      RemoveBarriers) ::
     Batch("Replace Operators", fixedPoint,
       ReplaceIntersectWithSemiJoin,
       ReplaceExceptWithAntiJoin,
@@ -120,6 +120,9 @@ abstract class Optimizer(sessionCatalog: SessionCatalog, conf: CatalystConf)
       SimplifyCreateStructOps,
       SimplifyCreateArrayOps,
       SimplifyCreateMapOps) ::
+    Batch("Barriers", Once,
+      PushDownPredicateThroughBarriers,
+      OptimizeBarriers) ::
     Batch("Check Cartesian Products", Once,
       CheckCartesianProducts(conf)) ::
     Batch("Join Reorder", Once,
@@ -149,25 +152,19 @@ abstract class Optimizer(sessionCatalog: SessionCatalog, conf: CatalystConf)
     }
   }
 
+  /**
+   * Optimize all the inner logical plans inside optimization barriers.
+   */
   object OptimizeBarriers extends Rule[LogicalPlan] {
     def apply(plan: LogicalPlan): LogicalPlan = {
-      // Count the barriers.
-      val barriers = plan.collect {
-        case b: Barrier => b
-      }
-      val counts = barriers.groupBy(identity).mapValues(_.length)
-
       plan transform {
-        // TODO figure out when we want to use barriers.
-        // TODO add support for column pruning here.
-        case b @ Barrier(inner) if counts(b) == 1 =>
-          inner
         case b @ Barrier(inner) =>
           Barrier(Optimizer.this.execute(inner))
       }
     }
   }
 }
+
 
 /**
  * An optimizer used in test code.
@@ -1269,5 +1266,61 @@ object RemoveRepetitionFromGroupExpressions extends Rule[LogicalPlan] {
     case a @ Aggregate(grouping, _, _) =>
       val newGrouping = ExpressionSet(grouping).toSeq
       a.copy(groupingExpressions = newGrouping)
+  }
+}
+
+/**
+ * Remove unnecessary [[Barrier]].
+ */
+object RemoveBarriers extends Rule[LogicalPlan] {
+  /**
+   * Currently we don't support [[Barrier]] within another [[Barrier]]. We remove those
+   * inner [[Barrier]].
+   */
+  private def removeInnerBarrier(plan: LogicalPlan): LogicalPlan = plan transform {
+    case b @ Barrier(inner) =>
+      removeInnerBarrier(inner)
+  }
+
+  def apply(plan: LogicalPlan): LogicalPlan = {
+    // Count the barriers.
+    val barriers = plan.collect {
+      case b: Barrier => b
+    }
+    val counts = barriers.groupBy(identity).mapValues(_.length)
+
+    // We defer the optimization within the barrier.
+    plan transform {
+      case b @ Barrier(inner) if counts(b) == 1 =>
+        removeInnerBarrier(inner)
+    }
+  }
+}
+
+/**
+ * In cases of there's [[Filter]] on top of [[Barrier]], this rule tries to push down the predicate.
+ * TODO add support for column pruning.
+ */
+object PushDownPredicateThroughBarriers extends Rule[LogicalPlan] {
+  def apply(plan: LogicalPlan): LogicalPlan = {
+    val barriersWithPredicates = plan.collect {
+      case f @ Filter(_, _: Barrier) => f
+    }
+    // Gets a map where the keys are [[Barrier]] and the values are the predicates on top of it.
+    val predicates = barriersWithPredicates.groupBy(_.child).map {
+      case (barrier: Barrier, filters: Seq[Filter]) =>
+        if (filters.length > 1) {
+          // The all conditions which will be applied on the same [[Barrier]] and its inner plan.
+          val pushdownPredicates = filters.map(_.condition).reduce(Or)
+          barrier -> Some(Barrier(Filter(pushdownPredicates, barrier.inner)))
+        } else {
+          barrier -> None
+        }
+    }
+
+    plan transform {
+      case Filter(condition, b @ Barrier(inner)) if predicates(b).isDefined =>
+        Filter(condition, predicates(b).get)
+    }
   }
 }

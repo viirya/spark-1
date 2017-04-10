@@ -905,10 +905,13 @@ case class Deduplicate(
   override def output: Seq[Attribute] = child.output
 }
 
+/**
+ * A logical plan used to set a barrier for an inner logical plan from optimization.
+ */
 case class Barrier(inner: LogicalPlan) extends LeafNode {
   override lazy val resolved: Boolean = inner.resolved
   override def output: Seq[Attribute] = inner.output
   override def maxRows: Option[Long] = inner.maxRows
-  override def statistics: Statistics = inner.statistics
+  override def computeStats(conf: CatalystConf): Statistics = inner.stats(conf)
   override protected def innerChildren: Seq[QueryPlan[_]] = inner :: Nil
 }

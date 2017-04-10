@@ -176,7 +176,9 @@ class Analyzer(
       case With(child, relations) =>
         substituteCTE(child, relations.foldLeft(Seq.empty[(String, LogicalPlan)]) {
           case (resolved, (name, relation)) =>
-            resolved :+ name -> Barrier(execute(substituteCTE(relation, resolved)))
+            val subqueryAlias = relation.asInstanceOf[SubqueryAlias]
+            val barrier = Barrier(execute(substituteCTE(subqueryAlias.child, resolved)))
+            resolved :+ name -> SubqueryAlias(subqueryAlias.alias, barrier)
         })
       case other => other
     }
@@ -184,8 +186,13 @@ class Analyzer(
     def substituteCTE(plan: LogicalPlan, cteRelations: Seq[(String, LogicalPlan)]): LogicalPlan = {
       plan transformDown {
         case u : UnresolvedRelation =>
-          cteRelations.find(x => resolver(x._1, u.tableIdentifier.table))
-            .map(_._2).getOrElse(u)
+          cteRelations.find(x => resolver(x._1, u.tableIdentifier.table)).map { relation =>
+            val subqueryAlias = relation._2.asInstanceOf[SubqueryAlias]
+            val projection = subqueryAlias.child.output.map { attr =>
+              Alias(attr, attr.name)()
+            }
+            SubqueryAlias(subqueryAlias.alias, Project(projection, relation._2))
+          }.getOrElse(u)
         case other =>
           // This cannot be done in ResolveSubquery because ResolveSubquery does not know the CTE.
           other transformExpressions {
