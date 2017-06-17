@@ -31,6 +31,8 @@ case class RankingWithLabels(
     randomize: Boolean = true)
   extends TernaryExpression with CodegenFallback {
 
+  override val doCodegenInChildren: Boolean = true
+
   private lazy val modelNames = scores.dataType.asInstanceOf[ArrayType]
     .elementType.asInstanceOf[StructType].map(_.name).toArray
   private lazy val itemType: DataType = items.dataType.asInstanceOf[ArrayType].elementType
@@ -63,6 +65,15 @@ case class RankingWithLabels(
   )
 
   override def children: Seq[Expression] = items :: labels :: scores :: Nil
+
+  override def ternaryCodegenEval(input1: Any, input2: Any, input3: Any): Any = {
+    println("call ternaryCodegenEval")
+    if (input1 == null || input2 == null || input3 == null) {
+      null
+    } else {
+      nullSafeEval(input1, input2, input3)
+    }
+  }
 
   override def nullSafeEval(items: Any, labels: Any, scores: Any): Any = {
     InternalRow.fromSeq(

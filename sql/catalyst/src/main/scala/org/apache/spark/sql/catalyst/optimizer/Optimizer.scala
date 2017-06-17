@@ -556,7 +556,7 @@ object CollapseProject extends Rule[LogicalPlan] {
       val haveCommonNonDeterministicOutput = upperExpr.collect {
         case a: Attribute if aliases.contains(a) => aliases(a).child
       }.exists(!_.deterministic)
-
+      /*
       // A `CodegenFallback` expression will evaluate children expressions by non-codegen path.
       // If any expression among them doesn't support non-codegen evaluation, the query will fail
       // in runtime.
@@ -566,6 +566,8 @@ object CollapseProject extends Rule[LogicalPlan] {
       }.nonEmpty
 
       haveCommonNonDeterministicOutput || referredByCodegenFallback
+      */
+      haveCommonNonDeterministicOutput
     }
   }
 
