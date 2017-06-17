@@ -446,6 +446,13 @@ case class UnresolvedMapObjects(
 object MapObjects {
   private val curId = new java.util.concurrent.atomic.AtomicInteger()
 
+  def test(
+      function: Expression => Expression,
+      inputData: Expression,
+      elementType: DataType): MapObjects = {
+    apply(function, inputData, elementType)
+  }
+
   /**
    * Construct an instance of MapObjects case class.
    *
