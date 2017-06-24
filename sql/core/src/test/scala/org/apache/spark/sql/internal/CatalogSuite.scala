@@ -186,6 +186,49 @@ class CatalogSuite
     assert(e.getMessage.contains("unknown_db"))
   }
 
+  test("list table names") {
+    assert(spark.catalog.listTableNames().collect().isEmpty)
+    createTable("my_table1")
+    createTable("my_table2")
+    createTempTable("my_temp_table")
+    assert(spark.catalog.listTableNames().collect().toSet ==
+      Set("my_table1", "my_table2", "my_temp_table"))
+    dropTable("my_table1")
+    assert(spark.catalog.listTableNames().collect().toSet ==
+      Set("my_table2", "my_temp_table"))
+    dropTable("my_temp_table")
+    assert(spark.catalog.listTableNames().collect().toSet == Set("my_table2"))
+  }
+
+  test("list table names with database") {
+    assert(spark.catalog.listTableNames("default").collect().isEmpty)
+    createDatabase("my_db1")
+    createDatabase("my_db2")
+    createTable("my_table1", Some("my_db1"))
+    createTable("my_table2", Some("my_db2"))
+    createTempTable("my_temp_table")
+    assert(spark.catalog.listTableNames("default").collect().toSet ==
+      Set("my_temp_table"))
+    assert(spark.catalog.listTableNames("my_db1").collect().toSet ==
+      Set("my_table1", "my_temp_table"))
+    assert(spark.catalog.listTableNames("my_db2").collect().toSet ==
+      Set("my_table2", "my_temp_table"))
+    dropTable("my_table1", Some("my_db1"))
+    assert(spark.catalog.listTableNames("my_db1").collect().toSet ==
+      Set("my_temp_table"))
+    assert(spark.catalog.listTableNames("my_db2").collect().toSet ==
+      Set("my_table2", "my_temp_table"))
+    dropTable("my_temp_table")
+    assert(spark.catalog.listTableNames("default").collect().isEmpty)
+    assert(spark.catalog.listTableNames("my_db1").collect().isEmpty)
+    assert(spark.catalog.listTableNames("my_db2").collect().toSet ==
+      Set("my_table2"))
+    val e = intercept[AnalysisException] {
+      spark.catalog.listTableNames("unknown_db")
+    }
+    assert(e.getMessage.contains("unknown_db"))
+  }
+
   test("list functions") {
     assert(Set("+", "current_database", "window").subsetOf(
       spark.catalog.listFunctions().collect().map(_.name).toSet))

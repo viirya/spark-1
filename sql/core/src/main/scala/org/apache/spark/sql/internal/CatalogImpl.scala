@@ -25,6 +25,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalog.{Catalog, Column, Database, Function, Table}
 import org.apache.spark.sql.catalyst.{DefinedByConstructorParams, FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.catalog._
+import org.apache.spark.sql.catalyst.encoders
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.execution.command.AlterTableRecoverPartitionsCommand
@@ -83,7 +84,28 @@ class CatalogImpl(sparkSession: SparkSession) extends Catalog {
   }
 
   /**
-   * Returns a list of tables in the current database.
+   * Returns a list of table names in the current database.
+   * This includes all temporary tables.
+   */
+  override def listTableNames(): Dataset[String] = {
+    listTableNames(currentDatabase)
+  }
+
+  /**
+   * Returns a list of table names in the specified database.
+   * This includes all temporary tables.
+   */
+  @throws[AnalysisException]("database does not exist")
+  override def listTableNames(dbName: String): Dataset[String] = {
+    val tables = sessionCatalog.listTables(dbName).map(_.table)
+
+    import sparkSession.implicits._
+    CatalogImpl.makeDataset(encoders.encoderFor, tables, sparkSession)
+  }
+
+  /**
+   * Returns a list of tables in the current database. The returned tables include table metadata.
+   * For large database including many tables, this might take long time to return.
    * This includes all temporary tables.
    */
   override def listTables(): Dataset[Table] = {
@@ -91,7 +113,8 @@ class CatalogImpl(sparkSession: SparkSession) extends Catalog {
   }
 
   /**
-   * Returns a list of tables in the specified database.
+   * Returns a list of tables in the specified database. The returned tables include table metadata.
+   * For large database including many tables, this might take long time to return.
    * This includes all temporary tables.
    */
   @throws[AnalysisException]("database does not exist")
@@ -509,6 +532,13 @@ private[sql] object CatalogImpl {
       data: Seq[T],
       sparkSession: SparkSession): Dataset[T] = {
     val enc = ExpressionEncoder[T]()
+    makeDataset(enc, data, sparkSession)
+  }
+
+  private def makeDataset[T](
+      enc: ExpressionEncoder[T],
+      data: Seq[T],
+      sparkSession: SparkSession): Dataset[T] = {
     val encoded = data.map(d => enc.toRow(d).copy())
     val plan = new LocalRelation(enc.schema.toAttributes, encoded)
     val queryExecution = sparkSession.sessionState.executePlan(plan)

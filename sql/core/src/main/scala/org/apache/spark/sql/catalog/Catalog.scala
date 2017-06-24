@@ -54,7 +54,26 @@ abstract class Catalog {
   def listDatabases(): Dataset[Database]
 
   /**
+   * Returns a list of table/view names in the current database.
+   * This includes all temporary views.
+   *
+   * @since 2.3.0
+   */
+  def listTableNames(): Dataset[String]
+
+  /**
+   * Returns a list of table/view names in the specified database.
+   * This includes all temporary views.
+   *
+   * @since 2.3.0
+   */
+  @throws[AnalysisException]("database does not exist")
+  def listTableNames(dbName: String): Dataset[String]
+
+  /**
    * Returns a list of tables/views in the current database.
+   * The returned tables include table metadata. For large database including many tables,
+   * this might take long time to return.
    * This includes all temporary views.
    *
    * @since 2.0.0
@@ -63,6 +82,8 @@ abstract class Catalog {
 
   /**
    * Returns a list of tables/views in the specified database.
+   * The returned tables include table metadata. For large database including many tables,
+   * this might take long time to return.
    * This includes all temporary views.
    *
    * @since 2.0.0
