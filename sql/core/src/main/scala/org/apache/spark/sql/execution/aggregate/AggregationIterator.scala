@@ -176,6 +176,9 @@ abstract class AggregationIterator(
       }.toArray
       // This projection is used to merge buffer values for all expression-based aggregates.
       val aggregationBufferSchema = functions.flatMap(_.aggBufferAttributes)
+      println(s"aggregationBufferSchema: $aggregationBufferSchema")
+      println(s"inputAttributes: $inputAttributes")
+      println(s"mergeExpressions: $mergeExpressions")
       val updateProjection =
         newMutableProjection(mergeExpressions, aggregationBufferSchema ++ inputAttributes)
 

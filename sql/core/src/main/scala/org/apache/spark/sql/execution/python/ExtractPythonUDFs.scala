@@ -134,6 +134,13 @@ object ExtractPythonUDFs extends Rule[SparkPlan] with PredicateHelper {
       val prunedChildren = plan.children.map { child =>
         val allNeededOutput = inputsForPlan.intersect(child.outputSet).toSeq
         if (allNeededOutput.length != child.output.length) {
+          println(s"plan.references: ${plan.references}")
+          println(s"plan.outputSet: ${plan.outputSet}")
+          println(s"child.output: ${child.output}")
+          plan.expressions.foreach { expr =>
+            println(s"expr: $expr")
+            println(s"expr.references: ${expr.references}")
+          }
           ProjectExec(allNeededOutput, child)
         } else {
           child
@@ -189,6 +196,8 @@ object ExtractPythonUDFs extends Rule[SparkPlan] with PredicateHelper {
 
       // extract remaining python UDFs recursively
       val newPlan = extract(rewritten)
+      println(s"plan: $plan")
+      println(s"newPlan: $newPlan")
       if (newPlan.output != plan.output) {
         // Trim away the new UDF value if it was only used for filtering or something.
         ProjectExec(plan.output, newPlan)
