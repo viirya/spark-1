@@ -160,9 +160,11 @@ trait CodegenSupport extends SparkPlan {
     //    can't do it.
     // 4. The number of output variables must less than maximum number of parameters in Java method
     //    declaration.
+    // 5. The config "SQLConf.DECOUPLE_OPERATOR_CONSUME_FUNCTIONS" is enabled.
     val requireAllOutput = output.forall(parent.usedInputs.contains(_))
     val consumeFunc =
-      if (row == null && outputVars.nonEmpty && requireAllOutput && isValidParamLength(ctx)) {
+      if (row == null && outputVars.nonEmpty &&
+          requireAllOutput && ctx.isValidParamLength(output)) {
         constructDoConsumeFunction(ctx, inputVars)
       } else {
         parent.doConsume(ctx, inputVars, rowVar)
@@ -172,24 +174,6 @@ trait CodegenSupport extends SparkPlan {
        |$evaluated
        |$consumeFunc
      """.stripMargin
-  }
-
-  /**
-   * In Java, a method descriptor is valid only if it represents method parameters with a total
-   * length of 255 or less. `this` contributes one unit and a parameter of type long or double
-   * contributes two units. Besides, for nullable parameters, we also need to pass a boolean
-   * for the null status.
-   */
-  private def isValidParamLength(ctx: CodegenContext): Boolean = {
-    // Start value is 1 for `this`.
-    output.foldLeft(1) { case (curLength, attr) =>
-      ctx.javaType(attr.dataType) match {
-        case (ctx.JAVA_LONG | ctx.JAVA_DOUBLE) if !attr.nullable => curLength + 2
-        case ctx.JAVA_LONG | ctx.JAVA_DOUBLE => curLength + 3
-        case _ if !attr.nullable => curLength + 1
-        case _ => curLength + 2
-      }
-    } <= 255
   }
 
   /**
@@ -238,9 +222,7 @@ trait CodegenSupport extends SparkPlan {
       }
       (callingParam, funcParams, ExprCode("", arguIsNull, arguName))
     }.unzip3
-    (params._1.mkString(", "),
-      params._2.mkString(", "),
-      params._3)
+    (params._1.mkString(", "), params._2.mkString(", "), params._3)
   }
 
   /**
