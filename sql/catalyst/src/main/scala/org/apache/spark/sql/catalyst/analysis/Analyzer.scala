@@ -1192,11 +1192,24 @@ class Analyzer(
    * @see https://issues.apache.org/jira/browse/SPARK-19737
    */
   object LookupFunctions extends Rule[LogicalPlan] {
-    override def apply(plan: LogicalPlan): LogicalPlan = plan.transformAllExpressions {
-      case f: UnresolvedFunction if !catalog.functionExists(f.name) =>
-        withPosition(f) {
-          throw new NoSuchFunctionException(f.name.database.getOrElse("default"), f.name.funcName)
-        }
+    override def apply(plan: LogicalPlan): LogicalPlan = {
+      val checkedFunctions = ArrayBuffer[FunctionIdentifier]()
+      plan.transformAllExpressions {
+        case f: UnresolvedFunction if !checkedFunctions.contains(f.name) =>
+          if (!catalog.functionExists(f.name)) {
+            withPosition(f) {
+              throw new NoSuchFunctionException(f.name.database.getOrElse("default"),
+                f.name.funcName)
+            }
+          } else {
+            // Cache existing function. So we don't need to query external catalog
+            // multiple times for the same function in a query. We don't need to cache
+            // this info in catalog because we will register those functions. So in next
+            // time `functionExists` will not query external catalog.
+            checkedFunctions += f.name
+            f
+          }
+      }
     }
   }
 
