@@ -165,11 +165,13 @@ public class MemoryBlockSuite {
     int length = 56;
 
     check(memory, obj, offset, length);
+    Platform.freeMemory(memory.getBaseOffset());
 
     long address = Platform.allocateMemory(112);
     memory = new OffHeapMemoryBlock(address, length);
     obj = memory.getBaseObject();
     offset = memory.getBaseOffset();
     check(memory, obj, offset, length);
+    Platform.freeMemory(address);
   }
 }
