@@ -108,14 +108,26 @@ abstract class UnsafeProjection extends Projection {
   override def apply(row: InternalRow): UnsafeRow
 }
 
-trait UnsafeProjectionCreator {
-  protected def toBoundExprs(
+/**
+ * The factory object for `UnsafeProjection`. It first tries to create codegen implementation.
+ * If there is any compile error, it will fallback to interpreted version `UnsafeProjection`.
+ */
+object UnsafeProjection extends CodegenObjectFactory[Seq[Expression], UnsafeProjection] {
+  override protected def createCodeGeneratedObject(in: Seq[Expression]): UnsafeProjection = {
+    GenerateUnsafeProjection.generate(in)
+  }
+
+  override protected def createInterpretedObject(in: Seq[Expression]): UnsafeProjection = {
+    InterpretedUnsafeProjection.createProjection(in)
+  }
+
+  private def toBoundExprs(
       exprs: Seq[Expression],
       inputSchema: Seq[Attribute]): Seq[Expression] = {
     exprs.map(BindReferences.bindReference(_, inputSchema))
   }
 
-  protected def toUnsafeExprs(exprs: Seq[Expression]): Seq[Expression] = {
+  private def toUnsafeExprs(exprs: Seq[Expression]): Seq[Expression] = {
     exprs.map(_ transform {
       case CreateNamedStruct(children) => CreateNamedStructUnsafe(children)
     })
@@ -157,25 +169,24 @@ trait UnsafeProjectionCreator {
   /**
    * Returns an [[UnsafeProjection]] for given sequence of bound Expressions.
    */
-  protected[sql] def createProjection(exprs: Seq[Expression]): UnsafeProjection
-}
-
-object UnsafeProjection extends UnsafeProjectionCreator {
-
-  override protected[sql] def createProjection(exprs: Seq[Expression]): UnsafeProjection = {
-    GenerateUnsafeProjection.generate(exprs)
-  }
+  protected[sql] def createProjection(exprs: Seq[Expression]): UnsafeProjection =
+    createObject(exprs)
 
   /**
    * Same as other create()'s but allowing enabling/disabling subexpression elimination.
-   * TODO: refactor the plumbing and clean this up.
+   * The param `subexpressionEliminationEnabled` doesn't guarantee to work. For example,
+   * when fallbacking to interpreted execution, it is not supported.
    */
   def create(
       exprs: Seq[Expression],
       inputSchema: Seq[Attribute],
       subexpressionEliminationEnabled: Boolean): UnsafeProjection = {
     val unsafeExprs = toUnsafeExprs(toBoundExprs(exprs, inputSchema))
-    GenerateUnsafeProjection.generate(unsafeExprs, subexpressionEliminationEnabled)
+    try {
+      GenerateUnsafeProjection.generate(unsafeExprs, subexpressionEliminationEnabled)
+    } catch {
+      case CodegenError(_) => InterpretedUnsafeProjection.createProjection(unsafeExprs)
+    }
   }
 }
 

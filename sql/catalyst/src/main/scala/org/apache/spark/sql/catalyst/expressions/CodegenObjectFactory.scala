@@ -38,7 +38,7 @@ object CodegenError {
  */
 abstract class CodegenObjectFactory[IN, OUT] {
 
-  def createObject(in: IN): OUT = try {
+  protected def createObject(in: IN): OUT = try {
     createCodeGeneratedObject(in)
   } catch {
     case CodegenError(_) => createInterpretedObject(in)
@@ -47,33 +47,3 @@ abstract class CodegenObjectFactory[IN, OUT] {
   protected def createCodeGeneratedObject(in: IN): OUT
   protected def createInterpretedObject(in: IN): OUT
 }
-
-object UnsafeProjectionFactory extends CodegenObjectFactory[Seq[Expression], UnsafeProjection]
-    with UnsafeProjectionCreator {
-
-  override protected def createCodeGeneratedObject(in: Seq[Expression]): UnsafeProjection = {
-    UnsafeProjection.createProjection(in)
-  }
-
-  override protected def createInterpretedObject(in: Seq[Expression]): UnsafeProjection = {
-    InterpretedUnsafeProjection.createProjection(in)
-  }
-
-  override protected[sql] def createProjection(exprs: Seq[Expression]): UnsafeProjection =
-    createObject(exprs)
-
-  /**
-   * Same as other create()'s but allowing enabling/disabling subexpression elimination.
-   * The param `subexpressionEliminationEnabled` doesn't guarantee to work. For example,
-   * when fallbacking to interpreted execution, it is not supported.
-   */
-  def create(
-      exprs: Seq[Expression],
-      inputSchema: Seq[Attribute],
-      subexpressionEliminationEnabled: Boolean): UnsafeProjection = try {
-    UnsafeProjection.create(exprs, inputSchema, subexpressionEliminationEnabled)
-  } catch {
-    case CodegenError(_) => InterpretedUnsafeProjection.create(exprs, inputSchema)
-  }
-}
-
