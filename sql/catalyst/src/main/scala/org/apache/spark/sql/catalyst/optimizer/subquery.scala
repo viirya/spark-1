@@ -214,10 +214,10 @@ object PullupCorrelatedPredicates extends Rule[LogicalPlan] with PredicateHelper
         } else {
           p
         }
-      case a @ Aggregate(grouping, expressions, child) =>
+      case a @ Aggregate(grouping, expressions, child, treeDepth) =>
         val referencesToAdd = missingReferences(a)
         if (referencesToAdd.nonEmpty) {
-          Aggregate(grouping ++ referencesToAdd, expressions ++ referencesToAdd, child)
+          Aggregate(grouping ++ referencesToAdd, expressions ++ referencesToAdd, child, treeDepth)
         } else {
           a
         }
@@ -360,7 +360,7 @@ object RewriteCorrelatedScalarSubquery extends Rule[LogicalPlan] {
           projectList.map(ne => (ne.exprId, evalExpr(ne, bindings))).toMap
         }
 
-      case Aggregate(_, aggExprs, _) =>
+      case Aggregate(_, aggExprs, _, _) =>
         // Some of the expressions under the Aggregate node are the join columns
         // for joining with the outer query block. Fill those expressions in with
         // nulls and statically evaluate the remainder.
@@ -502,7 +502,7 @@ object RewriteCorrelatedScalarSubquery extends Rule[LogicalPlan] {
    * subqueries.
    */
   def apply(plan: LogicalPlan): LogicalPlan = plan transform {
-    case a @ Aggregate(grouping, expressions, child) =>
+    case a @ Aggregate(grouping, expressions, child, treeDepth) =>
       val subqueries = ArrayBuffer.empty[ScalarSubquery]
       val newExpressions = expressions.map(extractCorrelatedScalarSubqueries(_, subqueries))
       if (subqueries.nonEmpty) {
@@ -512,7 +512,7 @@ object RewriteCorrelatedScalarSubquery extends Rule[LogicalPlan] {
         val newGrouping = grouping.map { e =>
           subqueries.find(_.semanticEquals(e)).map(_.plan.output.head).getOrElse(e)
         }
-        Aggregate(newGrouping, newExpressions, constructLeftJoins(child, subqueries))
+        Aggregate(newGrouping, newExpressions, constructLeftJoins(child, subqueries), treeDepth)
       } else {
         a
       }

@@ -49,7 +49,8 @@ import org.apache.spark.sql.types.{NumericType, StructType}
 class RelationalGroupedDataset protected[sql](
     df: DataFrame,
     groupingExprs: Seq[Expression],
-    groupType: RelationalGroupedDataset.GroupType) {
+    groupType: RelationalGroupedDataset.GroupType,
+    treeInfo: Option[TreeAggregateInfo] = None) {
 
   private[this] def toDF(aggExprs: Seq[Expression]): DataFrame = {
     val aggregates = if (df.sparkSession.sessionState.conf.dataFrameRetainGroupColumns) {
@@ -63,7 +64,7 @@ class RelationalGroupedDataset protected[sql](
     groupType match {
       case RelationalGroupedDataset.GroupByType =>
         Dataset.ofRows(
-          df.sparkSession, Aggregate(groupingExprs, aliasedAgg, df.planWithBarrier))
+          df.sparkSession, Aggregate(groupingExprs, aliasedAgg, df.planWithBarrier, treeInfo))
       case RelationalGroupedDataset.RollupType =>
         Dataset.ofRows(
           df.sparkSession, Aggregate(Seq(Rollup(groupingExprs)), aliasedAgg, df.planWithBarrier))
@@ -478,6 +479,22 @@ class RelationalGroupedDataset protected[sql](
       builder.append(" ... " + (kFields.length - 2) + " more field(s)")
     }
     builder.append(s"], value: ${df.toString}, type: $groupType]").toString()
+  }
+
+  /**
+   * Returns a copy of `RelationalGroupedDataset` with `treeAggregate` set to `true`. We can use
+   * it to perform aggregate in a multi-level tree pattern similar to `RDD.treeAggregate`.
+   */
+  def treeAggregate(depth: Int): RelationalGroupedDataset = {
+    if (groupType != RelationalGroupedDataset.GroupByType) {
+      throw new AnalysisException(s"Tree aggregate doesn't support group type: ${groupType}")
+    } else {
+      new RelationalGroupedDataset(
+        df,
+        groupingExprs,
+        groupType,
+        treeInfo = Some(TreeAggregateInfo(depth, df.rdd.partitions.length)))
+    }
   }
 }
 

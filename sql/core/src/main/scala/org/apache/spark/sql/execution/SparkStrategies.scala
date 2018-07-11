@@ -325,7 +325,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
         EventTimeWatermarkExec(columnName, delay, planLater(child)) :: Nil
 
       case PhysicalAggregation(
-        namedGroupingExpressions, aggregateExpressions, rewrittenResultExpressions, child) =>
+        namedGroupingExpressions, aggregateExpressions, rewrittenResultExpressions, child, _) =>
 
         if (aggregateExpressions.exists(PythonUDF.isGroupedAggPandasUDF)) {
           throw new AnalysisException(
@@ -377,7 +377,30 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
    */
   object Aggregation extends Strategy {
     def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
-      case PhysicalAggregation(groupingExpressions, aggExpressions, resultExpressions, child)
+      case PhysicalAggregation(groupingExpressions, aggExpressions, resultExpressions, child,
+          Some(treeInfo)) =>
+        // Aggregate in a multi-level tree pattern.
+        // We only support aggregate operator by multi-level tree pattern for global aggregation.
+        if (groupingExpressions.nonEmpty) {
+          throw new AnalysisException("Tree aggregate only supports global aggregation, " +
+            s"but there is non empty grouping expressions: [${groupingExpressions.mkString(", ")}]")
+        }
+        val aggregateExpressions = aggExpressions.map(expr =>
+          expr.asInstanceOf[AggregateExpression])
+
+        val (functionsWithDistinct, functionsWithoutDistinct) =
+          aggregateExpressions.partition(_.isDistinct)
+        if (functionsWithDistinct.nonEmpty) {
+          throw new AnalysisException("Tree aggregate doesn't support distinct aggregation")
+        }
+        aggregate.AggUtils.planTreeAggregateWithoutDistinct(
+          groupingExpressions,
+          aggregateExpressions,
+          resultExpressions,
+          planLater(child),
+          treeInfo)
+
+      case PhysicalAggregation(groupingExpressions, aggExpressions, resultExpressions, child, _)
         if aggExpressions.forall(expr => expr.isInstanceOf[AggregateExpression]) =>
         val aggregateExpressions = aggExpressions.map(expr =>
           expr.asInstanceOf[AggregateExpression])
@@ -409,7 +432,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
 
         aggregateOperator
 
-      case PhysicalAggregation(groupingExpressions, aggExpressions, resultExpressions, child)
+      case PhysicalAggregation(groupingExpressions, aggExpressions, resultExpressions, child, _)
         if aggExpressions.forall(expr => expr.isInstanceOf[PythonUDF]) =>
         val udfExpressions = aggExpressions.map(expr => expr.asInstanceOf[PythonUDF])
 
@@ -419,7 +442,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
           resultExpressions,
           planLater(child)))
 
-      case PhysicalAggregation(_, _, _, _) =>
+      case PhysicalAggregation(_, _, _, _, _) =>
         // If cannot match the two cases above, then it's an error
         throw new AnalysisException(
           "Cannot use a mixture of aggregate function and group aggregate pandas UDF")

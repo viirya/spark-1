@@ -717,4 +717,28 @@ class DataFrameAggregateSuite extends QueryTest with SharedSQLContext {
       Row(1, 2, 1) :: Row(2, 2, 2) :: Row(3, 2, 3) :: Nil)
   }
 
+  test("treeAggregate: unsupport cases") {
+    // Non global aggregate
+    intercept[AnalysisException] {
+      testData2.groupBy("a").treeAggregate(2).agg(sum($"b")).collect
+    }
+    // Roll up
+    intercept[AnalysisException] {
+      testData2.rollup("a").treeAggregate(2).agg(sum($"b")).collect
+    }
+    // Cube
+    intercept[AnalysisException] {
+      testData2.cube("a").treeAggregate(2).agg(sum($"b")).collect
+    }
+  }
+
+  test("treeAggregate correctness") {
+    val testDF = testData2.repartition(100)
+    val expected = testData2.groupBy().agg(sum($"b"))
+    val treeAggDepth2 = testDF.groupBy().treeAggregate(2).agg(sum($"b"))
+    val treeAggDepth3 = testDF.groupBy().treeAggregate(3).agg(sum($"b"))
+
+    checkAnswer(treeAggDepth2, expected.collect())
+    checkAnswer(treeAggDepth3, expected.collect())
+  }
 }

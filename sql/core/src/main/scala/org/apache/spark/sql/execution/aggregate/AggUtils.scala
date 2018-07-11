@@ -19,7 +19,10 @@ package org.apache.spark.sql.execution.aggregate
 
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
+import org.apache.spark.sql.catalyst.plans.logical.TreeAggregateInfo
+import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.exchange
 import org.apache.spark.sql.execution.streaming.{StateStoreRestoreExec, StateStoreSaveExec}
 import org.apache.spark.sql.internal.SQLConf
 
@@ -70,6 +73,81 @@ object AggUtils {
           child = child)
       }
     }
+  }
+
+  // Aggregate in a multi-level tree pattern similar to `RDD.treeAggregate`.
+  def planTreeAggregateWithoutDistinct(
+      groupingExpressions: Seq[NamedExpression],
+      aggregateExpressions: Seq[AggregateExpression],
+      resultExpressions: Seq[NamedExpression],
+      child: SparkPlan,
+      treeInfo: TreeAggregateInfo): Seq[SparkPlan] = {
+    require(treeInfo.depth >= 1,
+      s"Depth must be greater than or equal to 1 but got ${treeInfo.depth}.")
+
+    // 1. Create an Aggregate Operator for partial aggregations.
+    val groupingAttributes = groupingExpressions.map(_.toAttribute)
+    val partialAggregateExpressions = aggregateExpressions.map(_.copy(mode = Partial))
+    val partialAggregateAttributes =
+      partialAggregateExpressions.flatMap(_.aggregateFunction.aggBufferAttributes)
+    val partialResultExpressions =
+      groupingAttributes ++
+        partialAggregateExpressions.flatMap(_.aggregateFunction.inputAggBufferAttributes)
+
+    var partialAggregate = createAggregate(
+        requiredChildDistributionExpressions = None,
+        groupingExpressions = groupingExpressions,
+        aggregateExpressions = partialAggregateExpressions,
+        aggregateAttributes = partialAggregateAttributes,
+        initialInputBufferOffset = 0,
+        resultExpressions = partialResultExpressions,
+        child = child)
+
+    var numPartitions = treeInfo.childNumPartitions
+    val scale = math.max(math.ceil(math.pow(numPartitions, 1.0 / treeInfo.depth)).toInt, 2)
+    // If creating an extra level doesn't help reduce
+    // the wall-clock time, we stop tree aggregation.
+
+    // Don't trigger TreeAggregation when it doesn't save wall-clock time
+    while (numPartitions > scale + math.ceil(numPartitions.toDouble / scale)) {
+      numPartitions /= scale
+      val curNumPartitions = numPartitions
+
+      // 2. Create an Aggregate Operator for partial merge aggregations.
+      val partitionExprs = Seq(Remainder(SparkPartitionID(), Literal(curNumPartitions)))
+      partialAggregate = exchange.ShuffleExchangeExec(
+        HashPartitioning(partitionExprs, curNumPartitions), partialAggregate)
+
+      val partialMergeAggregateExpressions = aggregateExpressions.map(_.copy(mode = PartialMerge))
+      val partialMergeAggregateAttributes =
+        partialMergeAggregateExpressions.flatMap(_.aggregateFunction.aggBufferAttributes)
+
+      partialAggregate = createAggregate(
+        requiredChildDistributionExpressions = None, // We already repartition it.
+        groupingExpressions = groupingAttributes,
+        aggregateExpressions = partialMergeAggregateExpressions,
+        aggregateAttributes = partialMergeAggregateAttributes,
+        initialInputBufferOffset = groupingAttributes.length,
+        resultExpressions = groupingAttributes ++
+          aggregateExpressions.flatMap(_.aggregateFunction.inputAggBufferAttributes),
+        child = partialAggregate)
+    }
+    // 3. Create an Aggregate Operator for final aggregations.
+    val finalAggregateExpressions = aggregateExpressions.map(_.copy(mode = Final))
+    // The attributes of the final aggregation buffer, which is presented as input to the result
+    // projection:
+    val finalAggregateAttributes = finalAggregateExpressions.map(_.resultAttribute)
+
+    val finalAggregate = createAggregate(
+        requiredChildDistributionExpressions = Some(groupingAttributes),
+        groupingExpressions = groupingAttributes,
+        aggregateExpressions = finalAggregateExpressions,
+        aggregateAttributes = finalAggregateAttributes,
+        initialInputBufferOffset = groupingExpressions.length,
+        resultExpressions = resultExpressions,
+        child = partialAggregate)
+
+    finalAggregate :: Nil
   }
 
   def planAggregateWithoutDistinct(

@@ -160,7 +160,7 @@ trait CheckAnalysis extends PredicateHelper {
               s"join condition '${condition.sql}' " +
                 s"of type ${condition.dataType.simpleString} is not a boolean.")
 
-          case Aggregate(groupingExprs, aggregateExprs, child) =>
+          case Aggregate(groupingExprs, aggregateExprs, child, _) =>
             def isAggregateExpression(expr: Expression) = {
               expr.isInstanceOf[AggregateExpression] || PythonUDF.isGroupedAggPandasUDF(expr)
             }

@@ -535,10 +535,20 @@ case class Range(
   }
 }
 
+/**
+ * A class recording necessary infos for multi-level tree aggregation.
+ */
+case class TreeAggregateInfo(depth: Int, childNumPartitions: Int)
+
+/**
+ * @param treeDepth Optional. Whether performing aggregation in a multi-level tree pattern, it
+ *                  contains suggested depth of the tree and the number of partitions of child RDD.
+ */
 case class Aggregate(
     groupingExpressions: Seq[Expression],
     aggregateExpressions: Seq[NamedExpression],
-    child: LogicalPlan)
+    child: LogicalPlan,
+    treeAggInfo: Option[TreeAggregateInfo] = None)
   extends UnaryNode {
 
   override lazy val resolved: Boolean = {

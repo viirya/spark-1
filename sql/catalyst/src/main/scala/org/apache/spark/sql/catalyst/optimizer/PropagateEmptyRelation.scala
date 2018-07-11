@@ -103,7 +103,7 @@ object PropagateEmptyRelation extends Rule[LogicalPlan] with PredicateHelper wit
       // Aggregation on empty LocalRelation generated from a streaming source is not eliminated
       // as stateful streaming aggregation need to perform other state management operations other
       // than just processing the input data.
-      case Aggregate(ge, _, _) if ge.nonEmpty && !p.isStreaming => empty(p)
+      case Aggregate(ge, _, _, _) if ge.nonEmpty && !p.isStreaming => empty(p)
       // Generators like Hive-style UDTF may return their records within `close`.
       case Generate(_: Explode, _, _, _, _, _) => empty(p)
       case _ => p

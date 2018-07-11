@@ -451,7 +451,7 @@ object ColumnPruning extends Rule[LogicalPlan] {
       d.copy(child = prunedChild(child, d.references))
 
     // Prunes the unused columns from child of Aggregate/Expand/Generate
-    case a @ Aggregate(_, _, child) if (child.outputSet -- a.references).nonEmpty =>
+    case a @ Aggregate(_, _, child, _) if (child.outputSet -- a.references).nonEmpty =>
       a.copy(child = prunedChild(child, a.references))
     case f @ FlatMapGroupsInPandas(_, _, _, child) if (child.outputSet -- f.references).nonEmpty =>
       f.copy(child = prunedChild(child, f.references))
@@ -1349,7 +1349,7 @@ object ReplaceExceptWithAntiJoin extends Rule[LogicalPlan] {
  */
 object RemoveLiteralFromGroupExpressions extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan transform {
-    case a @ Aggregate(grouping, _, _) if grouping.nonEmpty =>
+    case a @ Aggregate(grouping, _, _, _) if grouping.nonEmpty =>
       val newGrouping = grouping.filter(!_.foldable)
       if (newGrouping.nonEmpty) {
         a.copy(groupingExpressions = newGrouping)
@@ -1368,7 +1368,7 @@ object RemoveLiteralFromGroupExpressions extends Rule[LogicalPlan] {
  */
 object RemoveRepetitionFromGroupExpressions extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan transform {
-    case a @ Aggregate(grouping, _, _) if grouping.size > 1 =>
+    case a @ Aggregate(grouping, _, _, _) if grouping.size > 1 =>
       val newGrouping = ExpressionSet(grouping).toSeq
       if (newGrouping.size == grouping.size) {
         a
