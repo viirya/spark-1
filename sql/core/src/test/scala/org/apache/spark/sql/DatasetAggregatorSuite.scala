@@ -444,4 +444,9 @@ class DatasetAggregatorSuite extends QueryTest with SharedSQLContext {
     checkAnswer(group, Row("bob", Row(true, 3)) :: Nil)
     checkDataset(group.as[OptionBooleanIntData], OptionBooleanIntData("bob", Some((true, 3))))
   }
+
+  test("test") {
+    val df = Seq(Some((1, "a")), Some((2, "b"))).toDF
+    df.show
+  }
 }

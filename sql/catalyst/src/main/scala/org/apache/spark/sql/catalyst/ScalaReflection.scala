@@ -436,6 +436,8 @@ object ScalaReflection extends ScalaReflection {
     val clsName = getClassNameFromType(tpe)
     val walkedTypePath = s"""- root class: "$clsName"""" :: Nil
     serializerFor(inputObject, tpe, walkedTypePath) match {
+      case expressions.If(_, _, s: CreateNamedStruct) if tpe.dealias <:< localTypeOf[Option[_]] =>
+        CreateNamedStruct(expressions.Literal("value") :: s :: Nil)
       case expressions.If(_, _, s: CreateNamedStruct) if definedByConstructorParams(tpe) => s
       case other => CreateNamedStruct(expressions.Literal("value") :: other :: Nil)
     }
