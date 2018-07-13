@@ -211,7 +211,13 @@ object ScalaReflection extends ScalaReflection {
         val TypeRef(_, _, Seq(optType)) = t
         val className = getClassNameFromType(optType)
         val newTypePath = s"""- option value class: "$className"""" +: walkedTypePath
-        WrapOption(deserializerFor(optType, path, newTypePath), dataTypeFor(optType))
+        val optTypePath = if (definedByConstructorParams(t)) {
+          // For Option of Product, we decode it from first column from current path.
+          Some(addToPathOrdinal(0, schemaFor(tpe).dataType, newTypePath))
+        } else {
+          path
+        }
+        WrapOption(deserializerFor(optType, optTypePath, newTypePath), dataTypeFor(optType))
 
       case t if t <:< localTypeOf[java.lang.Integer] =>
         val boxedType = classOf[java.lang.Integer]
@@ -404,6 +410,8 @@ object ScalaReflection extends ScalaReflection {
             constructor
           }
         }
+        println(s"arguments: $arguments")
+        println(s"path: $path")
 
         val newInstance = NewInstance(cls, arguments, ObjectType(cls), propagateNull = false)
 
@@ -436,7 +444,9 @@ object ScalaReflection extends ScalaReflection {
     val clsName = getClassNameFromType(tpe)
     val walkedTypePath = s"""- root class: "$clsName"""" :: Nil
     serializerFor(inputObject, tpe, walkedTypePath) match {
-      case expressions.If(_, _, s: CreateNamedStruct) if tpe.dealias <:< localTypeOf[Option[_]] =>
+      case expressions.If(_, _, s: CreateNamedStruct)
+          if tpe.dealias <:< localTypeOf[Option[_]] && definedByConstructorParams(tpe) =>
+        // For Option of Product, we encode it as a struct column.
         CreateNamedStruct(expressions.Literal("value") :: s :: Nil)
       case expressions.If(_, _, s: CreateNamedStruct) if definedByConstructorParams(tpe) => s
       case other => CreateNamedStruct(expressions.Literal("value") :: other :: Nil)

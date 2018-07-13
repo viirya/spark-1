@@ -67,6 +67,8 @@ object ExpressionEncoder {
     }
     val serializer = ScalaReflection.serializerFor[T](nullSafeInput)
     val deserializer = ScalaReflection.deserializerFor[T]
+    println(s"serializer: $serializer")
+    println(s"deserializer: $deserializer")
 
     val schema = serializer.dataType
 

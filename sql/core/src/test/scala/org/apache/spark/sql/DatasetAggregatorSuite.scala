@@ -437,12 +437,15 @@ class DatasetAggregatorSuite extends QueryTest with SharedSQLContext {
       OptionBooleanIntData("bob", Some((true, 1))),
       OptionBooleanIntData("bob", Some((false, 2))),
       OptionBooleanIntData("bob", None)).toDF()
+    df.show
+    /*
     val group = df
       .groupBy("name")
       .agg(OptionBooleanIntAggregator("isGood").toColumn.alias("isGood"))
     assert(df.schema == group.schema)
     checkAnswer(group, Row("bob", Row(true, 3)) :: Nil)
     checkDataset(group.as[OptionBooleanIntData], OptionBooleanIntData("bob", Some((true, 3))))
+    */
   }
 
   test("test") {
