@@ -65,10 +65,8 @@ object ExpressionEncoder {
       // doesn't allow top-level row to be null, only its columns can be null.
       AssertNotNull(inputObject, Seq("top level Product input object"))
     }
-    val serializer = ScalaReflection.serializerFor[T](nullSafeInput)
-    val deserializer = ScalaReflection.deserializerFor[T]
-    println(s"serializer: $serializer")
-    println(s"deserializer: $deserializer")
+    val serializer = ScalaReflection.serializerFor[T](nullSafeInput, topLevel)
+    val deserializer = ScalaReflection.deserializerFor[T](topLevel)
 
     val schema = serializer.dataType
 

@@ -135,17 +135,58 @@ object ScalaReflection extends ScalaReflection {
    * from ordinal 0 (since there are no names to map to).  The actual location can be moved by
    * calling resolve/bind with a new schema.
    */
-  def deserializerFor[T : TypeTag]: Expression = {
+  def deserializerFor[T : TypeTag](topLevel: Boolean): Expression = {
     val tpe = localTypeOf[T]
     val clsName = getClassNameFromType(tpe)
     val walkedTypePath = s"""- root class: "$clsName"""" :: Nil
-    val expr = deserializerFor(tpe, None, walkedTypePath)
+    val optOfProduct = tpe.dealias <:< localTypeOf[Option[_]] && definedByConstructorParams(tpe)
+    val optTypePath = if (optOfProduct && topLevel) {
+      // For top-level Option of Product, we decode it from first column from current path.
+      Some(addToPathOrdinal(None, 0, schemaFor(tpe).dataType, walkedTypePath))
+    } else {
+      None
+    }
+    val expr = deserializerFor(tpe, optTypePath, walkedTypePath)
     val Schema(_, nullable) = schemaFor(tpe)
     if (nullable) {
       expr
     } else {
       AssertNotNull(expr, walkedTypePath)
     }
+  }
+
+  /**
+   * When we build the `deserializer` for an encoder, we set up a lot of "unresolved" stuff
+   * and lost the required data type, which may lead to runtime error if the real type doesn't
+   * match the encoder's schema.
+   * For example, we build an encoder for `case class Data(a: Int, b: String)` and the real type
+   * is [a: int, b: long], then we will hit runtime error and say that we can't construct class
+   * `Data` with int and long, because we lost the information that `b` should be a string.
+   *
+   * This method help us "remember" the required data type by adding a `UpCast`. Note that we
+   * only need to do this for leaf nodes.
+   */
+  def upCastToExpectedType(
+      expr: Expression,
+      expected: DataType,
+      walkedTypePath: Seq[String]): Expression = expected match {
+    case _: StructType => expr
+    case _: ArrayType => expr
+    // TODO: ideally we should also skip MapType, but nested StructType inside MapType is rare and
+    // it's not trivial to support by-name resolution for StructType inside MapType.
+    case _ => UpCast(expr, expected, walkedTypePath)
+  }
+
+  /** Returns the current path with a field at ordinal extracted. */
+  def addToPathOrdinal(
+      path: Option[Expression],
+      ordinal: Int,
+      dataType: DataType,
+      walkedTypePath: Seq[String]): Expression = {
+    val newPath = path
+      .map(p => GetStructField(p, ordinal))
+      .getOrElse(GetColumnByOrdinal(ordinal, dataType))
+    upCastToExpectedType(newPath, dataType, walkedTypePath)
   }
 
   private def deserializerFor(
@@ -161,17 +202,6 @@ object ScalaReflection extends ScalaReflection {
       upCastToExpectedType(newPath, dataType, walkedTypePath)
     }
 
-    /** Returns the current path with a field at ordinal extracted. */
-    def addToPathOrdinal(
-        ordinal: Int,
-        dataType: DataType,
-        walkedTypePath: Seq[String]): Expression = {
-      val newPath = path
-        .map(p => GetStructField(p, ordinal))
-        .getOrElse(GetColumnByOrdinal(ordinal, dataType))
-      upCastToExpectedType(newPath, dataType, walkedTypePath)
-    }
-
     /** Returns the current path or `GetColumnByOrdinal`. */
     def getPath: Expression = {
       val dataType = schemaFor(tpe).dataType
@@ -182,28 +212,6 @@ object ScalaReflection extends ScalaReflection {
       }
     }
 
-    /**
-     * When we build the `deserializer` for an encoder, we set up a lot of "unresolved" stuff
-     * and lost the required data type, which may lead to runtime error if the real type doesn't
-     * match the encoder's schema.
-     * For example, we build an encoder for `case class Data(a: Int, b: String)` and the real type
-     * is [a: int, b: long], then we will hit runtime error and say that we can't construct class
-     * `Data` with int and long, because we lost the information that `b` should be a string.
-     *
-     * This method help us "remember" the required data type by adding a `UpCast`. Note that we
-     * only need to do this for leaf nodes.
-     */
-    def upCastToExpectedType(
-        expr: Expression,
-        expected: DataType,
-        walkedTypePath: Seq[String]): Expression = expected match {
-      case _: StructType => expr
-      case _: ArrayType => expr
-      // TODO: ideally we should also skip MapType, but nested StructType inside MapType is rare and
-      // it's not trivial to support by-name resolution for StructType inside MapType.
-      case _ => UpCast(expr, expected, walkedTypePath)
-    }
-
     tpe.dealias match {
       case t if !dataTypeFor(t).isInstanceOf[ObjectType] => getPath
 
@@ -211,13 +219,7 @@ object ScalaReflection extends ScalaReflection {
         val TypeRef(_, _, Seq(optType)) = t
         val className = getClassNameFromType(optType)
         val newTypePath = s"""- option value class: "$className"""" +: walkedTypePath
-        val optTypePath = if (definedByConstructorParams(t)) {
-          // For Option of Product, we decode it from first column from current path.
-          Some(addToPathOrdinal(0, schemaFor(tpe).dataType, newTypePath))
-        } else {
-          path
-        }
-        WrapOption(deserializerFor(optType, optTypePath, newTypePath), dataTypeFor(optType))
+        WrapOption(deserializerFor(optType, path, newTypePath), dataTypeFor(optType))
 
       case t if t <:< localTypeOf[java.lang.Integer] =>
         val boxedType = classOf[java.lang.Integer]
@@ -395,7 +397,7 @@ object ScalaReflection extends ScalaReflection {
           val constructor = if (cls.getName startsWith "scala.Tuple") {
             deserializerFor(
               fieldType,
-              Some(addToPathOrdinal(i, dataType, newTypePath)),
+              Some(addToPathOrdinal(path, i, dataType, newTypePath)),
               newTypePath)
           } else {
             deserializerFor(
@@ -410,8 +412,6 @@ object ScalaReflection extends ScalaReflection {
             constructor
           }
         }
-        println(s"arguments: $arguments")
-        println(s"path: $path")
 
         val newInstance = NewInstance(cls, arguments, ObjectType(cls), propagateNull = false)
 
@@ -439,14 +439,16 @@ object ScalaReflection extends ScalaReflection {
    *  * the element type of [[Array]] or [[Seq]]: `array element class: "abc.xyz.MyClass"`
    *  * the field of [[Product]]: `field (class: "abc.xyz.MyClass", name: "myField")`
    */
-  def serializerFor[T : TypeTag](inputObject: Expression): CreateNamedStruct = {
+  def serializerFor[T : TypeTag](
+      inputObject: Expression,
+      topLevel: Boolean): CreateNamedStruct = {
     val tpe = localTypeOf[T]
     val clsName = getClassNameFromType(tpe)
     val walkedTypePath = s"""- root class: "$clsName"""" :: Nil
     serializerFor(inputObject, tpe, walkedTypePath) match {
-      case expressions.If(_, _, s: CreateNamedStruct)
-          if tpe.dealias <:< localTypeOf[Option[_]] && definedByConstructorParams(tpe) =>
-        // For Option of Product, we encode it as a struct column.
+      case expressions.If(_, _, s: CreateNamedStruct) if tpe.dealias <:< localTypeOf[Option[_]] &&
+          definedByConstructorParams(tpe) && topLevel =>
+        // For top-level Option of Product, we encode the opt type as a struct column.
         CreateNamedStruct(expressions.Literal("value") :: s :: Nil)
       case expressions.If(_, _, s: CreateNamedStruct) if definedByConstructorParams(tpe) => s
       case other => CreateNamedStruct(expressions.Literal("value") :: other :: Nil)
@@ -741,7 +743,8 @@ object ScalaReflection extends ScalaReflection {
         Schema(udt, nullable = true)
       case t if t <:< localTypeOf[Option[_]] =>
         val TypeRef(_, _, Seq(optType)) = t
-        Schema(schemaFor(optType).dataType, nullable = true)
+        val Schema(dataType, nullable) = schemaFor(optType)
+        Schema(StructType(StructField("value", dataType, nullable) :: Nil), nullable = true)
       case t if t <:< localTypeOf[Array[Byte]] => Schema(BinaryType, nullable = true)
       case t if t <:< localTypeOf[Array[_]] =>
         val TypeRef(_, _, Seq(elementType)) = t
