@@ -28,7 +28,7 @@ import org.scalatest.Matchers._
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Uuid
+import org.apache.spark.sql.catalyst.expressions.{Rand, Randn, Uuid}
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, OneRowRelation, Union}
 import org.apache.spark.sql.execution.{FilterExec, QueryExecution, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
@@ -2405,5 +2405,14 @@ class DataFrameSuite extends QueryTest with SharedSQLContext {
       val aggPlusFilter2 = df.groupBy(col("name")).agg(count(col("name"))).filter(col("name") === 0)
       checkAnswer(aggPlusFilter1, aggPlusFilter2.collect())
     }
+  }
+
+  test("Rand expression should produce same results at retries in the same DataFrame") {
+    val df1 = spark.range(1).select($"id", new Column(new Rand()))
+    checkAnswer(df1, df1.collect())
+
+    val df2 = spark.range(1).select($"id", new Column(new Randn()))
+    checkAnswer(df2, df2.collect())
+
   }
 }

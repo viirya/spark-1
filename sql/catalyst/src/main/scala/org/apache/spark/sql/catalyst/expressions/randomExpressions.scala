@@ -19,11 +19,29 @@ package org.apache.spark.sql.catalyst.expressions
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode, FalseLiteral}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 import org.apache.spark.util.random.XORShiftRandom
+
+/**
+ * Expressions extends this trait have a random seed which is decided during analysis. Thus re-tries
+ * of such expressions have the same results.
+ */
+trait RandomSeed {
+  val randomSeed: Option[Long]
+}
+
+object RandomSeed {
+  def inputArgToSeed(input: Expression): Long = input match {
+    case Literal(s, IntegerType) => s.asInstanceOf[Int]
+    case Literal(s, LongType) => s.asInstanceOf[Long]
+    case _ => throw new AnalysisException(
+      s"Input argument must be an integer, long or null literal.")
+  }
+}
 
 /**
  * A Random distribution generating expression.
@@ -32,22 +50,24 @@ import org.apache.spark.util.random.XORShiftRandom
  *
  * Since this expression is stateful, it cannot be a case object.
  */
-abstract class RDG extends UnaryExpression with ExpectsInputTypes with Stateful {
+abstract class RDG extends UnaryExpression with ExpectsInputTypes with Stateful with RandomSeed {
   /**
    * Record ID within each partition. By being transient, the Random Number Generator is
    * reset every time we serialize and deserialize and initialize it.
    */
   @transient protected var rng: XORShiftRandom = _
 
-  override protected def initializeInternal(partitionIndex: Int): Unit = {
-    rng = new XORShiftRandom(seed + partitionIndex)
+  override lazy val resolved: Boolean = childrenResolved && checkInputDataTypes().isSuccess &&
+    randomSeed.isDefined
+
+  override lazy val child: Expression = if (randomSeed.isDefined) {
+    Literal(randomSeed.get, LongType)
+  } else {
+    UnresolvedAttribute("seed")
   }
 
-  @transient protected lazy val seed: Long = child match {
-    case Literal(s, IntegerType) => s.asInstanceOf[Int]
-    case Literal(s, LongType) => s.asInstanceOf[Long]
-    case _ => throw new AnalysisException(
-      s"Input argument to $prettyName must be an integer, long or null literal.")
+  override protected def initializeInternal(partitionIndex: Int): Unit = {
+    rng = new XORShiftRandom(randomSeed.get + partitionIndex)
   }
 
   override def nullable: Boolean = false
@@ -72,9 +92,13 @@ abstract class RDG extends UnaryExpression with ExpectsInputTypes with Stateful 
   """,
   note = "The function is non-deterministic in general case.")
 // scalastyle:on line.size.limit
-case class Rand(child: Expression) extends RDG {
+case class Rand(randomSeed: Option[Long]) extends RDG {
 
-  def this() = this(Literal(Utils.random.nextLong(), LongType))
+  // Random seed as a catalyst expression.
+  def this(input: Expression) = this(Some(RandomSeed.inputArgToSeed(input)))
+
+  // Default constructor. Random seed will be decided during analysis.
+  def this() = this(None)
 
   override protected def evalInternal(input: InternalRow): Double = rng.nextDouble()
 
@@ -82,17 +106,17 @@ case class Rand(child: Expression) extends RDG {
     val className = classOf[XORShiftRandom].getName
     val rngTerm = ctx.addMutableState(className, "rng")
     ctx.addPartitionInitializationStatement(
-      s"$rngTerm = new $className(${seed}L + partitionIndex);")
+      s"$rngTerm = new $className(${randomSeed.get}L + partitionIndex);")
     ev.copy(code = code"""
       final ${CodeGenerator.javaType(dataType)} ${ev.value} = $rngTerm.nextDouble();""",
       isNull = FalseLiteral)
   }
 
-  override def freshCopy(): Rand = Rand(child)
+  override def freshCopy(): Rand = Rand(randomSeed)
 }
 
 object Rand {
-  def apply(seed: Long): Rand = Rand(Literal(seed, LongType))
+  def apply(seed: Long): Rand = Rand(Some(seed))
 }
 
 /** Generate a random column with i.i.d. values drawn from the standard normal distribution. */
@@ -110,9 +134,13 @@ object Rand {
   """,
   note = "The function is non-deterministic in general case.")
 // scalastyle:on line.size.limit
-case class Randn(child: Expression) extends RDG {
+case class Randn(randomSeed: Option[Long]) extends RDG {
 
-  def this() = this(Literal(Utils.random.nextLong(), LongType))
+  // Random seed as a catalyst expression.
+  def this(input: Expression) = this(Some(RandomSeed.inputArgToSeed(input)))
+
+  // Default constructor. Random seed will be decided during analysis.
+  def this() = this(None)
 
   override protected def evalInternal(input: InternalRow): Double = rng.nextGaussian()
 
@@ -120,15 +148,15 @@ case class Randn(child: Expression) extends RDG {
     val className = classOf[XORShiftRandom].getName
     val rngTerm = ctx.addMutableState(className, "rng")
     ctx.addPartitionInitializationStatement(
-      s"$rngTerm = new $className(${seed}L + partitionIndex);")
+      s"$rngTerm = new $className(${randomSeed.get}L + partitionIndex);")
     ev.copy(code = code"""
       final ${CodeGenerator.javaType(dataType)} ${ev.value} = $rngTerm.nextGaussian();""",
       isNull = FalseLiteral)
   }
 
-  override def freshCopy(): Randn = Randn(child)
+  override def freshCopy(): Randn = Randn(randomSeed)
 }
 
 object Randn {
-  def apply(seed: Long): Randn = Randn(Literal(seed, LongType))
+  def apply(seed: Long): Randn = Randn(Some(seed))
 }

@@ -18,6 +18,7 @@
 package org.apache.spark.sql.catalyst.expressions
 
 import scala.reflect.ClassTag
+import scala.util.Random
 
 import org.scalacheck.Gen
 import org.scalactic.TripleEqualsSupport.Spread
@@ -411,5 +412,40 @@ trait ExpressionEvalHelper extends GeneratorDrivenPropertyChecks with PlanTestBa
     } else {
       diff < eps * math.min(absX, absY)
     }
+  }
+
+
+  /**
+   * Tests the behavior of random expressions which use random seed to determine results.
+   */
+  def testRandomSeedExpr(genExpr: Option[Long] => Expression) {
+    val r = new Random()
+    val seed1 = Some(r.nextLong())
+    val seed2 = Some(r.nextLong())
+
+    assert(genExpr(None).resolved == false)
+
+    // Given the same random seed, two random expressions should produce the same results.
+    assert(evaluateWithoutCodegen(genExpr(seed1)) === evaluateWithoutCodegen(genExpr(seed1)))
+    assert(evaluateWithGeneratedMutableProjection(genExpr(seed1)) ===
+      evaluateWithGeneratedMutableProjection(genExpr(seed1)))
+    assert(evaluateWithUnsafeProjection(genExpr(seed1)) ===
+      evaluateWithUnsafeProjection(genExpr(seed1)))
+
+    // Given different random seeds, two random expressions should produce different results.
+    assert(evaluateWithoutCodegen(genExpr(seed1)) !== evaluateWithoutCodegen(genExpr(seed2)))
+    assert(evaluateWithGeneratedMutableProjection(genExpr(seed1)) !==
+      evaluateWithGeneratedMutableProjection(genExpr(seed2)))
+    assert(evaluateWithUnsafeProjection(genExpr(seed1)) !==
+      evaluateWithUnsafeProjection(genExpr(seed2)))
+
+    val randExpr = genExpr(seed1)
+    assert(randExpr.fastEquals(randExpr))
+    assert(!randExpr.fastEquals(genExpr(seed1)))
+    randExpr match {
+      case s: Stateful => assert(!randExpr.fastEquals(s.freshCopy()))
+      case _ =>
+    }
+    assert(!randExpr.fastEquals(genExpr(seed2)))
   }
 }
