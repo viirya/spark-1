@@ -1282,6 +1282,39 @@ abstract class RDD[T: ClassTag](
   }
 
   /**
+   * Return the number of elements in the RDD and a new RDD that has exactly numPartitions
+   * partitions.
+   *
+   * Can increase or decrease the level of parallelism in this RDD. Internally, this uses
+   * a shuffle to redistribute data.
+   *
+   * If you are decreasing the number of partitions in this RDD, consider using `coalesce`,
+   * which can avoid performing a shuffle.
+   *
+   * TODO Fix the Shuffle+Repartition data loss issue described in SPARK-23207.
+   */
+  def countAndRepartition(numPartitions: Int)
+      (implicit ord: Ordering[T] = null): (Long, RDD[T]) = withScope {
+
+    val coalescedRDD = coalesce(numPartitions, shuffle = true)
+    val shuffledRDD = coalescedRDD.parent(0).asInstanceOf[CoalescedRDD[T]]
+      .prev.asInstanceOf[ShuffledRDD[Int, T, T]]
+    val shuffleDependency = shuffledRDD.getDependencies(0) match {
+      case s: ShuffleDependency[_, T, T] => s
+      case other => throw new SparkException(s"ShuffledRDD should not use dependency: $other")
+    }
+    val numberOfOutput: Seq[Long] = if (shuffleDependency.rdd.getNumPartitions != 0) {
+      // submitMapStage does not accept RDD with 0 partition.
+      // So, we will not submit this dependency.
+      val submittedStageFuture = sparkContext.submitMapStage(shuffleDependency)
+      submittedStageFuture.get().recordsByPartitionId.toSeq
+    } else {
+      Nil
+    }
+    (numberOfOutput.sum, coalescedRDD)
+  }
+
+  /**
    * Zips this RDD with its element indices. The ordering is first based on the partition index
    * and then the ordering of items within each partition. So the first item in the first
    * partition gets index 0, and the last item in the last partition receives the largest index.

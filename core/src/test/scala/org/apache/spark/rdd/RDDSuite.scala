@@ -336,6 +336,31 @@ class RDDSuite extends SparkFunSuite with SharedSparkContext {
     assert(repartitioned2.collect().toSet === (1 to 1000).toSet)
   }
 
+  test("count repartitioned RDDs") {
+    val data = sc.parallelize(1 to 1000, 10)
+
+    intercept[IllegalArgumentException] {
+      data.repartition(0)
+    }
+
+    val (count1, repartitioned1) = data.countAndRepartition(2)
+    assert(repartitioned1.partitions.size == 2)
+    assert(count1 == 1000)
+
+    val partitions1 = repartitioned1.glom().collect()
+    assert(partitions1(0).length > 0)
+    assert(partitions1(1).length > 0)
+    assert(repartitioned1.collect().toSet === (1 to 1000).toSet)
+
+    val (count2, repartitioned2) = data.countAndRepartition(20)
+    assert(repartitioned2.partitions.size == 20)
+    assert(count2 == 1000)
+    val partitions2 = repartitioned2.glom().collect()
+    assert(partitions2(0).length > 0)
+    assert(partitions2(19).length > 0)
+    assert(repartitioned2.collect().toSet === (1 to 1000).toSet)
+  }
+
   test("repartitioned RDDs perform load balancing") {
     // Coalesce partitions
     val input = Array.fill(1000)(1)
