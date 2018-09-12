@@ -17,6 +17,8 @@
 
 package org.apache.spark.sql.hive.execution
 
+import java.util.Locale
+
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -28,13 +30,16 @@ import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorUtils.Object
 import org.apache.hadoop.io.Writable
 import org.apache.hadoop.mapred.{JobConf, Reporter}
 import org.apache.hadoop.mapreduce.{Job, TaskAttemptContext}
+import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.{FileFormat, OutputWriter, OutputWriterFactory}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetWriteSupport
 import org.apache.spark.sql.hive.{HiveInspectors, HiveTableUtil}
 import org.apache.spark.sql.hive.HiveShim.{ShimFileSinkDesc => FileSinkDesc}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableJobConf
@@ -100,7 +105,7 @@ class HiveFileFormat(fileSinkConf: FileSinkDesc)
           path: String,
           dataSchema: StructType,
           context: TaskAttemptContext): OutputWriter = {
-        new HiveOutputWriter(path, fileSinkConfSer, jobConf.value, dataSchema)
+        new HiveOutputWriter(path, fileSinkConfSer, jobConf.value, dataSchema, context)
       }
     }
   }
@@ -110,7 +115,8 @@ class HiveOutputWriter(
     path: String,
     fileSinkConf: FileSinkDesc,
     jobConf: JobConf,
-    dataSchema: StructType) extends OutputWriter with HiveInspectors {
+    dataSchema: StructType,
+    context: TaskAttemptContext) extends OutputWriter with HiveInspectors {
 
   private def tableDesc = fileSinkConf.getTableInfo
 
@@ -120,7 +126,33 @@ class HiveOutputWriter(
     serializer
   }
 
-  private val hiveWriter = HiveFileFormatUtils.getHiveRecordWriter(
+  private val isParquetOutputFormat = {
+    tableDesc.getOutputFileFormatClassName.toLowerCase(Locale.ROOT) match {
+      case formatName if formatName.endsWith("parquetoutputformat") => true
+      case _ => false
+    }
+  }
+
+  // SPARK-25271: When write to parquet table, we don't use parquet record writer
+  // from Hive to avoid known issue of it.
+  private lazy val parquetWriter = {
+    val jobConf = context.getConfiguration
+    jobConf.set(
+      SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key,
+      SQLConf.get.writeLegacyParquetFormat.toString)
+    jobConf.set(
+      SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+      SQLConf.get.parquetOutputTimestampType.toString)
+    ParquetWriteSupport.setSchema(dataSchema, jobConf)
+
+    new ParquetOutputFormat[InternalRow](new ParquetWriteSupport()) {
+      override def getDefaultWorkFile(context: TaskAttemptContext, extension: String): Path = {
+        new Path(path)
+      }
+    }.getRecordWriter(context)
+  }
+
+  private lazy val hiveWriter = HiveFileFormatUtils.getHiveRecordWriter(
     jobConf,
     tableDesc,
     serializer.getSerializedClass,
@@ -141,16 +173,24 @@ class HiveOutputWriter(
   private val outputData = new Array[Any](fieldOIs.length)
 
   override def write(row: InternalRow): Unit = {
-    var i = 0
-    while (i < fieldOIs.length) {
-      outputData(i) = if (row.isNullAt(i)) null else wrappers(i)(row.get(i, dataTypes(i)))
-      i += 1
+    if (isParquetOutputFormat) {
+      parquetWriter.write(null, row)
+    } else {
+      var i = 0
+      while (i < fieldOIs.length) {
+        outputData(i) = if (row.isNullAt(i)) null else wrappers(i)(row.get(i, dataTypes(i)))
+        i += 1
+      }
+      hiveWriter.write(serializer.serialize(outputData, standardOI))
     }
-    hiveWriter.write(serializer.serialize(outputData, standardOI))
   }
 
   override def close(): Unit = {
-    // Seems the boolean value passed into close does not matter.
-    hiveWriter.close(false)
+    if (isParquetOutputFormat) {
+      parquetWriter.close(context)
+    } else {
+      // Seems the boolean value passed into close does not matter.
+      hiveWriter.close(false)
+    }
   }
 }
