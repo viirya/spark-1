@@ -133,7 +133,12 @@ object InternalRow {
     case LongType | TimestampType => (input, ordinal) => input.getLong(ordinal)
     case FloatType => (input, ordinal) => input.getFloat(ordinal)
     case DoubleType => (input, ordinal) => input.getDouble(ordinal)
-    case StringType => (input, ordinal) => input.getUTF8String(ordinal)
+    case StringType => (input, ordinal) =>
+      // SPARK-25378: this is to retain a buggy but backward-compatible behavior:
+      // i.e., ArrayData.toArrayData(Array("a", "b")).toArray[String](StringType).
+      // So we don't use `input.getUTF8String` but call general `get` method.
+      // We should consider to correct this by 3.0.
+      input.get(ordinal, dataType)
     case BinaryType => (input, ordinal) => input.getBinary(ordinal)
     case CalendarIntervalType => (input, ordinal) => input.getInterval(ordinal)
     case t: DecimalType => (input, ordinal) => input.getDecimal(ordinal, t.precision, t.scale)

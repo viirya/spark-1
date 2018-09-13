@@ -140,4 +140,12 @@ class ComplexDataSuite extends SparkFunSuite {
     arraysShouldNotEqual(123.toShort, 123)                   // Short   <-> Int
     arraysShouldNotEqual(123, 123L)                          // Int     <-> Long
   }
+
+  test("SPARK-25378: backward-compatible ArrayData.toArray(StringType)") {
+    // This test is for a buggy but backward-compatible behavior. We can remove it
+    // if we correct the behavior of `toArray` for `StringType`.
+    val array1 = ArrayData.toArrayData(Array("a", "b")).toArray[String](StringType)
+    val array2 = Array("a", "b")
+    assert(array1 === array2)
+  }
 }
