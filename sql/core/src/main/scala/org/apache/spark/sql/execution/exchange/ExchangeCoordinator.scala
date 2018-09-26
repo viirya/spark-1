@@ -22,9 +22,9 @@ import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.{MapOutputStatistics, ShuffleDependency, SimpleFutureAction}
+import org.apache.spark.{ShuffleDependency}
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.{RDD, RDDStatistics}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.{ShuffledRowRDD, SparkPlan}
 
@@ -118,16 +118,16 @@ class ExchangeCoordinator(
 
   /**
    * Estimates partition start indices for post-shuffle partitions based on
-   * mapOutputStatistics provided by all pre-shuffle stages.
+   * the number of bytes per partitions provided by all pre-shuffle stages.
    */
   def estimatePartitionStartIndices(
-      mapOutputStatistics: Array[MapOutputStatistics]): Array[Int] = {
+      bytesByPartitionIdPerPart: Array[Array[Long]]): Array[Int] = {
     // If minNumPostShufflePartitions is defined, it is possible that we need to use a
     // value less than advisoryTargetPostShuffleInputSize as the target input size of
     // a post shuffle task.
     val targetPostShuffleInputSize = minNumPostShufflePartitions match {
       case Some(numPartitions) =>
-        val totalPostShuffleInputSize = mapOutputStatistics.map(_.bytesByPartitionId.sum).sum
+        val totalPostShuffleInputSize = bytesByPartitionIdPerPart.map(_.sum).sum
         // The max at here is to make sure that when we have an empty table, we
         // only have a single post-shuffle partition.
         // There is no particular reason that we pick 16. We just need a number to
@@ -145,7 +145,7 @@ class ExchangeCoordinator(
 
     // Make sure we do get the same number of pre-shuffle partitions for those stages.
     val distinctNumPreShufflePartitions =
-      mapOutputStatistics.map(stats => stats.bytesByPartitionId.length).distinct
+      bytesByPartitionIdPerPart.map(stats => stats.length).distinct
     // The reason that we are expecting a single value of the number of pre-shuffle partitions
     // is that when we add Exchanges, we set the number of pre-shuffle partitions
     // (i.e. map output partitions) using a static setting, which is the value of
@@ -170,8 +170,8 @@ class ExchangeCoordinator(
       // Then, we add the total size to postShuffleInputSize.
       var nextShuffleInputSize = 0L
       var j = 0
-      while (j < mapOutputStatistics.length) {
-        nextShuffleInputSize += mapOutputStatistics(j).bytesByPartitionId(i)
+      while (j < bytesByPartitionIdPerPart.length) {
+        nextShuffleInputSize += bytesByPartitionIdPerPart(j)(i)
         j += 1
       }
 
@@ -203,43 +203,41 @@ class ExchangeCoordinator(
 
       val newPostShuffleRDDs = new JHashMap[ShuffleExchangeExec, ShuffledRowRDD](numExchanges)
 
-      // Submit all map stages
+      // Go to collect all statistics of exchanges.
       val shuffleDependencies = ArrayBuffer[ShuffleDependency[Int, InternalRow, InternalRow]]()
-      val submittedStageFutures = ArrayBuffer[SimpleFutureAction[MapOutputStatistics]]()
+      val exchangeStatistics = ArrayBuffer[RDDStatistics]()
       var i = 0
       while (i < numExchanges) {
         val exchange = exchanges(i)
         val shuffleDependency = exchange.prepareShuffleDependency()
         shuffleDependencies += shuffleDependency
-        if (shuffleDependency.rdd.partitions.length != 0) {
-          // submitMapStage does not accept RDD with 0 partition.
-          // So, we will not submit this dependency.
-          submittedStageFutures +=
-            exchange.sqlContext.sparkContext.submitMapStage(shuffleDependency)
-        }
+        RDDStatistics.getRDDStatistics(exchange.sqlContext.sparkContext,
+          shuffleDependency).map { stats =>
+            exchangeStatistics += stats
+          }
         i += 1
       }
 
-      // Wait for the finishes of those submitted map stages.
-      val mapOutputStatistics = new Array[MapOutputStatistics](submittedStageFutures.length)
+      // Wait for the finishes of collecting those statistics.
+      val bytesByPartitionIdPerPart = new Array[Array[Long]](exchangeStatistics.length)
       var j = 0
-      while (j < submittedStageFutures.length) {
-        // This call is a blocking call. If the stage has not finished, we will wait at here.
-        mapOutputStatistics(j) = submittedStageFutures(j).get()
+      while (j < exchangeStatistics.length) {
+        // This call is a blocking call. If the collecting has not finished, we will wait at here.
+        bytesByPartitionIdPerPart(j) = exchangeStatistics(j).getBytesByPartitionId()
         j += 1
       }
 
-      // If we have mapOutputStatistics.length < numExchange, it is because we do not submit
+      // If we have bytesByPartitionIdPerPart.length < numExchange, it is because we do not submit
       // a stage when the number of partitions of this dependency is 0.
-      assert(mapOutputStatistics.length <= numExchanges)
+      assert(bytesByPartitionIdPerPart.length <= numExchanges)
 
       // Now, we estimate partitionStartIndices. partitionStartIndices.length will be the
       // number of post-shuffle partitions.
       val partitionStartIndices =
-        if (mapOutputStatistics.length == 0) {
+        if (bytesByPartitionIdPerPart.length == 0) {
           Array.empty[Int]
         } else {
-          estimatePartitionStartIndices(mapOutputStatistics)
+          estimatePartitionStartIndices(bytesByPartitionIdPerPart)
         }
 
       var k = 0

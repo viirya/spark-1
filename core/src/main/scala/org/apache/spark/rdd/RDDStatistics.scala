@@ -29,15 +29,56 @@ import org.apache.spark.util.MutablePair
 abstract class RDDStatistics {
   /**
    * Returns the number of bytes per partitions. Returned array enabling access the number of
-   * bytes by partition id.
+   * bytes by partition id. This is a blocking call to retrieve the statistics.
    */
   def getBytesByPartitionId: Array[Long]
+}
+
+object RDDStatistics {
+  /**
+   * Retrieves statistics back to driver for a given shuffle dependency. This will submit
+   * a shuffle map stage immediately.
+   *
+   * @param dependency The given `ShuffleDependency` used to submit a shuffle map stage.
+   */
+  def getRDDStatistics(sparkContext: SparkContext,
+      dependency: ShuffleDependency[_, _, _]): Option[RDDStatistics] = {
+    if (dependency.rdd.partitions.length != 0) {
+      // submitMapStage does not accept RDD with 0 partition.
+      // So, we will not submit this dependency.
+      Some(new RDDStatisticsForShuffle(sparkContext, dependency))
+    } else {
+      None
+    }
+  }
+
+  /**
+   * Retrieves statistics back to driver for an RDD. This will submit a shuffle map stage
+   * immediately.
+   *
+   * Notice: This won't change the data partitions of the given RDD.
+   *
+   * @param rdd        The RDD object to retrieve data statistics from.
+   * @param serializer The serializer to use, to use. If not set explicitly then the default
+   *                   serializer, as specified by `spark.serializer` config option, will be used.
+   */
+  def getRDDStatistics[T: ClassTag](sparkContext: SparkContext,
+      rdd: RDD[T], serializer: Serializer = SparkEnv.get.serializer): Option[RDDStatistics] = {
+    if (rdd.getNumPartitions != 0) {
+      // submitMapStage does not accept RDD with 0 partition.
+      // So, we will not submit this dependency.
+      Some(new RDDDataStatistics[T](sparkContext, rdd, serializer))
+    } else {
+      None
+    }
+  }
 }
 
 /**
  * Retrieves statistics back to driver for an RDD. Specifically, this performs a shuffle map stage
  * submission via `DAGScheduler` (see `DAGScheduler.submitMapStage` API) and collects statistics
- * about the outputs of the given RDD.
+ * about the outputs of the given RDD. This will submit a shuffle map stage immediately when
+ * initializing this object.
  *
  * Notice: This won't change the data partitions of the given RDD.
  *
@@ -46,8 +87,7 @@ abstract class RDDStatistics {
  *
  * @param rdd        The RDD object to retrieve data statistics from.
  * @param serializer The serializer to use, to use. If not set explicitly then the default
- *                   serializer,
- *                   as specified by `spark.serializer` config option, will be used.
+ *                   serializer, as specified by `spark.serializer` config option, will be used.
  */
 class RDDDataStatistics[T: ClassTag](val sparkContext: SparkContext,
     val rdd: RDD[T], val serializer: Serializer = SparkEnv.get.serializer) extends RDDStatistics {
@@ -61,34 +101,37 @@ class RDDDataStatistics[T: ClassTag](val sparkContext: SparkContext,
     iter.map { record => mutablePair.update(partitionId, record) }
   })
 
-  private lazy val dependency =
+  private val dependency =
     new ShuffleDependency[Int, T, T](
       rddWithPartitionIds,
       new PartitionIdPassthrough(rdd.getNumPartitions),
       serializer)
 
-  private lazy val mapOutputStatistics: MapOutputStatistics = {
-    val submittedStageFuture = sparkContext.submitMapStage(dependency)
-    submittedStageFuture.get()
-  }
+  private val submittedStageFuture = sparkContext.submitMapStage(dependency)
 
-  def getBytesByPartitionId: Array[Long] = mapOutputStatistics.bytesByPartitionId
+  private lazy val mapOutputStatistics: MapOutputStatistics =
+    submittedStageFuture.get()
+
+  override def getBytesByPartitionId: Array[Long] =
+    mapOutputStatistics.bytesByPartitionId
 
   def getShuffleDependency: ShuffleDependency[Int, T, T] = dependency
 }
 
 /**
- * Retrieves statistics back to driver for a given shuffle dependency.
+ * Retrieves statistics back to driver for a given shuffle dependency. This will submit
+ * a shuffle map stage immediately when initializing this object.
  *
  * @param dependency The given `ShuffleDependency` used to submit a shuffle map stage.
  */
 class RDDStatisticsForShuffle(val sparkContext: SparkContext,
-    val dependency: ShuffleDependency[_, _, _]) {
+    val dependency: ShuffleDependency[_, _, _]) extends RDDStatistics {
 
-  private lazy val mapOutputStatistics: MapOutputStatistics = {
-    val submittedStageFuture = sparkContext.submitMapStage(dependency)
+  private val submittedStageFuture = sparkContext.submitMapStage(dependency)
+
+  private lazy val mapOutputStatistics: MapOutputStatistics =
     submittedStageFuture.get()
-  }
 
-  def getBytesByPartitionId: Array[Long] = mapOutputStatistics.bytesByPartitionId
+  override def getBytesByPartitionId: Array[Long] =
+    mapOutputStatistics.bytesByPartitionId
 }
