@@ -223,7 +223,7 @@ class ExchangeCoordinator(
       var j = 0
       while (j < exchangeStatistics.length) {
         // This call is a blocking call. If the collecting has not finished, we will wait at here.
-        bytesByPartitionIdPerPart(j) = exchangeStatistics(j).getBytesByPartitionId()
+        bytesByPartitionIdPerPart(j) = exchangeStatistics(j).getBytesByPartitionId
         j += 1
       }
 
