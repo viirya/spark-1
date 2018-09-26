@@ -27,6 +27,10 @@ import org.apache.spark.util.MutablePair
  * An abstraction used to retrieve statistics from an RDD.
  */
 abstract class RDDStatistics {
+  /**
+   * Returns the number of bytes per partitions. Returned array enabling access the number of
+   * bytes by partition id.
+   */
   def getBytesByPartitionId: Array[Long]
 }
 
