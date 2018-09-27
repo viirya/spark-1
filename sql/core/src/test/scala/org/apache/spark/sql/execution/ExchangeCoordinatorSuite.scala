@@ -19,7 +19,7 @@ package org.apache.spark.sql.execution
 
 import org.scalatest.BeforeAndAfterAll
 
-import org.apache.spark.{MapOutputStatistics, SparkConf, SparkFunSuite}
+import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.exchange.{ExchangeCoordinator, ReusedExchangeExec, ShuffleExchangeExec}
 import org.apache.spark.sql.functions._
@@ -53,12 +53,8 @@ class ExchangeCoordinatorSuite extends SparkFunSuite with BeforeAndAfterAll {
       coordinator: ExchangeCoordinator,
       bytesByPartitionIdArray: Array[Array[Long]],
       expectedPartitionStartIndices: Array[Int]): Unit = {
-    val mapOutputStatistics = bytesByPartitionIdArray.zipWithIndex.map {
-      case (bytesByPartitionId, index) =>
-        new MapOutputStatistics(index, bytesByPartitionId)
-    }
     val estimatedPartitionStartIndices =
-      coordinator.estimatePartitionStartIndices(mapOutputStatistics)
+      coordinator.estimatePartitionStartIndices(bytesByPartitionIdArray)
     assert(estimatedPartitionStartIndices === expectedPartitionStartIndices)
   }
 
@@ -117,11 +113,9 @@ class ExchangeCoordinatorSuite extends SparkFunSuite with BeforeAndAfterAll {
       // we should see an assertion error.
       val bytesByPartitionId1 = Array[Long](0, 0, 0, 0, 0)
       val bytesByPartitionId2 = Array[Long](0, 0, 0, 0, 0, 0)
-      val mapOutputStatistics =
-        Array(
-          new MapOutputStatistics(0, bytesByPartitionId1),
-          new MapOutputStatistics(1, bytesByPartitionId2))
-      intercept[AssertionError](coordinator.estimatePartitionStartIndices(mapOutputStatistics))
+      val bytesByPartitionIdArray =
+        Array(bytesByPartitionId1, bytesByPartitionId2)
+      intercept[AssertionError](coordinator.estimatePartitionStartIndices(bytesByPartitionIdArray))
     }
 
     {

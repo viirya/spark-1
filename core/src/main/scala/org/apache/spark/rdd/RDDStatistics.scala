@@ -21,12 +21,11 @@ import scala.reflect.ClassTag
 
 import org.apache.spark._
 import org.apache.spark.serializer.Serializer
-import org.apache.spark.util.MutablePair
 
 /**
- * An abstraction used to retrieve statistics from an RDD.
+ * An internal abstraction used to retrieve statistics from an RDD.
  */
-abstract class RDDStatistics {
+private[spark] abstract class RDDStatistics {
   /**
    * Returns the number of bytes per partitions. Returned array enabling access the number of
    * bytes by partition id. This is a blocking call to retrieve the statistics.
@@ -34,20 +33,23 @@ abstract class RDDStatistics {
   def getBytesByPartitionId: Array[Long]
 }
 
-object RDDStatistics {
+private[spark] object RDDStatistics {
   /**
    * Retrieves statistics back to driver for a given shuffle dependency. This will submit
    * a shuffle map stage immediately.
+   *
+   * For a shuffle dependency of an RDD with 0 partition, because we can't submit a shuffle
+   * map stage for such RDD, this returns None.
    *
    * @param dependency The given `ShuffleDependency` used to submit a shuffle map stage.
    */
   def getRDDStatistics(sparkContext: SparkContext,
       dependency: ShuffleDependency[_, _, _]): Option[RDDStatistics] = {
     if (dependency.rdd.partitions.length != 0) {
-      // submitMapStage does not accept RDD with 0 partition.
-      // So, we will not submit this dependency.
       Some(new RDDStatisticsForShuffle(sparkContext, dependency))
     } else {
+      // submitMapStage does not accept RDD with 0 partition.
+      // So, we will not submit this dependency.
       None
     }
   }
@@ -56,7 +58,8 @@ object RDDStatistics {
    * Retrieves statistics back to driver for an RDD. This will submit a shuffle map stage
    * immediately.
    *
-   * Notice: This won't change the data partitions of the given RDD.
+   * Because we can't submit a shuffle map stage for an RDD with 0 partition, this returns
+   * None for such input RDD.
    *
    * @param rdd        The RDD object to retrieve data statistics from.
    * @param serializer The serializer to use, to use. If not set explicitly then the default
@@ -65,10 +68,10 @@ object RDDStatistics {
   def getRDDStatistics[T: ClassTag](sparkContext: SparkContext,
       rdd: RDD[T], serializer: Serializer = SparkEnv.get.serializer): Option[RDDStatistics] = {
     if (rdd.getNumPartitions != 0) {
-      // submitMapStage does not accept RDD with 0 partition.
-      // So, we will not submit this dependency.
       Some(new RDDDataStatistics[T](sparkContext, rdd, serializer))
     } else {
+      // submitMapStage does not accept RDD with 0 partition.
+      // So, we will not submit this dependency.
       None
     }
   }
@@ -80,25 +83,27 @@ object RDDStatistics {
  * about the outputs of the given RDD. This will submit a shuffle map stage immediately when
  * initializing this object.
  *
- * Notice: This won't change the data partitions of the given RDD.
+ * Notice: In order to collect statistics from given RDD, this submits a shuffle map stage that
+ * won't change the data partitions of the given RDD, but only write down data into disks with
+ * its original partition index.
  *
  * Notice: For some RDDs from Spark SQL, it is responsible for the caller to do copying of input
  * rows if needed.
  *
  * @param rdd        The RDD object to retrieve data statistics from.
- * @param serializer The serializer to use, to use. If not set explicitly then the default
- *                   serializer, as specified by `spark.serializer` config option, will be used.
+ * @param serializer The serializer to use, to use.
  */
-class RDDDataStatistics[T: ClassTag](val sparkContext: SparkContext,
-    val rdd: RDD[T], val serializer: Serializer = SparkEnv.get.serializer) extends RDDStatistics {
+private[spark] class RDDDataStatistics[T: ClassTag] private[rdd](val sparkContext: SparkContext,
+    val rdd: RDD[T], val serializer: Serializer) extends RDDStatistics {
 
   /**
    * Makes an RDD with tuples of each input record with corresponding partition id.
+   * TODO: Use `MutablePair` if we know we don't need to copy object during shuffle. Please
+   * see `ShuffleExchangeExec.needToCopyObjectsBeforeShuffle`.
    */
   private val rddWithPartitionIds = rdd.mapPartitionsWithIndexInternal((_, iter) => {
     val partitionId = TaskContext.get().partitionId()
-    val mutablePair = new MutablePair[Int, T]()
-    iter.map { record => mutablePair.update(partitionId, record) }
+    iter.map { record => (partitionId, record) }
   })
 
   private val dependency =
@@ -124,7 +129,7 @@ class RDDDataStatistics[T: ClassTag](val sparkContext: SparkContext,
  *
  * @param dependency The given `ShuffleDependency` used to submit a shuffle map stage.
  */
-class RDDStatisticsForShuffle(val sparkContext: SparkContext,
+private[spark] class RDDStatisticsForShuffle private[rdd](val sparkContext: SparkContext,
     val dependency: ShuffleDependency[_, _, _]) extends RDDStatistics {
 
   private val submittedStageFuture = sparkContext.submitMapStage(dependency)
