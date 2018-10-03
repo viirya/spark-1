@@ -23,7 +23,7 @@ import scala.collection.mutable
 protected class AttributeEquals(val a: Attribute) {
   override def hashCode(): Int = a match {
     case ar: AttributeReference => ar.exprId.hashCode()
-    case a => a.hashCode()
+    case _ => a.hashCode()
   }
 
   override def equals(other: Any): Boolean = (a, other.asInstanceOf[AttributeEquals].a) match {

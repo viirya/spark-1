@@ -552,23 +552,23 @@ object ColumnPruning extends Rule[LogicalPlan] {
 
     // Prunes the unused columns from child of `DeserializeToObject`
     case d @ DeserializeToObject(_, _, child) if !child.outputSet.subsetOf(d.references) =>
-      d.copy(child = prunedChild(child, d.references))
+      d.copy(child = prunedTemp(child, d.references))
 
     // Prunes the unused columns from child of Aggregate/Expand/Generate/ScriptTransformation
     case a @ Aggregate(_, _, child) if !child.outputSet.subsetOf(a.references) =>
-      a.copy(child = prunedChild(child, a.references))
+      a.copy(child = prunedTemp(child, a.references))
     case f @ FlatMapGroupsInPandas(_, _, _, child) if !child.outputSet.subsetOf(f.references) =>
-      f.copy(child = prunedChild(child, f.references))
+      f.copy(child = prunedTemp(child, f.references))
     case e @ Expand(_, _, child) if !child.outputSet.subsetOf(e.references) =>
-      e.copy(child = prunedChild(child, e.references))
+      e.copy(child = prunedTemp(child, e.references))
     case s @ ScriptTransformation(_, _, _, child, _)
         if !child.outputSet.subsetOf(s.references) =>
-      s.copy(child = prunedChild(child, s.references))
+      s.copy(child = prunedTemp(child, s.references))
 
     // prune unrequired references
     case p @ Project(_, g: Generate) if p.references != g.outputSet =>
       val requiredAttrs = p.references -- g.producedAttributes ++ g.generator.references
-      val newChild = prunedChild(g.child, requiredAttrs)
+      val newChild = prunedTemp(g.child, requiredAttrs)
       val unrequired = g.generator.references -- p.references
       val unrequiredIndices = newChild.output.zipWithIndex.filter(t => unrequired.contains(t._1))
         .map(_._2)
@@ -576,7 +576,7 @@ object ColumnPruning extends Rule[LogicalPlan] {
 
     // Eliminate unneeded attributes from right side of a Left Existence Join.
     case j @ Join(_, right, LeftExistence(_), _) =>
-      j.copy(right = prunedChild(right, j.references))
+      j.copy(right = prunedTemp(right, j.references))
 
     // all the columns will be used to compare, so we can't prune them
     case p @ Project(_, _: SetOperation) => p
@@ -585,7 +585,7 @@ object ColumnPruning extends Rule[LogicalPlan] {
     case p @ Project(_, u: Union) =>
       if (!u.outputSet.subsetOf(p.references)) {
         val firstChild = u.children.head
-        val newOutput = prunedChild(firstChild, p.references).output
+        val newOutput = prunedTemp(firstChild, p.references).output
         // pruning the columns of all children based on the pruned first child.
         val newChildren = u.children.map { p =>
           val selected = p.output.zipWithIndex.filter { case (a, i) =>
@@ -612,24 +612,85 @@ object ColumnPruning extends Rule[LogicalPlan] {
     // Can't prune the columns on LeafNode
     case p @ Project(_, _: LeafNode) => p
 
-    // for all other logical plans that inherits the output from it's children
-    case p @ Project(_, child) =>
-      val required = child.references ++ p.references
-      if (!child.inputSet.subsetOf(required)) {
-        val newChildren = child.children.map(c => prunedChild(c, required))
-        p.copy(child = child.withNewChildren(newChildren))
-      } else {
-        p
+    // Prunes the unused columns (top level attributes or nested columns)
+    // from the child of a Project
+    case p @ Project(_, child)
+        if canPruneChild(child.inputSet, colRef(p) ++ colRef(child)) =>
+      val pRef = colRef(p)
+      val childRef = colRef(child)
+      val ref = pRef ++ childRef
+      val newChildren = child.children.map(plan => prunedChild(plan, ref))
+      val newProjectList = p.projectList.map {
+        case alias @ Alias(_: GetStructField, _) => alias.toAttribute
+        case e => e
       }
+      Project(newProjectList, child.withNewChildren(newChildren))
+
+//    case p @ Project(_, child) =>
+//      val required = child.references ++ p.references
+//      if (!child.inputSet.subsetOf(required)) {
+//        val newChildren = child.children.map(c => prunedTemp(c, required))
+//        p.copy(child = child.withNewChildren(newChildren))
+//      } else {
+//        p
+//      }
   })
 
-  /** Applies a projection only when the child is producing unnecessary attributes */
-  private def prunedChild(c: LogicalPlan, allReferences: AttributeSet) =
-    if (!c.outputSet.subsetOf(allReferences)) {
-      Project(c.output.filter(allReferences.contains), c)
-    } else {
-      c
+  /**
+   * This is similar to `QueryPlan.references`, but instead of getting the AttributeSet that
+   * only contains the attributes from the top level, this will return a set of referenced
+   * expressions as `Attribute` for top level columns, and `GetStructField` for nested columns.
+   */
+  private def colRef(plan: LogicalPlan): Seq[NamedExpression] = {
+    def getRef(e: Expression): Seq[NamedExpression] = e match {
+      case attr: Attribute => Seq(attr)
+      case alias @ Alias(_: GetStructField, _) => Seq(alias)
+      case e if e.children.nonEmpty => e.children.flatMap(getRef)
+      case _ => Seq.empty[NamedExpression]
     }
+    plan.expressions.flatMap(getRef)
+  }
+
+  /**
+   * In colRef, the expressions can be either Attribute or GetStructField.
+   * Since GetStructField will always have a child Attribute in inputRef, inputRef will be
+   * always superset of GetStructField. As a result, if inputRef is a superset of attributes
+   * in colRef, this implies that we can either remove unnecessary attributes or nested columns
+   * are selected through GetStructField resulting that we can read less data.
+   */
+  private def canPruneChild(inputRef: AttributeSet, colRef: Seq[NamedExpression]): Boolean = {
+    !inputRef.subsetOf(AttributeSet(colRef.filter(_.isInstanceOf[Attribute])))
+  }
+
+  /**
+   * Applies a projection only if unused columns (top level attributes or nested columns)
+   * in child logical plan can be pruned.
+   */
+  private def prunedChild(childPlan: LogicalPlan, colRef: Seq[NamedExpression]): LogicalPlan = {
+    val (requiredAttributes, requiredNestedColumns) = colRef.partition {
+      case _: Attribute => true
+      case Alias(_: GetStructField, _) => false
+      case e => throw new IllegalArgumentException(s"Unsupported data type, ${e.dataType}")
+    }
+
+    val allAttributeRef = AttributeSet(requiredAttributes)
+
+    if (!childPlan.outputSet.subsetOf(allAttributeRef)) {
+      Project(requiredNestedColumns ++ childPlan.output.filter(allAttributeRef.contains), childPlan)
+    } else {
+      childPlan
+    }
+  }
+
+
+  /** Applies a projection only when the child is producing unnecessary attributes */
+  private def prunedTemp(plan: LogicalPlan, allReferences: AttributeSet): LogicalPlan = {
+    if (!plan.outputSet.subsetOf(allReferences)) {
+      Project(plan.output.filter(allReferences.contains), plan)
+    } else {
+      plan
+    }
+  }
 
   /**
    * The Project before Filter is not necessary but conflict with PushPredicatesThroughProject,
@@ -748,7 +809,7 @@ object CollapseWindow extends Rule[LogicalPlan] {
  *   of the child window expression, transpose them.
  */
 object TransposeWindow extends Rule[LogicalPlan] {
-  private def compatibleParititions(ps1 : Seq[Expression], ps2: Seq[Expression]): Boolean = {
+  private def compatiblePartitions(ps1 : Seq[Expression], ps2: Seq[Expression]): Boolean = {
     ps1.length < ps2.length && ps2.take(ps1.length).permutations.exists(ps1.zip(_).forall {
       case (l, r) => l.semanticEquals(r)
     })
@@ -759,7 +820,7 @@ object TransposeWindow extends Rule[LogicalPlan] {
         if w1.references.intersect(w2.windowOutputSet).isEmpty &&
            w1.expressions.forall(_.deterministic) &&
            w2.expressions.forall(_.deterministic) &&
-           compatibleParititions(ps1, ps2) =>
+           compatiblePartitions(ps1, ps2) =>
       Project(w1.output, Window(we2, ps2, os2, Window(we1, ps1, os1, grandChild)))
   }
 }

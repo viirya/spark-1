@@ -85,8 +85,28 @@ class ParquetSchemaPruningSuite
     briefContacts.map { case BriefContact(id, name, address) =>
       BriefContactWithDataPartitionColumn(id, name, address, 2) }
 
+  testSchemaPruning("coalesce and then select a single complex field and a top level field") {
+    val query = sql("select * from contacts")
+      // .select("name.middle", "address")
+      .coalesce(1)
+      .select("name.middle", "address")
+    query.explain(true)
+    query.show(10)
+   // checkScan(query, "struct<name:struct<middle:string>,address:string>")
+    query.printSchema()
+ //   checkAnswer(query.orderBy("id"), Row("X.") :: Row("Y.") :: Row(null) :: Row(null) :: Nil)
+  }
+
   testSchemaPruning("select a single complex field") {
     val query = sql("select name.middle from contacts")
+    checkScan(query, "struct<name:struct<middle:string>>")
+    checkAnswer(query.orderBy("id"), Row("X.") :: Row("Y.") :: Row(null) :: Row(null) :: Nil)
+  }
+
+  testSchemaPruning("limit and then select a single complex field") {
+    val query = sql("select * from contacts")
+      .limit(4)
+      .select("name.middle")
     checkScan(query, "struct<name:struct<middle:string>>")
     checkAnswer(query.orderBy("id"), Row("X.") :: Row("Y.") :: Row(null) :: Row(null) :: Nil)
   }
