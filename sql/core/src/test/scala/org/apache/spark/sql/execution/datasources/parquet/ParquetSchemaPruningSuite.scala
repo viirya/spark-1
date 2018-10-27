@@ -89,12 +89,12 @@ class ParquetSchemaPruningSuite
     val query = sql("select * from contacts")
       // .select("name.middle", "address")
       .coalesce(1)
-      .select("name.middle", "address")
+      .select("name.first", "address")
     query.explain(true)
     query.show(10)
-   // checkScan(query, "struct<name:struct<middle:string>,address:string>")
+    checkScan(query, "struct<name:struct<first:string>,address:string>")
     query.printSchema()
- //   checkAnswer(query.orderBy("id"), Row("X.") :: Row("Y.") :: Row(null) :: Row(null) :: Nil)
+    // checkAnswer(query.orderBy("id"), Row("X.") :: Row("Y.") :: Row(null) :: Row(null) :: Nil)
   }
 
   testSchemaPruning("select a single complex field") {

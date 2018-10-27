@@ -614,17 +614,65 @@ object ColumnPruning extends Rule[LogicalPlan] {
 
     // Prunes the unused columns (top level attributes or nested columns)
     // from the child of a Project
-    case p @ Project(_, child)
-        if canPruneChild(child.inputSet, colRef(p) ++ colRef(child)) =>
-      val pRef = colRef(p)
-      val childRef = colRef(child)
-      val ref = pRef ++ childRef
-      val newChildren = child.children.map(plan => prunedChild(plan, ref))
-      val newProjectList = p.projectList.map {
-        case alias @ Alias(_: GetStructField, _) => alias.toAttribute
-        case e => e
+    case p @ Project(_, child) if !child.isInstanceOf[Project] && !child.isInstanceOf[Filter] =>
+
+      // Collects all `GetStructField` expressions that get fields from child's input attributes.
+      val getStructFields = (collectGetStructFields(p, child.inputSet) ++
+        collectGetStructFields(child, child.inputSet)).distinct
+
+      // Collects all child input attributes that are not targets of any `GetStructField`
+      // expressions.
+      val notGetStructFieldAttrs = AttributeSet(
+        collectAttrsNotInGetStructFields(p, child.inputSet) ++
+        collectAttrsNotInGetStructFields(child, child.inputSet))
+
+      // All child input attributes that are ONLY used as targets of `GetStructField` expressions.
+      // They are not used as top-level attributes in project and child.
+      // For example, if project has project list [a.b, a, c.d], then 'c' is selected here.
+      val onlyGetStructFieldAttrs = AttributeSet(getStructFields) -- notGetStructFieldAttrs
+
+      // Pruning conditions:
+      // 1. Any child input attributes are not in project and
+      //    child's references. (top-level attribute pruning)
+      // 2. There are any child input attributes that are ONLY used as targets of
+      //    `GetStructField` expressions. (nested column pruning)
+      // TODO: Should we write this as two case patterns? Or, can we?
+      val canTopLevelPruning = !child.inputSet.subsetOf(p.references ++ child.references)
+      if (canTopLevelPruning || onlyGetStructFieldAttrs.nonEmpty) {
+        val structFieldMap = getStructFields.map{ e =>
+          e -> Alias(e, e.sql)()
+        }.toMap
+        val aliasedStructFields = structFieldMap.values.toSeq
+
+        val allReferences = (p.references ++ child.references) -- onlyGetStructFieldAttrs
+
+        val newChildren = child.children.map { plan =>
+          // Top-level pruning
+          val topLevelPruned = prunedChild(plan, allReferences)
+
+          if (onlyGetStructFieldAttrs.nonEmpty) {
+            // Nested column pruning
+            topLevelPruned match {
+              case Project(projectList, child) => Project(projectList ++ aliasedStructFields, child)
+              case other => Project(aliasedStructFields, other)
+            }
+          } else {
+            topLevelPruned
+          }
+        }
+        val newProjectList = p.projectList.map { expr =>
+          expr.transform {
+            case g: GetStructField if structFieldMap.contains(g) => structFieldMap(g).toAttribute
+            case e => e
+          }.asInstanceOf[NamedExpression]
+        }
+        val newChild = child.withNewChildren(newChildren).transformExpressions {
+          case g: GetStructField if structFieldMap.contains(g) => structFieldMap(g).toAttribute
+        }
+        Project(newProjectList, newChild)
+      } else {
+        p
       }
-      Project(newProjectList, child.withNewChildren(newChildren))
 
 //    case p @ Project(_, child) =>
 //      val required = child.references ++ p.references
@@ -636,52 +684,42 @@ object ColumnPruning extends Rule[LogicalPlan] {
 //      }
   })
 
+
   /**
-   * This is similar to `QueryPlan.references`, but instead of getting the AttributeSet that
-   * only contains the attributes from the top level, this will return a set of referenced
-   * expressions as `Attribute` for top level columns, and `GetStructField` for nested columns.
+   * Returns all `GetStructField` expressions used in given logical plan.
    */
-  private def colRef(plan: LogicalPlan): Seq[NamedExpression] = {
-    def getRef(e: Expression): Seq[NamedExpression] = e match {
-      case attr: Attribute => Seq(attr)
-      case alias @ Alias(_: GetStructField, _) => Seq(alias)
-      case e if e.children.nonEmpty => e.children.flatMap(getRef)
-      case _ => Seq.empty[NamedExpression]
+  private def collectGetStructFields(plan: LogicalPlan,
+      inputSet: AttributeSet): Seq[GetStructField] = {
+    def getGetStructFields(e: Expression): Seq[GetStructField] = e match {
+      case g @ GetStructField(attr: Attribute, _, _) if inputSet.contains(attr) => Seq(g)
+      case e if e.children.nonEmpty => e.children.flatMap(getGetStructFields)
+      case _ => Seq.empty[GetStructField]
     }
-    plan.expressions.flatMap(getRef)
+    plan.expressions.flatMap(getGetStructFields)
+  }
+
+  private def collectAttrsNotInGetStructFields(plan: LogicalPlan,
+      inputSet: AttributeSet): Seq[Attribute] = {
+    def getAttrs(e: Expression): Seq[Attribute] = e match {
+      case GetStructField(_: Attribute, _, _) => Seq.empty
+      case a: Attribute => Seq(a)
+      case e if e.children.nonEmpty => e.children.flatMap(getAttrs)
+      case _ => Seq.empty
+    }
+    plan.expressions.flatMap(getAttrs)
   }
 
   /**
-   * In colRef, the expressions can be either Attribute or GetStructField.
-   * Since GetStructField will always have a child Attribute in inputRef, inputRef will be
-   * always superset of GetStructField. As a result, if inputRef is a superset of attributes
-   * in colRef, this implies that we can either remove unnecessary attributes or nested columns
-   * are selected through GetStructField resulting that we can read less data.
-   */
-  private def canPruneChild(inputRef: AttributeSet, colRef: Seq[NamedExpression]): Boolean = {
-    !inputRef.subsetOf(AttributeSet(colRef.filter(_.isInstanceOf[Attribute])))
-  }
-
-  /**
-   * Applies a projection only if unused columns (top level attributes or nested columns)
+   * Applies a projection only if unused columns (top level attributes)
    * in child logical plan can be pruned.
    */
-  private def prunedChild(childPlan: LogicalPlan, colRef: Seq[NamedExpression]): LogicalPlan = {
-    val (requiredAttributes, requiredNestedColumns) = colRef.partition {
-      case _: Attribute => true
-      case Alias(_: GetStructField, _) => false
-      case e => throw new IllegalArgumentException(s"Unsupported data type, ${e.dataType}")
-    }
-
-    val allAttributeRef = AttributeSet(requiredAttributes)
-
-    if (!childPlan.outputSet.subsetOf(allAttributeRef)) {
-      Project(requiredNestedColumns ++ childPlan.output.filter(allAttributeRef.contains), childPlan)
+  private def prunedChild(childPlan: LogicalPlan, attributeSet: AttributeSet): LogicalPlan = {
+    if (!childPlan.outputSet.subsetOf(attributeSet)) {
+      Project(childPlan.output.filter(attributeSet.contains), childPlan)
     } else {
       childPlan
     }
   }
-
 
   /** Applies a projection only when the child is producing unnecessary attributes */
   private def prunedTemp(plan: LogicalPlan, allReferences: AttributeSet): LogicalPlan = {
