@@ -216,6 +216,25 @@ object ReorderAssociativeOperator extends Rule[LogicalPlan] {
  *    [[InSet (value, HashSet[Literal])]] which is much faster.
  */
 object OptimizeIn extends Rule[LogicalPlan] {
+  // If passed-in expression is an Attribute which has min and max column statistics.
+  private def isAttrWithMinMaxStats(expr: Expression, plan: LogicalPlan): Boolean = expr match {
+    case a: Attribute =>
+      plan.stats.attributeStats.get(a).map(_.hasMinMaxStats).getOrElse(false)
+    case _ => false
+  }
+
+  // Filtering out the literals falling out the min/max range.
+  private def filterLiteralsOutOfRange(literals: Seq[Literal], ordering: Ordering[Any], min: Any,
+      max: Any): Seq[Literal] = {
+    literals.filter { literal =>
+      if (literal.value == null) {
+        true
+      } else {
+        ordering.gteq(literal.value, min) && ordering.lteq(literal.value, max)
+      }
+    }
+  }
+
   def apply(plan: LogicalPlan): LogicalPlan = plan transform {
     case q: LogicalPlan => q transformExpressionsDown {
       case In(v, list) if list.isEmpty =>
@@ -223,7 +242,14 @@ object OptimizeIn extends Rule[LogicalPlan] {
         // to FalseLiteral which is tested in OptimizeInSuite.scala
         If(IsNotNull(v), FalseLiteral, Literal(null, BooleanType))
       case expr @ In(v, list) if expr.inSetConvertible =>
-        val newList = ExpressionSet(list).toSeq
+        val newList = if (isAttrWithMinMaxStats(v, q)) {
+          val colStat = plan.stats.attributeStats(v.asInstanceOf[Attribute])
+          val filteredList = filterLiteralsOutOfRange(list.asInstanceOf[Seq[Literal]],
+            expr.ordering, colStat.min.get, colStat.max.get)
+          ExpressionSet(filteredList).toSeq
+        } else {
+          ExpressionSet(list).toSeq
+        }
         if (newList.length == 1
           // TODO: `EqualTo` for structural types are not working. Until SPARK-24443 is addressed,
           // TODO: we exclude them in this rule.
