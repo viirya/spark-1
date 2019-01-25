@@ -23,6 +23,7 @@ import java.sql.{Date, Timestamp}
 import org.apache.spark.{SparkException, TaskContext}
 import org.apache.spark.sql.catalyst.ScroogeLikeExample
 import org.apache.spark.sql.catalyst.encoders.{OuterScopes, RowEncoder}
+import org.apache.spark.sql.catalyst.expressions.CreateNamedStruct
 import org.apache.spark.sql.catalyst.plans.{LeftAnti, LeftSemi}
 import org.apache.spark.sql.catalyst.plans.logical.SerializeFromObject
 import org.apache.spark.sql.catalyst.util.sideBySide
@@ -1670,7 +1671,7 @@ class DatasetSuite extends QueryTest with SharedSQLContext {
     checkAnswer(inputDF.except(exceptDF), Seq(Row("1", null)))
   }
 
-  test("SPARK-26619: Prune the unused serializers from SerializeFromObjec") {
+  test("SPARK-26619: Prune the unused serializers from SerializeFromObject") {
     val data = Seq(("a", 1), ("b", 2), ("c", 3))
     val ds = data.toDS().map(t => (t._1, t._2 + 1)).select("_1")
     val serializer = ds.queryExecution.optimizedPlan.collect {
@@ -1678,6 +1679,36 @@ class DatasetSuite extends QueryTest with SharedSQLContext {
     }.head
     assert(serializer.serializer.size == 1)
     checkAnswer(ds, Seq(Row("a"), Row("b"), Row("c")))
+  }
+
+  test("SPARK-:Prune nested serializers") {
+    def testSerializer(df: DataFrame, fieldName: String): Unit = {
+      val serializer = df.queryExecution.optimizedPlan.collect {
+        case s: SerializeFromObject => s
+      }.head
+      assert(serializer.serializer.size == 1)
+
+      val structs = serializer.serializer(0).collect {
+        case c: CreateNamedStruct => c
+      }
+      assert(structs.size == 1)
+      assert(structs(0).valExprs.size == 1)
+      assert(structs(0).names(0).toString == fieldName)
+    }
+    withSQLConf(SQLConf.SERIALIZER_NESTED_SCHEMA_PRUNING_ENABLED.key -> "true") {
+      val data = Seq((("a", 1), 1), (("b", 2), 2), (("c", 3), 3))
+      val df1 = data.toDS().map(t => (t._1, t._2 + 1)).select("_1._1")
+      testSerializer(df1, "_1")
+      checkAnswer(df1, Seq(Row("a"), Row("b"), Row("c")))
+      val df2 = data.toDS().map(t => (t._1, t._2 + 1)).select("_1._2")
+      testSerializer(df2, "_2")
+      checkAnswer(df2, Seq(Row(1), Row(2), Row(3)))
+
+      val arrayData = Seq((Seq(("a", 1), ("b", 2)), 1), (Seq(("c", 3), ("d", 4)), 2))
+      val df3 = arrayData.toDS().map(t => (t._1, t._2 + 1)).select("_1._1")
+      testSerializer(df3, "_1")
+      checkAnswer(df3, Seq(Row(Seq("a", "b")), Row(Seq("c", "d"))))
+    }
   }
 
   test("SPARK-26706: Fix Cast.mayTruncate for bytes") {
