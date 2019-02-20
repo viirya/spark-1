@@ -159,6 +159,8 @@ class OrcFileFormat
       }
     }
 
+    OrcConf.MAPRED_INPUT_SCHEMA.setString(hadoopConf, requiredSchema.catalogString)
+
     val resultSchema = StructType(requiredSchema.fields ++ partitionSchema.fields)
     val sqlConf = sparkSession.sessionState.conf
     val enableVectorizedReader = supportBatch(sparkSession, resultSchema)
@@ -214,6 +216,9 @@ class OrcFileFormat
 
           iter.asInstanceOf[Iterator[InternalRow]]
         } else {
+          println(s"dataSchema: ${dataSchema.catalogString}")
+          println(s"requiredSchema: ${requiredSchema.catalogString}")
+          OrcConf.MAPRED_INPUT_SCHEMA.setString(conf, requiredSchema.catalogString)
           val orcRecordReader = new OrcInputFormat[OrcStruct]
             .createRecordReader(fileSplit, taskAttemptContext)
           val iter = new RecordReaderIterator[OrcStruct](orcRecordReader)
