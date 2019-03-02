@@ -189,8 +189,6 @@ class OrcFileFormat
         assert(requestedColIds.length == requiredSchema.length,
           "[BUG] requested column IDs do not match required schema")
         val taskConf = new Configuration(conf)
-        taskConf.set(OrcConf.INCLUDE_COLUMNS.getAttribute,
-          requestedColIds.filter(_ != -1).sorted.mkString(","))
 
         val fileSplit = new FileSplit(filePath, file.start, file.length, Array.empty)
         val attemptId = new TaskAttemptID(new TaskID(new JobID(), TaskType.MAP, 0), 0)
@@ -216,9 +214,9 @@ class OrcFileFormat
 
           iter.asInstanceOf[Iterator[InternalRow]]
         } else {
-          println(s"dataSchema: ${dataSchema.catalogString}")
-          println(s"requiredSchema: ${requiredSchema.catalogString}")
-          OrcConf.MAPRED_INPUT_SCHEMA.setString(conf, requiredSchema.catalogString)
+          // println(s"dataSchema: ${dataSchema.catalogString}")
+          // println(s"requiredSchema: ${requiredSchema.catalogString}")
+          // println(s"column ids: ${requestedColIds.mkString(", ")}")
           val orcRecordReader = new OrcInputFormat[OrcStruct]
             .createRecordReader(fileSplit, taskAttemptContext)
           val iter = new RecordReaderIterator[OrcStruct](orcRecordReader)
