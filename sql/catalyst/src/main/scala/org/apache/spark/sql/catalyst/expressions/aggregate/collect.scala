@@ -17,70 +17,9 @@
 
 package org.apache.spark.sql.catalyst.expressions.aggregate
 
-import scala.collection.generic.Growable
-import scala.collection.mutable
-
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.util.GenericArrayData
 import org.apache.spark.sql.types._
-
-/**
- * A base class for collect_list and collect_set aggregate functions.
- *
- * We have to store all the collected elements in memory, and so notice that too many elements
- * can cause GC paused and eventually OutOfMemory Errors.
- */
-abstract class Collect[T <: Growable[Any] with Iterable[Any]] extends TypedImperativeAggregate[T] {
-
-  val child: Expression
-
-  override def children: Seq[Expression] = child :: Nil
-
-  override def nullable: Boolean = true
-
-  override def dataType: DataType = ArrayType(child.dataType)
-
-  // Both `CollectList` and `CollectSet` are non-deterministic since their results depend on the
-  // actual order of input rows.
-  override lazy val deterministic: Boolean = false
-
-  override def update(buffer: T, input: InternalRow): T = {
-    val value = child.eval(input)
-
-    // Do not allow null values. We follow the semantics of Hive's collect_list/collect_set here.
-    // See: org.apache.hadoop.hive.ql.udf.generic.GenericUDAFMkCollectionEvaluator
-    if (value != null) {
-      buffer += InternalRow.copyValue(value)
-    }
-    buffer
-  }
-
-  override def merge(buffer: T, other: T): T = {
-    buffer ++= other
-  }
-
-  override def eval(buffer: T): Any = {
-    new GenericArrayData(buffer.toArray)
-  }
-
-  private lazy val projection = UnsafeProjection.create(
-    Array[DataType](ArrayType(elementType = child.dataType, containsNull = false)))
-  private lazy val row = new UnsafeRow(1)
-
-  override def serialize(obj: T): Array[Byte] = {
-    val array = new GenericArrayData(obj.toArray)
-    projection.apply(InternalRow.apply(array)).getBytes()
-  }
-
-  override def deserialize(bytes: Array[Byte]): T = {
-    val buffer = createAggregationBuffer()
-    row.pointTo(bytes, bytes.length)
-    row.getArray(0).foreach(child.dataType, (_, x: Any) => buffer += x)
-    buffer
-  }
-}
 
 /**
  * Collect a list of elements.
@@ -93,22 +32,38 @@ abstract class Collect[T <: Growable[Any] with Iterable[Any]] extends TypedImper
        [1,2,1]
   """,
   since = "2.0.0")
-case class CollectList(
-    child: Expression,
-    mutableAggBufferOffset: Int = 0,
-    inputAggBufferOffset: Int = 0) extends Collect[mutable.ArrayBuffer[Any]] {
+case class CollectList(child: Expression) extends DeclarativeAggregate {
 
-  def this(child: Expression) = this(child, 0, 0)
+  override def children: Seq[Expression] = child :: Nil
 
-  override def withNewMutableAggBufferOffset(newMutableAggBufferOffset: Int): ImperativeAggregate =
-    copy(mutableAggBufferOffset = newMutableAggBufferOffset)
+  override def nullable: Boolean = false
 
-  override def withNewInputAggBufferOffset(newInputAggBufferOffset: Int): ImperativeAggregate =
-    copy(inputAggBufferOffset = newInputAggBufferOffset)
+  // Return data type.
+  override def dataType: DataType = ArrayType(child.dataType)
 
-  override def createAggregationBuffer(): mutable.ArrayBuffer[Any] = mutable.ArrayBuffer.empty
+  override lazy val deterministic: Boolean = false
 
-  override def prettyName: String = "collect_list"
+  private lazy val collectedList = AttributeReference("collectedList", dataType)()
+
+  override lazy val aggBufferAttributes: Seq[AttributeReference] = collectedList :: Nil
+
+  override lazy val initialValues: Seq[Literal] = Seq(
+    /* collectedList = */ Literal.default(dataType)
+  )
+
+  override lazy val updateExpressions: Seq[Expression] = Seq(
+    /* collectedList = */ If(IsNull(child),
+      collectedList,
+      Concat(Seq(collectedList, CreateArray(Seq(child)))))
+  )
+
+  override lazy val mergeExpressions: Seq[Expression] = {
+    Seq(
+      /* collectedList = */ Concat(Seq(collectedList.left, collectedList.right))
+    )
+  }
+
+  override lazy val evaluateExpression: AttributeReference = collectedList
 }
 
 /**
@@ -122,12 +77,16 @@ case class CollectList(
        [1,2]
   """,
   since = "2.0.0")
-case class CollectSet(
-    child: Expression,
-    mutableAggBufferOffset: Int = 0,
-    inputAggBufferOffset: Int = 0) extends Collect[mutable.HashSet[Any]] {
+case class CollectSet(child: Expression) extends DeclarativeAggregate {
 
-  def this(child: Expression) = this(child, 0, 0)
+  override def children: Seq[Expression] = child :: Nil
+
+  override def nullable: Boolean = false
+
+  // Return data type.
+  override def dataType: DataType = ArrayType(child.dataType)
+
+  override lazy val deterministic: Boolean = false
 
   override def checkInputDataTypes(): TypeCheckResult = {
     if (!child.dataType.existsRecursively(_.isInstanceOf[MapType])) {
@@ -137,13 +96,25 @@ case class CollectSet(
     }
   }
 
-  override def withNewMutableAggBufferOffset(newMutableAggBufferOffset: Int): ImperativeAggregate =
-    copy(mutableAggBufferOffset = newMutableAggBufferOffset)
+  private lazy val collectedSet = AttributeReference("collectedSet", dataType)()
 
-  override def withNewInputAggBufferOffset(newInputAggBufferOffset: Int): ImperativeAggregate =
-    copy(inputAggBufferOffset = newInputAggBufferOffset)
+  override lazy val aggBufferAttributes: Seq[AttributeReference] = collectedSet :: Nil
 
-  override def prettyName: String = "collect_set"
+  override lazy val initialValues: Seq[Literal] = Seq(
+    /* collectedSet = */ Literal.default(dataType)
+  )
 
-  override def createAggregationBuffer(): mutable.HashSet[Any] = mutable.HashSet.empty
+  override lazy val updateExpressions: Seq[Expression] = Seq(
+    /* collectedSet = */ If(IsNull(child),
+      collectedSet,
+      ArrayUnion(collectedSet, CreateArray(Seq(child))))
+  )
+
+  override lazy val mergeExpressions: Seq[Expression] = {
+    Seq(
+      /* collectedSet = */ ArrayUnion(collectedSet.left, collectedSet.right)
+    )
+  }
+
+  override lazy val evaluateExpression: AttributeReference = collectedSet
 }

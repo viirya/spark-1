@@ -604,7 +604,8 @@ class DataFrameAggregateSuite extends QueryTest with SharedSQLContext {
         hashAggDF.collect()
 
         // test case for ObjectHashAggregate and SortAggregate
-        val objHashAggOrSortAggDF = df.groupBy("x").agg(c, collect_list("y"))
+        val objHashAggOrSortAggDF = df.groupBy("x").agg(c,
+          expr("percentile_approx('y', array(0.0, 1.0))"))
         val objHashAggOrSortAggPlan = objHashAggOrSortAggDF.queryExecution.executedPlan
         if (useObjectHashAgg) {
           assert(objHashAggOrSortAggPlan.isInstanceOf[ObjectHashAggregateExec])
@@ -649,7 +650,7 @@ class DataFrameAggregateSuite extends QueryTest with SharedSQLContext {
         .withColumn("d", expr("(a, b, c)"))
         .groupBy("a", "b").agg(collect_list("d").as("e"))
         .withColumn("f", expr("(b, e)"))
-        .groupBy("a").agg(collect_list("f").as("g"))
+        .groupBy("a").agg(expr("percentile_approx('f', array(0.0, 1.0))").as("g"))
       val aggPlan = objHashAggDF.queryExecution.executedPlan
 
       val sortAggPlans = aggPlan.collect {
