@@ -925,17 +925,17 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
     // Precompute the rating dependencies of each partition
     val userPart = new ALSPartitioner(numUserBlocks)
     val itemPart = new ALSPartitioner(numItemBlocks)
-    val blockRatings = partitionRatings(ratings, userPart, itemPart)
-      .persist(intermediateRDDStorageLevel)
+    ratings.persist(intermediateRDDStorageLevel)
+    ratings.count()
+
     val (userInBlocks, userOutBlocks) =
-      makeBlocks("user", blockRatings, userPart, itemPart, intermediateRDDStorageLevel)
+      makeBlocks("user", ratings, userPart, itemPart, intermediateRDDStorageLevel)
     userOutBlocks.count()    // materialize blockRatings and user blocks
-    val swappedBlockRatings = blockRatings.map {
-      case ((userBlockId, itemBlockId), RatingBlock(userIds, itemIds, localRatings)) =>
-        ((itemBlockId, userBlockId), RatingBlock(itemIds, userIds, localRatings))
+    val swappedRatings = ratings.map {
+      case Rating(u, i, r) => Rating(i, u, r)
     }
     val (itemInBlocks, itemOutBlocks) =
-      makeBlocks("item", swappedBlockRatings, itemPart, userPart, intermediateRDDStorageLevel)
+      makeBlocks("item", swappedRatings, itemPart, userPart, intermediateRDDStorageLevel)
     itemOutBlocks.count()    // materialize item blocks
 
     // Encoders for storing each user/item's partition ID and index within its partition using a
@@ -1035,7 +1035,7 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
       userOutBlocks.unpersist()
       itemInBlocks.unpersist()
       itemOutBlocks.unpersist()
-      blockRatings.unpersist()
+      ratings.unpersist()
     }
     (userIdAndFactors, itemIdAndFactors)
   }
@@ -1550,55 +1550,77 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
    * Creates in-blocks and out-blocks from rating blocks.
    *
    * @param prefix prefix for in/out-block names
-   * @param ratingBlocks rating blocks
    * @param srcPart partitioner for src IDs
    * @param dstPart partitioner for dst IDs
    * @return (in-blocks, out-blocks)
    */
   private def makeBlocks[ID: ClassTag](
       prefix: String,
-      ratingBlocks: RDD[((Int, Int), RatingBlock[ID])],
+      ratings: RDD[Rating[ID]],
       srcPart: Partitioner,
       dstPart: Partitioner,
       storageLevel: StorageLevel)(
       implicit srcOrd: Ordering[ID]): (RDD[(Int, InBlock[ID])], RDD[(Int, OutBlock)]) = {
-    val inBlocks = ratingBlocks.map {
-      case ((srcBlockId, dstBlockId), RatingBlock(srcIds, dstIds, ratings)) =>
-        // The implementation is a faster version of
-        // val dstIdToLocalIndex = dstIds.toSet.toSeq.sorted.zipWithIndex.toMap
-        val start = System.nanoTime()
-        val dstIdSet = new OpenHashSet[ID](1 << 20)
-        dstIds.foreach(dstIdSet.add)
-        val sortedDstIds = new Array[ID](dstIdSet.size)
-        var i = 0
-        var pos = dstIdSet.nextPos(0)
-        while (pos != -1) {
-          sortedDstIds(i) = dstIdSet.getValue(pos)
-          pos = dstIdSet.nextPos(pos + 1)
-          i += 1
-        }
-        assert(i == dstIdSet.size)
-        Sorting.quickSort(sortedDstIds)
-        val dstIdToLocalIndex = new OpenHashMap[ID, Int](sortedDstIds.length)
-        i = 0
-        while (i < sortedDstIds.length) {
-          dstIdToLocalIndex.update(sortedDstIds(i), i)
-          i += 1
-        }
-        logDebug(
-          "Converting to local indices took " + (System.nanoTime() - start) / 1e9 + " seconds.")
-        val dstLocalIndices = dstIds.map(dstIdToLocalIndex.apply)
-        (srcBlockId, (dstBlockId, srcIds, dstLocalIndices, ratings))
+    val numPartitions = srcPart.numPartitions * dstPart.numPartitions
+    val inBlocks = ratings.mapPartitions { iter =>
+      val builders = Array.fill(numPartitions)(new RatingBlockBuilder[ID])
+      iter.map { r =>
+        val srcBlockId = srcPart.getPartition(r.user)
+        (srcBlockId, r)
+      }
     }.groupByKey(new ALSPartitioner(srcPart.numPartitions))
-      .mapValues { iter =>
-        val builder =
+      .mapPartitions { iter =>
+        val builders: Array[Option[(Int, mutable.ArrayBuffer[Rating[ID]], OpenHashSet[ID])]] =
+          Array.fill(numPartitions)(None)
+        val ratingMap = new OpenHashMap[ID, Float](1 << 20)
+
+        val inBlockBuilder =
           new UncompressedInBlockBuilder[ID](new LocalIndexEncoder(dstPart.numPartitions))
-        iter.foreach { case (dstBlockId, srcIds, dstLocalIndices, ratings) =>
-          builder.add(dstBlockId, srcIds, dstLocalIndices, ratings)
+
+        iter.map {
+          case (srcBlockId, iterable) =>
+            iterable.foreach { r =>
+              val dstBlockId = dstPart.getPartition(r.item)
+              val idx = srcBlockId + srcPart.numPartitions * dstBlockId
+              if (builders(idx).isEmpty) {
+                builders(idx) =
+                  Some((dstBlockId, mutable.ArrayBuffer.empty[Rating[ID]],
+                    new OpenHashSet[ID](1 << 20)))
+              }
+              val dstIdSet = builders(idx).get._3
+              dstIdSet.add(r.item)
+              builders(idx).get._2 += r
+            }
+            builders.flatten.foreach {
+              case (dstBlockId, ratings, hashSet) =>
+                val sortedDstIds = new Array[ID](hashSet.size)
+                var i = 0
+                var pos = hashSet.nextPos(0)
+                while (pos != -1) {
+                  sortedDstIds(i) = hashSet.getValue(pos)
+                  pos = hashSet.nextPos(pos + 1)
+                  i += 1
+                }
+                assert(i == hashSet.size)
+                Sorting.quickSort(sortedDstIds)
+                val dstIdToLocalIndex = new OpenHashMap[ID, Int](sortedDstIds.length)
+                i = 0
+                while (i < sortedDstIds.length) {
+                  dstIdToLocalIndex.update(sortedDstIds(i), i)
+                  i += 1
+                }
+                val srcIds = ratings.map(_.user).toArray
+                val dstIds = ratings.map(_.item).toArray
+                val ratingScores = ratings.map(_.rating).toArray
+                val dstLocalIndices = dstIds.map(dstIdToLocalIndex.apply)
+                inBlockBuilder.add(dstBlockId, srcIds, dstLocalIndices, ratingScores)
+
+            }
+            (srcBlockId, inBlockBuilder.build().compress())
         }
-        builder.build().compress()
       }.setName(prefix + "InBlocks")
       .persist(storageLevel)
+
     val outBlocks = inBlocks.mapValues { case InBlock(srcIds, dstPtrs, dstEncodedIndices, _) =>
       val encoder = new LocalIndexEncoder(dstPart.numPartitions)
       val activeIds = Array.fill(dstPart.numPartitions)(mutable.ArrayBuilder.make[Int])
