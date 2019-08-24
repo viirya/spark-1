@@ -42,6 +42,7 @@ object Word2VecExample {
       "Logistic regression models are neat".split(" ")
     ).map(Tuple1.apply)).toDF("text")
 
+    // training dataset: https://www.kaggle.com/liananapalkova/simply-about-word2vec/data
     val docDF = spark.read.option("header", "true").csv("/tmp/train.csv")
       .filter(col("question1").isNotNull)
       .select(split(col("question1"), " ").as("text"))
