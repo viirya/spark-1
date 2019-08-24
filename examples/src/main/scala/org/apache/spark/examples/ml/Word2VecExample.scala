@@ -24,6 +24,8 @@ import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.sql.Row
 // $example off$
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions.{col, split}
+
 
 object Word2VecExample {
   def main(args: Array[String]) {
@@ -40,15 +42,23 @@ object Word2VecExample {
       "Logistic regression models are neat".split(" ")
     ).map(Tuple1.apply)).toDF("text")
 
+    val docDF = spark.read.option("header", "true").csv("/tmp/train.csv")
+      .filter(col("question1").isNotNull)
+      .select(split(col("question1"), " ").as("text"))
+    docDF.printSchema()
+    docDF.show()
+
+
     // Learn a mapping from words to Vectors.
     val word2Vec = new Word2Vec()
       .setInputCol("text")
       .setOutputCol("result")
-      .setVectorSize(3)
-      .setMinCount(0)
-    val model = word2Vec.fit(documentDF)
+      .setVectorSize(30)
+      .setMaxIter(20)
+      .setMinCount(1)
+    val model = word2Vec.fit(docDF)
 
-    val result = model.transform(documentDF)
+    val result = model.transform(docDF)
     result.collect().foreach { case Row(text: Seq[_], features: Vector) =>
       println(s"Text: [${text.mkString(", ")}] => \nVector: $features\n") }
     // $example off$
