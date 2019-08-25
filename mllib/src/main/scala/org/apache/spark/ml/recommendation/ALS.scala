@@ -1061,8 +1061,8 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
       .persist(finalRDDStorageLevel)
     if (finalRDDStorageLevel != StorageLevel.NONE) {
       userIdAndFactors.count()
-      itemFactors.unpersist()
       itemIdAndFactors.count()
+      itemFactors.unpersist()
       userInBlocks.unpersist()
       userOutBlocks.unpersist()
       itemInBlocks.unpersist()
