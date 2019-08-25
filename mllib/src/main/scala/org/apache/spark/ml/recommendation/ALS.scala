@@ -696,7 +696,8 @@ class ALS(@Since("1.4.0") override val uid: String) extends Estimator[ALSModel] 
       alpha = $(alpha), nonnegative = $(nonnegative),
       intermediateRDDStorageLevel = StorageLevel.fromString($(intermediateStorageLevel)),
       finalRDDStorageLevel = StorageLevel.fromString($(finalStorageLevel)),
-      checkpointInterval = $(checkpointInterval), seed = $(seed))
+      checkpointInterval = $(checkpointInterval), seed = $(seed),
+      localCheckpoint = $(localCheckpoint))
     val userDF = userFactors.toDF("id", "features")
     val itemDF = itemFactors.toDF("id", "features")
     val model = new ALSModel(uid, $(rank), userDF, itemDF).setParent(this)
