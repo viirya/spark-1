@@ -235,11 +235,24 @@ private[recommendation] trait ALSParams extends ALSModelParams with HasMaxIter w
   /** @group expertGetParam */
   def getFinalStorageLevel: String = $(finalStorageLevel)
 
+  /**
+   * Param for whether to do local checkpoint, when it is needed to checkpoint RDDs during
+   * fitting model.
+   * Default: false
+   * @group param
+   */
+  val localCheckpoint = new BooleanParam(this, "localCheckpoint",
+    "whether to do local checkpoint, when it is required to do RDD checkpoint.")
+
+  /** @group expertGetParam */
+  def getLocalCheckpoint: Boolean = $(localCheckpoint)
+
+
   setDefault(rank -> 10, maxIter -> 10, regParam -> 0.1, numUserBlocks -> 10, numItemBlocks -> 10,
     implicitPrefs -> false, alpha -> 1.0, userCol -> "user", itemCol -> "item",
     ratingCol -> "rating", nonnegative -> false, checkpointInterval -> 10,
     intermediateStorageLevel -> "MEMORY_AND_DISK", finalStorageLevel -> "MEMORY_AND_DISK",
-    coldStartStrategy -> "nan")
+    coldStartStrategy -> "nan", localCheckpoint -> false)
 
   /**
    * Validates and transforms the input schema.
@@ -642,6 +655,10 @@ class ALS(@Since("1.4.0") override val uid: String) extends Estimator[ALSModel] 
   @Since("2.2.0")
   def setColdStartStrategy(value: String): this.type = set(coldStartStrategy, value)
 
+  /** @group expertSetParam */
+  @Since("3.0.0")
+  def setLocalCheckpoint(value: Boolean): this.type = set(localCheckpoint, value)
+
   /**
    * Sets both numUserBlocks and numItemBlocks to the specific value.
    *
@@ -913,7 +930,8 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
       intermediateRDDStorageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK,
       finalRDDStorageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK,
       checkpointInterval: Int = 10,
-      seed: Long = 0L)(
+      seed: Long = 0L,
+      localCheckpoint: Boolean = false)(
       implicit ord: Ordering[ID]): (RDD[(ID, Array[Float])], RDD[(ID, Array[Float])]) = {
 
     require(!ratings.isEmpty(), s"No ratings available from $ratings")
@@ -977,12 +995,16 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
         // TODO: Generalize PeriodicGraphCheckpointer and use it here.
         val deps = itemFactors.dependencies
         if (shouldCheckpoint(iter)) {
-          itemFactors.checkpoint() // itemFactors gets materialized in computeFactors
+          if (localCheckpoint) {
+            itemFactors.localCheckpoint()
+          } else {
+            itemFactors.checkpoint() // itemFactors gets materialized in computeFactors
+          }
         }
         val previousUserFactors = userFactors
         userFactors = computeFactors(itemFactors, itemOutBlocks, userInBlocks, rank, regParam,
           itemLocalIndexEncoder, implicitPrefs, alpha, solver)
-        if (shouldCheckpoint(iter)) {
+        if (shouldCheckpoint(iter) && !localCheckpoint) {
           ALS.cleanShuffleDependencies(sc, deps)
           deletePreviousCheckpointFile()
           previousCheckpointFile = itemFactors.getCheckpointFile
@@ -990,16 +1012,25 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
         previousUserFactors.unpersist()
       }
     } else {
+      var previousItemFactors: Option[RDD[(Int, FactorBlock)]] = None
       for (iter <- 0 until maxIter) {
         itemFactors = computeFactors(userFactors, userOutBlocks, itemInBlocks, rank, regParam,
           userLocalIndexEncoder, solver = solver)
         if (shouldCheckpoint(iter)) {
-          val deps = itemFactors.dependencies
-          itemFactors.checkpoint()
-          itemFactors.count() // checkpoint item factors and cut lineage
-          ALS.cleanShuffleDependencies(sc, deps)
-          deletePreviousCheckpointFile()
-          previousCheckpointFile = itemFactors.getCheckpointFile
+          if (localCheckpoint) {
+            itemFactors.setName(s"itemFactors-$iter").persist(intermediateRDDStorageLevel)
+            itemFactors.localCheckpoint()
+            itemFactors.count()
+            previousItemFactors.foreach(_.unpersist())
+            previousItemFactors = Option(itemFactors)
+          } else {
+            val deps = itemFactors.dependencies
+            itemFactors.checkpoint()
+            itemFactors.count() // checkpoint item factors and cut lineage
+            ALS.cleanShuffleDependencies(sc, deps)
+            deletePreviousCheckpointFile()
+            previousCheckpointFile = itemFactors.getCheckpointFile
+          }
         }
         userFactors = computeFactors(itemFactors, itemOutBlocks, userInBlocks, rank, regParam,
           itemLocalIndexEncoder, solver = solver)
