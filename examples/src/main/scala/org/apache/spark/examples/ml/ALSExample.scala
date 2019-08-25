@@ -36,7 +36,7 @@ object ALSExample {
   // $example on$
   case class Rating(userId: Int, movieId: Int, rating: Float, timestamp: Long)
   def parseRating(str: String): Rating = {
-    val fields = str.split("::")
+    val fields = str.split(",")
     assert(fields.size == 4)
     Rating(fields(0).toInt, fields(1).toInt, fields(2).toFloat, fields(3).toLong)
   }
@@ -49,20 +49,25 @@ object ALSExample {
       .getOrCreate()
     import spark.implicits._
 
+    spark.sparkContext.setCheckpointDir("/tmp/sparkcheckpoint")
+
     // $example on$
-    val ratings = spark.read.textFile("data/mllib/als/sample_movielens_ratings.txt")
+    val ratings = spark.read.textFile("/tmp/ratings.csv")
       .map(parseRating)
       .toDF()
-    val Array(training, test) = ratings.randomSplit(Array(0.8, 0.2))
+    val Array(training, test, _) = ratings.randomSplit(Array(0.3, 0.2, 0.5))
 
     // Build the recommendation model using ALS on the training data
     val als = new ALS()
-      .setMaxIter(5)
+      .setMaxIter(100)
+      .setCheckpointInterval(5)
       .setRegParam(0.01)
       .setUserCol("userId")
       .setItemCol("movieId")
       .setRatingCol("rating")
+    val t0 = System.currentTimeMillis()
     val model = als.fit(training)
+    val t1 = System.currentTimeMillis()
 
     // Evaluate the model by computing the RMSE on the test data
     // Note we set cold start strategy to 'drop' to ensure we don't get NaN evaluation metrics
@@ -94,6 +99,7 @@ object ALSExample {
     movieSubSetRecs.show()
 
     spark.stop()
+    println(s"training time: ${(t1 - t0) / 1000.0} s")
   }
 }
 // scalastyle:on println
