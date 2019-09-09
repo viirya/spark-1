@@ -76,8 +76,8 @@ object PartitionPruning extends Rule[LogicalPlan] with PredicateHelper {
    *  - to be able to identify this filter during query planning, we use a custom
    *    DynamicPruning expression that wraps a regular In expression
    *  - we also insert a flag that indicates if the subquery duplication is worthwhile and it
-   *  should run regardless of the join strategy, or is too expensive and it should be run only if
-   *  we can reuse the results of a broadcast
+   *    should run regardless of the join strategy, or is too expensive and it should be run only if
+   *    we can reuse the results of a broadcast
    */
   private def insertPredicate(
       pruningKey: Expression,

@@ -70,7 +70,8 @@ trait PredicateHelper {
    * Find the origin of where the input references of expression exp were scanned in the tree of
    * plan, and if they originate from a single leaf node.
    * Returns optional tuple with Expression, undoing any projections and aliasing that has been done
-   * along the way from plan to origin, and the origin LeafNode plan from which all the exp
+   * along the way from plan to origin, and the origin LeafNode plan from which all the input
+   * references of expression exp were scanned.
    */
   def findExpressionAndTrackLineageDown(
       exp: Expression,
