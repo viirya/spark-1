@@ -560,4 +560,13 @@ class PredicateSuite extends SparkFunSuite with ExpressionEvalHelper {
         assert(msg.contains("argument 1 requires boolean type"))
     }
   }
+
+  test("InSet with empty input set") {
+    Seq("0", "600").foreach { conf =>
+      withSQLConf("spark.sql.optimizer.inSetSwitchThreshold" -> conf) {
+        val inSet = InSet(Literal(0), Set.empty)
+        checkEvaluation(inSet, false, row0)
+      }
+    }
+  }
 }
