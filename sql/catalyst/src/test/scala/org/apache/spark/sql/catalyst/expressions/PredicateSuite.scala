@@ -564,8 +564,9 @@ class PredicateSuite extends SparkFunSuite with ExpressionEvalHelper {
   test("InSet with empty input set") {
     Seq("0", "600").foreach { conf =>
       withSQLConf("spark.sql.optimizer.inSetSwitchThreshold" -> conf) {
-        val inSet = InSet(Literal(0), Set.empty)
-        checkEvaluation(inSet, false, row0)
+        val row = create_row(1)
+        val inSet = InSet(BoundReference(0, IntegerType, true), Set.empty)
+        checkEvaluation(inSet, false, row)
       }
     }
   }
