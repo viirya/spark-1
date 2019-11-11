@@ -43,6 +43,11 @@ import org.apache.spark.scheduler.{HDFSCacheTaskLocation, HostTaskLocation}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.{NextIterator, SerializableConfiguration, ShutdownHookManager, Utils}
 
+private[spark] trait HadoopRDDBase {
+  // Returns the split size in bytes.
+  def getSplitSize: Long
+}
+
 /**
  * A Spark split class that wraps around a Hadoop InputSplit.
  */
@@ -101,7 +106,7 @@ class HadoopRDD[K, V](
     keyClass: Class[K],
     valueClass: Class[V],
     minPartitions: Int)
-  extends RDD[(K, V)](sc, Nil) with Logging {
+  extends RDD[(K, V)](sc, Nil) with Logging with HadoopRDDBase {
 
   if (initLocalJobConfFuncOpt.isDefined) {
     sparkContext.clean(initLocalJobConfFuncOpt.get)
@@ -195,6 +200,22 @@ class HadoopRDD[K, V](
       case _ =>
     }
     newInputFormat
+  }
+
+  override def getSplitSize: Long = {
+    try {
+      val allInputSplits = getInputFormat(jobConf).getSplits(jobConf, minPartitions)
+      if (allInputSplits.length > 0) {
+        allInputSplits.map(_.getLength).filter(_ > 0)(0)
+      } else {
+        0
+      }
+    } catch {
+      case e: InvalidInputException if ignoreMissingFiles =>
+        logWarning(s"${jobConf.get(FileInputFormat.INPUT_DIR)} doesn't exist and no" +
+          s" split size returned from this path.", e)
+        0
+    }
   }
 
   override def getPartitions: Array[Partition] = {

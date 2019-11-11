@@ -74,7 +74,7 @@ class NewHadoopRDD[K, V](
     keyClass: Class[K],
     valueClass: Class[V],
     @transient private val _conf: Configuration)
-  extends RDD[(K, V)](sc, Nil) with Logging {
+  extends RDD[(K, V)](sc, Nil) with Logging with HadoopRDDBase {
 
   // A Hadoop Configuration can be about 10 KB, which is pretty big, so broadcast it
   private val confBroadcast = sc.broadcast(new SerializableConfiguration(_conf))
@@ -117,6 +117,22 @@ class NewHadoopRDD[K, V](
       }
     } else {
       conf
+    }
+  }
+
+  override def getSplitSize: Long = {
+    try {
+      val allRowSplits = inputFormat.getSplits(new JobContextImpl(_conf, jobId)).asScala
+      if (allRowSplits.length > 0) {
+        allRowSplits(0).getLength
+      } else {
+        0
+      }
+    } catch {
+      case e: InvalidInputException if ignoreMissingFiles =>
+        logWarning(s"${jobConf.get(FileInputFormat.INPUT_DIR)} doesn't exist and no" +
+          s" split size returned from this path.", e)
+        0
     }
   }
 

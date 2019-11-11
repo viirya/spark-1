@@ -37,7 +37,7 @@ import org.apache.hadoop.mapreduce.{InputFormat => newInputClass}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.{EmptyRDD, HadoopRDD, NewHadoopRDD, RDD, UnionRDD}
+import org.apache.spark.rdd.{EmptyRDD, HadoopRDD, HadoopRDDBase, NewHadoopRDD, RDD, UnionRDD}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.CastSupport
@@ -196,7 +196,7 @@ class HadoopTableReader(
       }
     }
 
-    val hivePartitionRDDs = verifyPartitionPath(partitionToDeserializer)
+    val hiveHadoopPartitionRDDs = verifyPartitionPath(partitionToDeserializer)
       .map { case (partition, partDeserializer) =>
       val partDesc = Utilities.getPartitionDesc(partition)
       val partPath = partition.getDataLocation
@@ -240,7 +240,15 @@ class HadoopTableReader(
 
       // Create local references so that the outer object isn't serialized.
       val localTableDesc = tableDesc
-      createHadoopRDD(localTableDesc, inputPathStr).mapPartitions { iter =>
+      createHadoopRDD(localTableDesc, inputPathStr)
+    }.toSeq
+
+    val partitionNumAndSize = hiveHadoopPartitionRDDs.map { rdd =>
+      (rdd.partitions.length -> rdd.asInstanceOf[HadoopRDDBase].getSplitSize)
+    }
+
+    val hivePartitionRDDs = hiveHadoopPartitionRDDs.map { hadoopRDD =>
+      hadoopRDD.mapPartitions { iter =>
         val hconf = broadcastedHiveConf.value.value
         val deserializer = localDeserializer.getConstructor().newInstance()
         // SPARK-13709: For SerDes like AvroSerDe, some essential information (e.g. Avro schema
@@ -261,7 +269,7 @@ class HadoopTableReader(
         HadoopTableReader.fillObject(iter, deserializer, nonPartitionKeyAttrs,
           mutableRow, tableSerDe)
       }
-    }.toSeq
+    }
 
     // Even if we don't use any partitions, we still need an empty RDD
     if (hivePartitionRDDs.size == 0) {
@@ -269,12 +277,16 @@ class HadoopTableReader(
     } else {
       val unionRDD = new UnionRDD(hivePartitionRDDs(0).context, hivePartitionRDDs)
       val partNums = unionRDD.partitions.length
-      val maxPartNums = SQLConf.get.getConf(HiveUtils.HIVE_TABLE_SCAN_MAX_PARALLELISM)
-      if (maxPartNums.isDefined && partNums > maxPartNums.get) {
-        logWarning(s"Union of Hive partitions' HadoopRDDs has ${partNums} partitions " +
-          "which exceeds the config `spark.sql.hive.tableScan.maxParallelism`. " +
-          s"Coalesces the Union RDD to ${maxPartNums.get} partitions.")
-        unionRDD.coalesce(maxPartNums.get)
+      val totalSize = partitionNumAndSize.map(s => s._1 * s._2).sum.toFloat
+      val estimatedPartSize = totalSize / partNums
+      val minPartSize = SQLConf.get.getConf(HiveUtils.HIVE_TABLE_SCAN_MIN_PARTITIONSIZE)
+      if (minPartSize.isDefined && estimatedPartSize < minPartSize.get) {
+        val coalescedPartNum = (totalSize / minPartSize.get).toInt
+        logWarning(s"Estimated partition size of the result RDD of Hive partitioned table " +
+          s"is ${estimatedPartSize} which is less than the config " +
+          "`spark.sql.hive.tableScan.minPartitionSize`. Coalesces the RDD " +
+          s"to ${coalescedPartNum} partitions.")
+        unionRDD.coalesce(coalescedPartNum)
       } else {
         unionRDD
       }
