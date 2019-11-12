@@ -1733,7 +1733,7 @@ class Dataset[T] private[sql](
    * @since 3.0.0
    */
   @scala.annotation.varargs
-  def groupByRelationKey(
+  def groupByKey(
       col1: String,
       cols: String*): KeyValueGroupedDataset[Row, T] = {
     val colNames: Seq[String] = col1 +: cols
