@@ -1503,4 +1503,12 @@ package object config {
     .bytesConf(ByteUnit.BYTE)
     .createOptional
 
+  private[spark] val BYTESMAP_INCR_LOOKUP_THRESHOLD =
+    ConfigBuilder("spark.bytesmap.incrementalLookup.threshold")
+      .doc("This config sets a threshold of highest step that BytesToBytesMap could use " +
+        "when looking up in the map. Once the step is incrementally increased to be higher " +
+        "than the threshold, the map will reset the step back to 1.")
+      .intConf
+      .createWithDefault(1000000000)
+
 }

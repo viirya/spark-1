@@ -30,6 +30,7 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.spark.SparkEnv;
 import org.apache.spark.executor.ShuffleWriteMetrics;
+import org.apache.spark.internal.config.package$;
 import org.apache.spark.memory.MemoryConsumer;
 import org.apache.spark.memory.SparkOutOfMemoryError;
 import org.apache.spark.memory.TaskMemoryManager;
@@ -466,6 +467,9 @@ public final class BytesToBytesMap extends MemoryConsumer {
    */
   public void safeLookup(Object keyBase, long keyOffset, int keyLength, Location loc, int hash) {
     assert(longArray != null);
+    int incrStepThreshold = SparkEnv.get() != null ?
+      (int) SparkEnv.get().conf().get(package$.MODULE$.BYTESMAP_INCR_LOOKUP_THRESHOLD())
+        : Integer.MAX_VALUE;
 
     numKeyLookups++;
 
@@ -498,6 +502,15 @@ public final class BytesToBytesMap extends MemoryConsumer {
       }
       pos = (pos + step) & mask;
       step++;
+
+      if (step > incrStepThreshold) {
+        // In extreme case, we will increase step to overflow but still can not find slot.
+        // Then the step variable fluctuates between extremely big positive and negative
+        // values. It makes Spark job hanging on safeLookup forever.
+        logger.info("Looking-up step {} is higher than configured threshold {}, " +
+          "resetting step back to 1.", step, incrStepThreshold);
+        step = 1;
+      }
     }
   }
 
