@@ -293,6 +293,8 @@ object SparkBuild extends PomBuild {
         l("")
       }
 
+      val inGithubActions = sys.env.get("GITHUB_ACTIONS").isDefined
+
       var failed = 0
       analysis.infos.allInfos.foreach { case (k, i) =>
         i.reportedProblems foreach { p =>
@@ -303,7 +305,7 @@ object SparkBuild extends PomBuild {
           }
 
           val printer: (=> String) => Unit = s => if (deprecation) {
-            out.log.warn(s)
+            if (!inGithubActions) out.log.warn(s)
           } else {
             out.log.error("[warn] " + s)
           }
@@ -1028,9 +1030,6 @@ object TestSettings {
     // Show full stack trace and duration in test cases.
     testOptions in Test += Tests.Argument("-oDF"),
     testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-
-    logLevel := Level.Error,
-
     // Required to detect Junit tests for each project, see also https://github.com/sbt/junit-interface/issues/35
     crossPaths := false,
     // Enable Junit testing.
