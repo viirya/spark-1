@@ -509,7 +509,6 @@ abstract class RDD[T: ClassTag](
                partitionCoalescer: Option[PartitionCoalescer] = Option.empty)
               (implicit ord: Ordering[T] = null)
       : RDD[T] = withScope {
-    call()
     require(numPartitions > 0, s"Number of partitions ($numPartitions) must be positive.")
     if (shuffle) {
       /** Distributes elements evenly across output partitions, starting from a random partition. */
