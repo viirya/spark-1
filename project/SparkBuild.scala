@@ -200,16 +200,8 @@ object SparkBuild extends PomBuild {
   def enableScalaStyle: Seq[sbt.Def.Setting[_]] = Seq(
     scalaStyleOnCompile := cachedScalaStyle(Compile).value,
     scalaStyleOnTest := cachedScalaStyle(Test).value,
-    sys.env.get("GITHUB_ACTIONS").map { _ =>
-      logLevel in scalaStyleOnCompile := Level.Error
-    }.getOrElse {
-      logLevel in scalaStyleOnCompile := Level.Warn
-    },
-    sys.env.get("GITHUB_ACTIONS").map { _ =>
-      logLevel in scalaStyleOnTest := Level.Error
-    }.getOrElse {
-      logLevel in scalaStyleOnTest := Level.Warn
-    },
+    logLevel in scalaStyleOnCompile := Level.Warn,
+    logLevel in scalaStyleOnTest := Level.Warn,
     (compile in Compile) := {
       scalaStyleOnCompile.value
       (compile in Compile).value
@@ -1036,6 +1028,9 @@ object TestSettings {
     // Show full stack trace and duration in test cases.
     testOptions in Test += Tests.Argument("-oDF"),
     testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+
+    logLevel := Level.Error,
+
     // Required to detect Junit tests for each project, see also https://github.com/sbt/junit-interface/issues/35
     crossPaths := false,
     // Enable Junit testing.
