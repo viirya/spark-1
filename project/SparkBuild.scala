@@ -200,8 +200,16 @@ object SparkBuild extends PomBuild {
   def enableScalaStyle: Seq[sbt.Def.Setting[_]] = Seq(
     scalaStyleOnCompile := cachedScalaStyle(Compile).value,
     scalaStyleOnTest := cachedScalaStyle(Test).value,
-    logLevel in scalaStyleOnCompile := Level.Warn,
-    logLevel in scalaStyleOnTest := Level.Warn,
+    sys.env.get("GITHUB_ACTIONS").map { _ =>
+      logLevel in scalaStyleOnCompile := Level.Error
+    }.getOrElse {
+      logLevel in scalaStyleOnCompile := Level.Warn
+    },
+    sys.env.get("GITHUB_ACTIONS").map { _ =>
+      logLevel in scalaStyleOnTest := Level.Error
+    }.getOrElse {
+      logLevel in scalaStyleOnTest := Level.Warn
+    },
     (compile in Compile) := {
       scalaStyleOnCompile.value
       (compile in Compile).value
