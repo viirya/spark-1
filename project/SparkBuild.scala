@@ -216,7 +216,7 @@ object SparkBuild extends PomBuild {
       (if (sys.env.contains("NOLINT_ON_COMPILE")) Nil else enableScalaStyle) ++ Seq(
     exportJars in Compile := true,
     exportJars in Test := false,
-    logLevel := Level.Error
+    logLevel := Level.Error,
     javaHome := sys.env.get("JAVA_HOME")
       .orElse(sys.props.get("java.home").map { p => new File(p).getParentFile().getAbsolutePath() })
       .map(file),
