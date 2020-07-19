@@ -78,7 +78,7 @@ class DataFrameSuite extends QueryTest
 
     checkAnswer(
       df.groupBy("_1").agg(sum("_2._1")).toDF("key", "total"),
-      Row(1, 1) :: Nil)
+      Row(2, 1) :: Nil)
   }
 
   test("access complex data") {
