@@ -169,10 +169,9 @@ jobs:
     - name: "Test"
       run: |
         echo "test" > test-log.txt
-    - name: "Tail log"
-      uses: viirya/check_github_action@master
-      with:
-        logFile: test-log.txt
+    - name: "Read log"
+      run: |
+        cat test-log.txt
     # Run the tests.
     - name: "Run tests: ${{ matrix.modules }}"
       run: |
