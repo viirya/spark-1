@@ -294,7 +294,7 @@ object SparkBuild extends PomBuild {
         l("")
       }
 
-      val inGithubActions = sys.env.get("GITHUB_ACTIONS").isDefined
+      // val inGithubActions = sys.env.get("GITHUB_ACTIONS").isDefined
 
       var failed = 0
       analysis.infos.allInfos.foreach { case (k, i) =>
@@ -306,7 +306,7 @@ object SparkBuild extends PomBuild {
           }
 
           val printer: (=> String) => Unit = s => if (deprecation) {
-            if (!inGithubActions) out.log.warn(s)
+            out.log.warn(s)
           } else {
             out.log.error("[warn] " + s)
           }
