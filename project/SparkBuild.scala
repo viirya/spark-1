@@ -214,7 +214,7 @@ object SparkBuild extends PomBuild {
 
   lazy val sharedSettings = sparkGenjavadocSettings ++
       (if (sys.env.contains("NOLINT_ON_COMPILE")) Nil else enableScalaStyle) ++
-    (if (sys.env.contains("GITHUB_ACTIONS")) Nil else Seq(logLevel := Level.Error))  ++ Seq(
+    (if (sys.env.contains("GITHUB_ACTIONS")) Seq(logLevel := Level.Error) else Nil)  ++ Seq(
     exportJars in Compile := true,
     exportJars in Test := false,
     javaHome := sys.env.get("JAVA_HOME")
