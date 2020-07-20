@@ -166,12 +166,6 @@ jobs:
         sudo Rscript -e "install.packages(c('knitr', 'rmarkdown', 'testthat', 'devtools', 'e1071', 'survival', 'arrow', 'roxygen2'), repos='https://cloud.r-project.org/')"
         # Show installed packages in R.
         sudo Rscript -e 'pkg_list <- as.data.frame(installed.packages()[, c(1,3:4)]); pkg_list[is.na(pkg_list$Priority), 1:2, drop = FALSE]'
-    - name: "Test"
-      run: |
-        echo "test" > test-log.txt
-    - name: "Read log"
-      run: |
-        cat test-log.txt
     # Run the tests.
     - name: "Run tests: ${{ matrix.modules }}"
       run: |
