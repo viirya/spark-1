@@ -1034,6 +1034,10 @@ object TestSettings {
       sys.env.get("GITHUB_ACTIONS").map { _ =>
         Seq("-eNCXEHLOPQMDF")
       }.getOrElse(Nil): _*),
+    testOptions in Test += Tests.Argument(TestFrameworks.ScalaTest,
+      sys.env.get("GITHUB_ACTIONS").map { _ =>
+        Seq("-oG")
+      }.getOrElse(Nil): _*),
     testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
     // Required to detect Junit tests for each project, see also https://github.com/sbt/junit-interface/issues/35
     crossPaths := false,
