@@ -18,33 +18,34 @@
 #
 
 from argparse import ArgumentParser
+import os
+import xml.etree.ElementTree as ET
 
 modules_target = {
   "core": "core/target/test-reports/",
-  "unsafe": "core/target/test-reports/",
-  "kvstore": "core/target/test-reports/,
-  "avro": "core/target/test-reports/",
-  "network-common": "core/target/test-reports/",
-  "network-shuffle": "core/target/test-reports/",
-  "repl": "core/target/test-reports/",
-  "launcher": "core/target/test-reports/",
-  "examples": "core/target/test-reports/",
-  "sketch": "core/target/test-reports/",
-  "graphx": "core/target/test-reports/",
-  "catalyst": "core/target/test-reports/",
-  "hive-thriftserver": "core/target/test-reports/",
-  "streaming": "core/target/test-reports/",
-  "sql-kafka-0-10": "core/target/test-reports/",
-  "streaming-kafka-0-10": "core/target/test-reports/",
-  "mllib-local": "core/target/test-reports/",
-  "mllib": "core/target/test-reports/",
-  "yarn": "core/target/test-reports/",
-  "mesos": "core/target/test-reports/",
-  "kubernetes": "core/target/test-reports/",
-  "hadoop-cloud": "core/target/test-reports/",
-  "spark-ganglia-lgpl": "core/target/test-reports/",
-  "hive": "core/target/test-reports/",
-  "sql": "core/target/test-reports/"
+  "unsafe": "common/unsafe/target/test-reports/",
+  "kvstore": "common/kvstore/target/test-reports/",
+  "avro": "external/avro/target/test-reports/",
+  "network-common": "common/network-common/target/test-reports/",
+  "network-shuffle": "common/network-shuffle/target/test-reports/",
+  "repl": "repl/target/test-reports/",
+  "launcher": "launcher/target/test-reports/",
+  "examples": "examples/target/test-reports/",
+  "sketch": "common/sketch/target/test-reports/",
+  "graphx": "graphx/target/test-reports/",
+  "catalyst": "sql/catalyst/target/test-reports/",
+  "hive-thriftserver": "hive/hive-thriftserver//target/test-reports/",
+  "streaming": "streaming/target/test-reports/",
+  "sql-kafka-0-10": "external/kafka-0-10-sql//target/test-reports/",
+  "mllib-local": "mllib-local/target/test-reports/",
+  "mllib": "mllib/target/test-reports/",
+  "yarn": "resource-managers/yarn/target/test-reports/",
+  "mesos": "resource-managers/target/test-reports/",
+  "kubernetes": "resource-managers/kubernetes/target/test-reports/",
+  "hadoop-cloud": "hadoop-cloud/target/test-reports/",
+  "spark-ganglia-lgpl": "external//target/test-reports/",
+  "hive": "sql/hive/target/test-reports/",
+  "sql": "sql/core/target/test-reports/"
 }
 
 def parse_opts():
@@ -55,31 +56,52 @@ def parse_opts():
         "-m", "--modules", type=str,
         default=None,
         help="A comma-separated list of modules to process on"
-             "(default: %s)" % ",".join(sorted([m.name for m in modules.all_modules]))
     )
 
     args, unknown = parser.parse_known_args()
     if unknown:
         parser.error("Unsupported arguments: %s" % ' '.join(unknown))
+    if args.modules is None:
+        parser.error("modules must be specified.")
     return args
+
+def parse_test_report(file):
+    root = ET.parse(file).getroot()
+    has_no_failure_yet = True
+
+    for testcase in root.findall("testcase"):
+        testcase_name = testcase.get("classname")
+
+        failure = testcase.find("failure")
+        if failure is not None:
+            failure_message = failure.get("message")
+            stacktrace = failure.text
+
+            if has_no_failure_yet:
+               print(testcase_name)
+               has_no_failure_yet = False
+
+            print("Error Message:" + failure_message)
+            print("Stacktrace:" + stacktrace)
 
 def parse_failed_testcases_from_module(module):
     if module in modules_target:
-        test_report_path = modules_target
-        print("[info] Parsing test report for module: ", module, " from path: " + test_report_path)
+        test_report_path = modules_target[module]
+        print("[info] Parsing test report for module", module, "from path:" + test_report_path)
+
+        files = os.listdir("./" + test_report_path)
+        for file in files:
+           parse_test_report("./" + test_report_path + file)
 
     else:
-        print("[error] Cannot get the test report path for module: ", module)
+        print("[error] Cannot get the test report path for module", module)
 
 def main():
     opts = parse_opts()
-    # Ensure the user home directory (HOME) is valid and is an absolute directory
-    if not USER_HOME or not os.path.isabs(USER_HOME):
-        print("[error] Cannot determine your home directory as an absolute path;",
-              " ensure the $HOME environment variable is set properly.")
-        sys.exit(1)
 
-    os.chdir(SPARK_HOME)
+    str_test_modules = [m.strip() for m in opts.modules.split(",")]
+    for module in str_test_modules:
+        parse_failed_testcases_from_module(module)
 
 if __name__ == "__main__":
     main()
