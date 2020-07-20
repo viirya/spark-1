@@ -71,7 +71,8 @@ def parse_test_report(file):
     has_no_failure_yet = True
 
     for testcase in root.findall("testcase"):
-        testcase_name = testcase.get("classname")
+        testcase_testsuite = testcase.get("classname")
+        testcase_testname = testcase.get("name")
 
         failure = testcase.find("failure")
         if failure is not None:
@@ -79,11 +80,12 @@ def parse_test_report(file):
             stacktrace = failure.text
 
             if has_no_failure_yet:
-               print(testcase_name)
+               print("Failed test suite: " + testcase_testsuite)
                has_no_failure_yet = False
 
-            print("Error Message:" + failure_message)
-            print("Stacktrace:" + stacktrace)
+            print("Failed test name: " + testcase_testname)
+            print("Error Message: " + failure_message)
+            print("Stacktrace: " + stacktrace)
 
 def parse_failed_testcases_from_module(module):
     if module in modules_target:
