@@ -19,6 +19,7 @@
 
 from argparse import ArgumentParser
 import os
+import os.path
 import xml.etree.ElementTree as ET
 
 modules_target = {
@@ -86,12 +87,13 @@ def parse_test_report(file):
 
 def parse_failed_testcases_from_module(module):
     if module in modules_target:
-        test_report_path = modules_target[module]
-        print("[info] Parsing test report for module", module, "from path:" + test_report_path)
+        test_report_path = "./" + modules_target[module]
+        if os.path.isdir(test_report_path):
+            print("[info] Parsing test report for module", module, "from path:" + test_report_path)
 
-        files = os.listdir("./" + test_report_path)
-        for file in files:
-           parse_test_report("./" + test_report_path + file)
+            files = os.listdir(test_report_path)
+            for file in files:
+                parse_test_report(test_report_path + file)
 
     else:
         print("[error] Cannot get the test report path for module", module)
