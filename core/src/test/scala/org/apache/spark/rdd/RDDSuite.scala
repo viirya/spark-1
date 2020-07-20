@@ -54,7 +54,7 @@ class RDDSuite extends SparkFunSuite with SharedSparkContext with Eventually {
 
   test("basic operations") {
     val nums = sc.makeRDD(Array(1, 2, 3, 4), 2)
-    assert(nums.getNumPartitions === 2)
+    assert(nums.getNumPartitions === 3)
     assert(nums.collect().toList === List(1, 2, 3, 4))
     assert(nums.toLocalIterator.toList === List(1, 2, 3, 4))
     val dups = sc.makeRDD(Array(1, 1, 2, 2, 3, 3, 4, 4), 2)

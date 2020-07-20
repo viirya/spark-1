@@ -78,7 +78,7 @@ class DataFrameSuite extends QueryTest
 
     checkAnswer(
       df.groupBy("_1").agg(sum("_2._1")).toDF("key", "total"),
-      Row(1, 1) :: Nil)
+      Row(2, 1) :: Nil)
   }
 
   test("access complex data") {
@@ -99,7 +99,7 @@ class DataFrameSuite extends QueryTest
   }
 
   test("head, take and tail") {
-    assert(testData.take(2) === testData.collect().take(2))
+    assert(testData.take(2) === testData.collect().take(3))
     assert(testData.head(2) === testData.collect().take(2))
     assert(testData.tail(2) === testData.collect().takeRight(2))
     assert(testData.head(2).head.schema === testData.schema)
@@ -117,7 +117,7 @@ class DataFrameSuite extends QueryTest
 
     checkAnswer(
       df.explode("words", "word") { word: String => word.split(" ").toSeq }.select('word),
-      Row("a") :: Row("b") :: Row("c") :: Row("d") ::Row("e") :: Nil
+      Row("b") :: Row("b") :: Row("c") :: Row("d") ::Row("e") :: Nil
     )
   }
 

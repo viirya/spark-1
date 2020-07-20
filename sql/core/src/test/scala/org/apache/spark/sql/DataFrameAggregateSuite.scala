@@ -45,7 +45,7 @@ class DataFrameAggregateSuite extends QueryTest
   test("groupBy") {
     checkAnswer(
       testData2.groupBy("a").agg(sum($"b")),
-      Seq(Row(1, 3), Row(2, 3), Row(3, 3))
+      Seq(Row(1, 2), Row(2, 3), Row(3, 3))
     )
     checkAnswer(
       testData2.groupBy("a").agg(sum($"b").as("totB")).agg(sum($"totB")),
@@ -57,7 +57,7 @@ class DataFrameAggregateSuite extends QueryTest
     )
     checkAnswer(
       testData2.groupBy("a").agg(Map("*" -> "count")),
-      Row(1, 2) :: Row(2, 2) :: Row(3, 2) :: Nil
+      Row(1, 3) :: Row(2, 2) :: Row(3, 2) :: Nil
     )
     checkAnswer(
       testData2.groupBy("a").agg(Map("b" -> "sum")),
