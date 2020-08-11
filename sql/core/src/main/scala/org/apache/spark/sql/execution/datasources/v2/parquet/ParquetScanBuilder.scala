@@ -48,11 +48,10 @@ case class ParquetScanBuilder(
     val pushDownDecimal = sqlConf.parquetFilterPushDownDecimal
     val pushDownStringStartWith = sqlConf.parquetFilterPushDownStringStartWith
     val pushDownInFilterThreshold = sqlConf.parquetFilterPushDownInFilterThreshold
-    val isCaseSensitive = sqlConf.caseSensitiveAnalysis
     val parquetSchema =
       new SparkToParquetSchemaConverter(sparkSession.sessionState.conf).convert(schema)
     val parquetFilters = new ParquetFilters(parquetSchema, pushDownDate, pushDownTimestamp,
-      pushDownDecimal, pushDownStringStartWith, pushDownInFilterThreshold, isCaseSensitive)
+      pushDownDecimal, pushDownStringStartWith, pushDownInFilterThreshold)
     parquetFilters.convertibleFilters(this.filters).toArray
   }
 

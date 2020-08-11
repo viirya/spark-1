@@ -32,6 +32,7 @@ import org.apache.parquet.schema.MessageType
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.optimizer.InferFiltersFromConstraints
@@ -72,8 +73,7 @@ abstract class ParquetFilterSuite extends QueryTest with ParquetTest with Shared
       caseSensitive: Option[Boolean] = None): ParquetFilters =
     new ParquetFilters(schema, conf.parquetFilterPushDownDate, conf.parquetFilterPushDownTimestamp,
       conf.parquetFilterPushDownDecimal, conf.parquetFilterPushDownStringStartWith,
-      conf.parquetFilterPushDownInFilterThreshold,
-      caseSensitive.getOrElse(conf.caseSensitiveAnalysis))
+      conf.parquetFilterPushDownInFilterThreshold)
 
   override def beforeEach(): Unit = {
     super.beforeEach()
@@ -1442,81 +1442,54 @@ abstract class ParquetFilterSuite extends QueryTest with ParquetTest with Shared
   }
 
   test("SPARK-25207: Case-insensitive field resolution for pushdown when reading parquet") {
-    def testCaseInsensitiveResolution(
-        schema: StructType,
-        expected: FilterPredicate,
-        filter: sources.Filter): Unit = {
-      val parquetSchema = new SparkToParquetSchemaConverter(conf).convert(schema)
-      val caseSensitiveParquetFilters =
-        createParquetFilters(parquetSchema, caseSensitive = Some(true))
-      val caseInsensitiveParquetFilters =
-        createParquetFilters(parquetSchema, caseSensitive = Some(false))
-      assertResult(Some(expected)) {
-        caseInsensitiveParquetFilters.createFilter(filter)
-      }
-      assertResult(None) {
-        caseSensitiveParquetFilters.createFilter(filter)
+    val data = (1 to 4).map(i => Tuple1(Option(i)))
+
+    def runTest(caseSensitive: Boolean): Unit = {
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> caseSensitive.toString) {
+        withNestedParquetDataFrame(data) { case (inputDF, colName, resultFun) =>
+          implicit val df: DataFrame = inputDF
+
+          val intAttr = if (caseSensitive) {
+            assert(df(colName).expr.dataType === IntegerType)
+            UnresolvedAttribute.quotedString(colName)
+          } else {
+            // scalastyle:off caselocale
+            assert(colName.toUpperCase != colName)
+            assert(df(colName.toUpperCase).expr.dataType === IntegerType)
+            UnresolvedAttribute.quotedString(colName.toUpperCase)
+            // scalastyle:on caselocale
+          }
+
+          checkFilterPredicate(intAttr.isNull, classOf[Eq[_]], Seq.empty[Row])
+          checkFilterPredicate(intAttr.isNotNull, classOf[NotEq[_]],
+            (1 to 4).map(i => Row.apply(resultFun(i))))
+
+          checkFilterPredicate(intAttr === 1, classOf[Eq[_]], resultFun(1))
+          checkFilterPredicate(intAttr <=> 1, classOf[Eq[_]], resultFun(1))
+          checkFilterPredicate(intAttr =!= 1, classOf[NotEq[_]],
+            (2 to 4).map(i => Row.apply(resultFun(i))))
+
+          checkFilterPredicate(intAttr < 2, classOf[Lt[_]], resultFun(1))
+          checkFilterPredicate(intAttr > 3, classOf[Gt[_]], resultFun(4))
+          checkFilterPredicate(intAttr <= 1, classOf[LtEq[_]], resultFun(1))
+          checkFilterPredicate(intAttr >= 4, classOf[GtEq[_]], resultFun(4))
+
+          checkFilterPredicate(Literal(1) === intAttr, classOf[Eq[_]], resultFun(1))
+          checkFilterPredicate(Literal(1) <=> intAttr, classOf[Eq[_]], resultFun(1))
+          checkFilterPredicate(Literal(2) > intAttr, classOf[Lt[_]], resultFun(1))
+          checkFilterPredicate(Literal(3) < intAttr, classOf[Gt[_]], resultFun(4))
+          checkFilterPredicate(Literal(1) >= intAttr, classOf[LtEq[_]], resultFun(1))
+          checkFilterPredicate(Literal(4) <= intAttr, classOf[GtEq[_]], resultFun(4))
+
+          checkFilterPredicate(!(intAttr < 4), classOf[GtEq[_]], resultFun(4))
+          checkFilterPredicate(intAttr < 2 || intAttr > 3, classOf[Operators.Or],
+            Seq(Row(resultFun(1)), Row(resultFun(4))))
+        }
       }
     }
 
-    val schema = StructType(Seq(StructField("cint", IntegerType)))
-
-    testCaseInsensitiveResolution(
-      schema, FilterApi.eq(intColumn("cint"), null.asInstanceOf[Integer]), sources.IsNull("CINT"))
-
-    testCaseInsensitiveResolution(
-      schema,
-      FilterApi.notEq(intColumn("cint"), null.asInstanceOf[Integer]),
-      sources.IsNotNull("CINT"))
-
-    testCaseInsensitiveResolution(
-      schema, FilterApi.eq(intColumn("cint"), 1000: Integer), sources.EqualTo("CINT", 1000))
-
-    testCaseInsensitiveResolution(
-      schema,
-      FilterApi.notEq(intColumn("cint"), 1000: Integer),
-      sources.Not(sources.EqualTo("CINT", 1000)))
-
-    testCaseInsensitiveResolution(
-      schema, FilterApi.eq(intColumn("cint"), 1000: Integer), sources.EqualNullSafe("CINT", 1000))
-
-    testCaseInsensitiveResolution(
-      schema,
-      FilterApi.notEq(intColumn("cint"), 1000: Integer),
-      sources.Not(sources.EqualNullSafe("CINT", 1000)))
-
-    testCaseInsensitiveResolution(
-      schema,
-      FilterApi.lt(intColumn("cint"), 1000: Integer), sources.LessThan("CINT", 1000))
-
-    testCaseInsensitiveResolution(
-      schema,
-      FilterApi.ltEq(intColumn("cint"), 1000: Integer),
-      sources.LessThanOrEqual("CINT", 1000))
-
-    testCaseInsensitiveResolution(
-      schema, FilterApi.gt(intColumn("cint"), 1000: Integer), sources.GreaterThan("CINT", 1000))
-
-    testCaseInsensitiveResolution(
-      schema,
-      FilterApi.gtEq(intColumn("cint"), 1000: Integer),
-      sources.GreaterThanOrEqual("CINT", 1000))
-
-    testCaseInsensitiveResolution(
-      schema,
-      FilterApi.or(
-        FilterApi.eq(intColumn("cint"), 10: Integer),
-        FilterApi.eq(intColumn("cint"), 20: Integer)),
-      sources.In("CINT", Array(10, 20)))
-
-    val dupFieldSchema = StructType(
-      Seq(StructField("cint", IntegerType), StructField("cINT", IntegerType)))
-    val dupParquetSchema = new SparkToParquetSchemaConverter(conf).convert(dupFieldSchema)
-    val dupCaseInsensitiveParquetFilters =
-      createParquetFilters(dupParquetSchema, caseSensitive = Some(false))
-    assertResult(None) {
-      dupCaseInsensitiveParquetFilters.createFilter(sources.EqualTo("CINT", 1000))
-    }
+    runTest(true)
+    runTest(false)
   }
 
   test("SPARK-25207: exception when duplicate fields in case-insensitive mode") {
@@ -1583,8 +1556,6 @@ class ParquetV1FilterSuite extends ParquetFilterSuite {
       filterClass: Class[_ <: FilterPredicate],
       checker: (DataFrame, Seq[Row]) => Unit,
       expected: Seq[Row]): Unit = {
-    val output = predicate.collect { case a: Attribute => a }.distinct
-
     Seq(("parquet", true), ("", false)).foreach { case (pushdownDsList, nestedPredicatePushdown) =>
       withSQLConf(
         SQLConf.PARQUET_FILTER_PUSHDOWN_ENABLED.key -> "true",
@@ -1599,7 +1570,6 @@ class ParquetV1FilterSuite extends ParquetFilterSuite {
         SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false",
         SQLConf.NESTED_PREDICATE_PUSHDOWN_FILE_SOURCE_LIST.key -> pushdownDsList) {
         val query = df
-          .select(output.map(e => Column(e)): _*)
           .where(Column(predicate))
 
         val nestedOrAttributes = predicate.collectFirst {
@@ -1614,16 +1584,18 @@ class ParquetV1FilterSuite extends ParquetFilterSuite {
         val containsNestedColumnOrDot = parsed.length > 1 || parsed(0).contains(".")
 
         var maybeRelation: Option[HadoopFsRelation] = None
-        val maybeAnalyzedPredicate = query.queryExecution.optimizedPlan.collect {
+        val maybeAnalyzedPredicate = query.queryExecution.optimizedPlan.collectFirst {
           case PhysicalOperation(_, filters,
           LogicalRelation(relation: HadoopFsRelation, _, _, _)) =>
             maybeRelation = Some(relation)
             filters
-        }.flatten.reduceLeftOption(_ && _)
+        }.get.reduceLeftOption(_ && _)
         assert(maybeAnalyzedPredicate.isDefined, "No filter is analyzed from the given query")
 
         val (_, selectedFilters, _) =
-          DataSourceStrategy.selectFilters(maybeRelation.get, maybeAnalyzedPredicate.toSeq)
+          DataSourceStrategy.selectFilters(maybeRelation.get,
+            DataSourceStrategy.normalizeExprs(maybeAnalyzedPredicate.toSeq,
+            query.queryExecution.executedPlan.output.asInstanceOf[Seq[AttributeReference]]))
         // If predicates contains nested column or dot, we push down the predicates only if
         // "parquet" is in `NESTED_PREDICATE_PUSHDOWN_V1_SOURCE_LIST`.
         if (nestedPredicatePushdown || !containsNestedColumnOrDot) {
@@ -1663,8 +1635,6 @@ class ParquetV2FilterSuite extends ParquetFilterSuite {
       filterClass: Class[_ <: FilterPredicate],
       checker: (DataFrame, Seq[Row]) => Unit,
       expected: Seq[Row]): Unit = {
-    val output = predicate.collect { case a: Attribute => a }.distinct
-
     withSQLConf(
       SQLConf.PARQUET_FILTER_PUSHDOWN_ENABLED.key -> "true",
       SQLConf.PARQUET_FILTER_PUSHDOWN_DATE_ENABLED.key -> "true",
@@ -1677,7 +1647,6 @@ class ParquetV2FilterSuite extends ParquetFilterSuite {
       SQLConf.OPTIMIZER_EXCLUDED_RULES.key -> InferFiltersFromConstraints.ruleName,
       SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false") {
       val query = df
-        .select(output.map(e => Column(e)): _*)
         .where(Column(predicate))
 
       query.queryExecution.optimizedPlan.collectFirst {

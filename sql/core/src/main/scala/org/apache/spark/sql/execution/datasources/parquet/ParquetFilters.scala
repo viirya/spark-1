@@ -46,8 +46,7 @@ class ParquetFilters(
     pushDownTimestamp: Boolean,
     pushDownDecimal: Boolean,
     pushDownStartWith: Boolean,
-    pushDownInFilterThreshold: Int,
-    caseSensitive: Boolean) {
+    pushDownInFilterThreshold: Int) {
   // A map which contains parquet field name and data type, if predicate push down applies.
   //
   // Each key in `nameToParquetField` represents a column; `dots` are used as separators for
@@ -68,30 +67,22 @@ class ParquetFilters(
         // When g is a `Map`, `g.getOriginalType` is `MAP`.
         // When g is a `List`, `g.getOriginalType` is `LIST`.
         case g: GroupType if g.getOriginalType == null =>
-          getPrimitiveFields(g.getFields.asScala.toSeq, parentFieldNames :+ g.getName)
+          getPrimitiveFields(g.getFields.asScala, parentFieldNames :+ g.getName)
         // Parquet only supports push-down for primitive types; as a result, Map and List types
         // are removed.
         case _ => None
       }
     }
 
-    val primitiveFields = getPrimitiveFields(schema.getFields.asScala.toSeq).map { field =>
+    // Pushed predicates will be normalized in query planning. We don't need to consider
+    // case sensitivity when preparing this map.
+    // Don't consider ambiguity here, i.e. more than one field is matched in case insensitive
+    // mode, just skip pushdown for these fields, they will trigger Exception when reading,
+    // See: SPARK-25132.
+    getPrimitiveFields(schema.getFields.asScala).map { field =>
       import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
       (field.fieldNames.toSeq.quoted, field)
-    }
-    if (caseSensitive) {
-      primitiveFields.toMap
-    } else {
-      // Don't consider ambiguity here, i.e. more than one field is matched in case insensitive
-      // mode, just skip pushdown for these fields, they will trigger Exception when reading,
-      // See: SPARK-25132.
-      val dedupPrimitiveFields =
-      primitiveFields
-        .groupBy(_._1.toLowerCase(Locale.ROOT))
-        .filter(_._2.size == 1)
-        .mapValues(_.head._2)
-      CaseInsensitiveMap(dedupPrimitiveFields.toMap)
-    }
+    }.toMap
   }
 
   /**
