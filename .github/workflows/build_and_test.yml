@@ -88,7 +88,7 @@ jobs:
       GITHUB_INPUT_BRANCH: ${{ github.event.inputs.target }}
     steps:
     - name: Check matrix condition
-      if: (contains(github.event.pull_request.title, matrix.hadoop) == true && contains(github.event.pull_request.title, matrix.hive)) || (matrix.hadoop == 'hadoop3.2' && matrix.hive == 'hive2.3')
+      if: (contains(github.event.pull_request.title, matrix.hadoop) == true && contains(github.event.pull_request.title, matrix.hive) == true) || (matrix.hadoop == 'hadoop3.2' && matrix.hive == 'hive2.3')
       run: echo "::set-env name=run_actions::true"
     - name: Checkout Spark repository
       if: env.run_actions == 'true'
