@@ -45,6 +45,10 @@ jobs:
             pyspark-core, pyspark-streaming, pyspark-ml
           - >-
             sparkr
+          - >-
+            hive
+          - >-
+            sql  
         # Here, we split Hive and SQL tests into some of slow ones and the rest of them.
         included-tags: [""]
         excluded-tags: [""]
@@ -52,28 +56,16 @@ jobs:
         include:
           # Hive tests
           - modules: hive
-            java: 1.8
-            hadoop: [hadoop3.2, hadoop2.7]
-            hive: [hive2.3, hive1.2]
             included-tags: org.apache.spark.tags.SlowHiveTest
             comment: "- slow tests"
           - modules: hive
-            java: 1.8
-            hadoop: [hadoop3.2, hadoop2.7]
-            hive: [hive2.3, hive1.2]
             excluded-tags: org.apache.spark.tags.SlowHiveTest
             comment: "- other tests"
           # SQL tests
           - modules: sql
-            java: 1.8
-            hadoop: [hadoop3.2, hadoop2.7]
-            hive: [hive2.3, hive1.2]
             included-tags: org.apache.spark.tags.ExtendedSQLTest
             comment: "- slow tests"
           - modules: sql
-            java: 1.8
-            hadoop: [hadoop3.2, hadoop2.7]
-            hive: [hive2.3, hive1.2]
             excluded-tags: org.apache.spark.tags.ExtendedSQLTest
             comment: "- other tests"
     env:
