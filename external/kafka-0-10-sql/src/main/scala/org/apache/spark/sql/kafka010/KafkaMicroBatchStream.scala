@@ -25,6 +25,7 @@ import org.apache.spark.internal.config.Network.NETWORK_TIMEOUT
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.{InputPartition, PartitionReaderFactory}
 import org.apache.spark.sql.connector.read.streaming.{MicroBatchStream, Offset, ReadAllAvailable, ReadLimit, ReadMaxRows, SupportsAdmissionControl}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.kafka010.KafkaSourceProvider._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.UninterruptibleThread
@@ -59,6 +60,10 @@ private[kafka010] class KafkaMicroBatchStream(
 
   private[kafka010] val maxOffsetsPerTrigger = Option(options.get(
     KafkaSourceProvider.MAX_OFFSET_PER_TRIGGER)).map(_.toLong)
+
+  private[kafka010] val commitToKafka =
+    Option(options.get(
+      KafkaSourceProvider.COMMIT_TO_KAFKA)).map(_.toBoolean)
 
   private val includeHeaders = options.getBoolean(INCLUDE_HEADERS, false)
 
@@ -125,7 +130,17 @@ private[kafka010] class KafkaMicroBatchStream(
     KafkaSourceOffset(JsonUtils.partitionOffsets(json))
   }
 
-  override def commit(end: Offset): Unit = {}
+  override def commit(end: Offset): Unit = {
+    if (commitToKafka.getOrElse(false)) {
+      if (!SQLConf.get.useDeprecatedKafkaOffsetFetching) {
+        throw new UnsupportedOperationException(
+          "Only Kafka Consumer based offset fetching supports committing offset for now. " +
+            "If you want to use source option `commitToKafka`, please enable SQL config: " +
+            s"`${SQLConf.USE_DEPRECATED_KAFKA_OFFSET_FETCHING.key}`")
+      }
+      kafkaOffsetReader.commit(endPartitionOffsets.partitionToOffsets)
+    }
+  }
 
   override def stop(): Unit = {
     kafkaOffsetReader.close()

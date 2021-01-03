@@ -523,6 +523,7 @@ private[kafka010] object KafkaSourceProvider extends Logging {
   private[kafka010] val CONSUMER_POLL_TIMEOUT = "kafkaconsumer.polltimeoutms"
   private val GROUP_ID_PREFIX = "groupidprefix"
   private[kafka010] val INCLUDE_HEADERS = "includeheaders"
+  private[kafka010] val COMMIT_TO_KAFKA = "committokafka"
 
   val TOPIC_OPTION_KEY = "topic"
 

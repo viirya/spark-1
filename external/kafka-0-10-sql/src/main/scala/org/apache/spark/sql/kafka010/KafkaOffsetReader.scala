@@ -44,6 +44,12 @@ private[kafka010] trait KafkaOffsetReader {
   def close(): Unit
 
   /**
+   * Commit the given offsets to Kafka. Note that not all implementations support
+   * committing back to Kafka. By default this method is no-op.
+   */
+  def commit(endOffset: PartitionOffsetMap): Unit = {}
+
+  /**
    * Fetch the partition offsets for the topic partitions that are indicated
    * in the [[ConsumerStrategy]] and [[KafkaOffsetRangeLimit]].
    */

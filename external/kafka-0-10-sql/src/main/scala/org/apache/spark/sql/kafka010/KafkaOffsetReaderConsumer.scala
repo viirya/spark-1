@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.kafka.clients.consumer.{Consumer, ConsumerConfig, OffsetAndTimestamp}
+import org.apache.kafka.clients.consumer.{Consumer, ConsumerConfig, OffsetAndMetadata, OffsetAndTimestamp}
 import org.apache.kafka.common.TopicPartition
 
 import org.apache.spark.SparkEnv
@@ -68,7 +68,7 @@ private[kafka010] class KafkaOffsetReaderConsumer(
 
   /**
    * A KafkaConsumer used in the driver to query the latest Kafka offsets. This only queries the
-   * offsets and never commits them.
+   * offsets and only commits them if `commitToKafka` source option is enabled.
    */
   @volatile protected var _consumer: Consumer[Array[Byte], Array[Byte]] = null
 
@@ -119,6 +119,16 @@ private[kafka010] class KafkaOffsetReaderConsumer(
   override def close(): Unit = {
     if (_consumer != null) uninterruptibleThreadRunner.runUninterruptibly { stopConsumer() }
     uninterruptibleThreadRunner.shutdown()
+  }
+
+  override def commit(endOffset: Map[TopicPartition, Long]): Unit = {
+    val topicPartitionMap = new ju.HashMap[TopicPartition, OffsetAndMetadata]()
+
+    endOffset.foreach { case (tp, offset) =>
+      val offsetAndMetadata = new OffsetAndMetadata(offset)
+      topicPartitionMap.put(tp, offsetAndMetadata)
+    }
+    _consumer.commitSync(topicPartitionMap)
   }
 
   /**

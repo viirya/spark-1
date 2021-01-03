@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxRows, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.streaming._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.kafka010.KafkaSourceProvider._
 import org.apache.spark.sql.types._
 
@@ -89,6 +90,9 @@ private[kafka010] class KafkaSource(
 
   private val includeHeaders =
     sourceOptions.getOrElse(INCLUDE_HEADERS, "false").toBoolean
+
+  private val commitToKafka =
+    sourceOptions.getOrElse(COMMIT_TO_KAFKA, "false").toBoolean
 
   /**
    * Lazily initialize `initialPartitionOffsets` to make sure that `KafkaConsumer.poll` is only
@@ -266,6 +270,20 @@ private[kafka010] class KafkaSource(
       throw new IllegalStateException(message + s". $INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_TRUE")
     } else {
       logWarning(message + s". $INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_FALSE")
+    }
+  }
+
+  override def commit(end: Offset) : Unit = {
+    if (commitToKafka) {
+      if (!SQLConf.get.useDeprecatedKafkaOffsetFetching) {
+        throw new UnsupportedOperationException(
+          "Only Kafka Consumer based offset fetching supports committing offset for now. " +
+            "If you want to use source option `commitToKafka`, please enable SQL config: " +
+            s"`${SQLConf.USE_DEPRECATED_KAFKA_OFFSET_FETCHING.key}`")
+      }
+      currentPartitionOffsets.foreach { currentOffset =>
+        kafkaReader.commit(currentOffset)
+      }
     }
   }
 }
