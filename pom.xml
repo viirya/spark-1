@@ -142,6 +142,7 @@
     <chill.version>0.9.5</chill.version>
     <ivy.version>2.4.0</ivy.version>
     <oro.version>2.0.8</oro.version>
+    <rocksdb.version>6.2.2</rocksdb.version>
     <!--
     If you changes codahale.metrics.version, you also need to change
     the link to metrics.dropwizard.io in docs/monitoring.md.
