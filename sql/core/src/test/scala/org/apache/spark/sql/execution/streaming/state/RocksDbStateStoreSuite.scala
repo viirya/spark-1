@@ -24,17 +24,12 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.scalatest.{BeforeAndAfter, PrivateMethodTester}
-import org.scalatest.concurrent.Eventually.{eventually, timeout}
-import org.scalatest.time.SpanSugar._
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.Random
 
-import org.apache.spark.{SparkConf, SparkContext, SparkEnv}
-import org.apache.spark.LocalSparkContext.withSpark
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
-import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.count
 import org.apache.spark.sql.internal.SQLConf
@@ -48,11 +43,10 @@ class RocksDbStateStoreSuite
   type MapType = mutable.HashMap[UnsafeRow, UnsafeRow]
   type ProviderMapType = java.util.concurrent.ConcurrentHashMap[UnsafeRow, UnsafeRow]
 
-  import StateStoreCoordinatorSuite._
   import StateStoreTestsHelper._
 
-  val keySchema = StructType(Seq(StructField("key", StringType, true)))
-  val valueSchema = StructType(Seq(StructField("value", IntegerType, true)))
+  override val keySchema = StructType(Seq(StructField("key", StringType, true)))
+  override val valueSchema = StructType(Seq(StructField("value", IntegerType, true)))
 
   before {
     StateStore.stop()
@@ -300,184 +294,6 @@ class RocksDbStateStoreSuite
     assert(error.contains(s"The local directory in the executor nodes"))
   }
 
-  test("StateStore.get") {
-    quietly {
-      val dir = newDir()
-      val storeId = StateStoreProviderId(StateStoreId(dir, 0, 0), UUID.randomUUID)
-      val sqlConf = new SQLConf
-      sqlConf.setConfString(
-        SQLConf.STATE_STORE_PROVIDER_CLASS.key,
-        "org.apache.spark.sql.execution.streaming.state.RocksDbStateStoreProvider")
-      sqlConf.setConfString(RocksDbStateStoreProvider.ROCKSDB_STATE_STORE_LOCAL_DIR, newDir())
-      val storeConf = new StateStoreConf(sqlConf)
-      assert(
-        storeConf.providerClass ===
-          "org.apache.spark.sql.execution.streaming.state.RocksDbStateStoreProvider")
-      val hadoopConf = new Configuration()
-
-      // Verify that trying to get incorrect versions throw errors
-      intercept[IllegalArgumentException] {
-        StateStore.get(storeId, keySchema, valueSchema, None, -1, storeConf, hadoopConf)
-      }
-      assert(!StateStore.isLoaded(storeId)) // version -1 should not attempt to load the store
-
-      intercept[IllegalStateException] {
-        StateStore.get(storeId, keySchema, valueSchema, None, 1, storeConf, hadoopConf)
-      }
-
-      // Increase version of the store and try to get again
-      val store0 = StateStore.get(storeId, keySchema, valueSchema, None, 0, storeConf, hadoopConf)
-      assert(store0.version === 0)
-      put(store0, "a", 1)
-      store0.commit()
-
-      val store1 = StateStore.get(storeId, keySchema, valueSchema, None, 1, storeConf, hadoopConf)
-      assert(StateStore.isLoaded(storeId))
-      assert(store1.version === 1)
-      assert(rowsToSet(store1.iterator()) === Set("a" -> 1))
-
-      // Verify that you can also load older version
-      val store0reloaded =
-        StateStore.get(storeId, keySchema, valueSchema, None, 0, storeConf, hadoopConf)
-      assert(store0reloaded.version === 0)
-      assert(rowsToSet(store0reloaded.iterator()) === Set.empty)
-
-      // Verify that you can remove the store and still reload and use it
-      StateStore.unload(storeId)
-      assert(!StateStore.isLoaded(storeId))
-
-      val store1reloaded =
-        StateStore.get(storeId, keySchema, valueSchema, None, 1, storeConf, hadoopConf)
-      assert(StateStore.isLoaded(storeId))
-      assert(store1reloaded.version === 1)
-      put(store1reloaded, "a", 2)
-      assert(store1reloaded.commit() === 2)
-      assert(rowsToSet(store1reloaded.iterator()) === Set("a" -> 2))
-    }
-  }
-
-  test("maintenance") {
-    val conf = new SparkConf()
-      .setMaster("local")
-      .setAppName("test")
-      // Make sure that when SparkContext stops, the StateStore maintenance thread 'quickly'
-      // fails to talk to the StateStoreCoordinator and unloads all the StateStores
-      .set("spark.rpc.numRetries", "1")
-    val opId = 0
-    val dir = newDir()
-    val storeProviderId = StateStoreProviderId(StateStoreId(dir, opId, 0), UUID.randomUUID)
-    val sqlConf = new SQLConf()
-    sqlConf.setConfString(
-      SQLConf.STATE_STORE_PROVIDER_CLASS.key,
-      "org.apache.spark.sql.execution.streaming.state.RocksDbStateStoreProvider")
-    sqlConf.setConf(SQLConf.MIN_BATCHES_TO_RETAIN, 2)
-    // Make maintenance thread do snapshots and cleanups very fast
-    sqlConf.setConf(SQLConf.STREAMING_MAINTENANCE_INTERVAL, 10L)
-    sqlConf.setConfString(RocksDbStateStoreProvider.ROCKSDB_STATE_STORE_LOCAL_DIR, newDir())
-    val storeConf = StateStoreConf(sqlConf)
-    val hadoopConf = new Configuration()
-    val provider = newStoreProvider(storeProviderId.storeId)
-
-    var latestStoreVersion = 0
-
-    def generateStoreVersions() {
-      for (i <- 1 to 20) {
-        val store = StateStore.get(
-          storeProviderId,
-          keySchema,
-          valueSchema,
-          None,
-          latestStoreVersion,
-          storeConf,
-          hadoopConf)
-        put(store, "a", i)
-        store.commit()
-        latestStoreVersion += 1
-      }
-    }
-
-    val timeoutDuration = 60 seconds
-
-    quietly {
-      withSpark(new SparkContext(conf)) { sc =>
-        withCoordinatorRef(sc) { coordinatorRef =>
-          require(!StateStore.isMaintenanceRunning, "StateStore is unexpectedly running")
-
-          // Generate sufficient versions of store for snapshots
-          generateStoreVersions()
-
-          eventually(timeout(timeoutDuration)) {
-            // Store should have been reported to the coordinator
-            assert(
-              coordinatorRef.getLocation(storeProviderId).nonEmpty,
-              "active instance was not reported")
-
-            // Background maintenance should clean up and generate snapshots
-            assert(StateStore.isMaintenanceRunning, "Maintenance task is not running")
-
-            // Some snapshots should have been generated
-            val snapshotVersions = (1 to latestStoreVersion).filter { version =>
-              fileExists(provider, version, isSnapshot = true)
-            }
-            assert(snapshotVersions.nonEmpty, "no snapshot file found")
-          }
-
-          // Generate more versions such that there is another snapshot and
-          // the earliest delta file will be cleaned up
-          generateStoreVersions()
-
-          // Earliest delta file should get cleaned up
-          eventually(timeout(timeoutDuration)) {
-            assert(!fileExists(provider, 1, isSnapshot = false), "earliest file not deleted")
-          }
-
-          // If driver decides to deactivate all stores related to a query run,
-          // then this instance should be unloaded
-          coordinatorRef.deactivateInstances(storeProviderId.queryRunId)
-          eventually(timeout(timeoutDuration)) {
-            assert(!StateStore.isLoaded(storeProviderId))
-          }
-
-          // Reload the store and verify
-          StateStore.get(
-            storeProviderId,
-            keySchema,
-            valueSchema,
-            indexOrdinal = None,
-            latestStoreVersion,
-            storeConf,
-            hadoopConf)
-          assert(StateStore.isLoaded(storeProviderId))
-
-          // If some other executor loads the store, then this instance should be unloaded
-          coordinatorRef
-            .reportActiveInstance(storeProviderId, "other-host", "other-exec", Seq.empty)
-          eventually(timeout(timeoutDuration)) {
-            assert(!StateStore.isLoaded(storeProviderId))
-          }
-
-          // Reload the store and verify
-          StateStore.get(
-            storeProviderId,
-            keySchema,
-            valueSchema,
-            indexOrdinal = None,
-            latestStoreVersion,
-            storeConf,
-            hadoopConf)
-          assert(StateStore.isLoaded(storeProviderId))
-        }
-      }
-
-      // Verify if instance is unloaded if SparkContext is stopped
-      eventually(timeout(timeoutDuration)) {
-        require(SparkEnv.get === null)
-        assert(!StateStore.isLoaded(storeProviderId))
-        assert(!StateStore.isMaintenanceRunning)
-      }
-    }
-  }
-
   test("SPARK-21145: Restarted queries create new provider instances") {
     try {
       val checkpointLocation = Utils.createTempDir().getAbsoluteFile
@@ -590,17 +406,6 @@ class RocksDbStateStoreSuite
     provider
   }
 
-  def fileExists(
-                  provider: RocksDbStateStoreProvider,
-                  version: Long,
-                  isSnapshot: Boolean): Boolean = {
-    val method = PrivateMethod[Path]('baseDir)
-    val basePath = provider invokePrivate method()
-    val fileName = if (isSnapshot) s"$version.snapshot" else s"$version.delta"
-    val filePath = new File(basePath.toString, fileName)
-    filePath.exists
-  }
-
   def deleteFilesEarlierThanVersion(provider: RocksDbStateStoreProvider, version: Long): Unit = {
     val method = PrivateMethod[Path]('baseDir)
     val basePath = provider invokePrivate method()
@@ -625,4 +430,24 @@ class RocksDbStateStoreSuite
     filePath.createNewFile()
   }
 
+  override def getDefaultSQLConf(
+      minDeltasForSnapshot: Int,
+      numOfVersToRetainInMemory: Int): SQLConf = {
+    val sqlConf = new SQLConf()
+    sqlConf.setConf(SQLConf.STATE_STORE_MIN_DELTAS_FOR_SNAPSHOT, minDeltasForSnapshot)
+    sqlConf.setConf(SQLConf.MAX_BATCHES_TO_RETAIN_IN_MEMORY, numOfVersToRetainInMemory)
+    sqlConf.setConf(SQLConf.MIN_BATCHES_TO_RETAIN, 2)
+    sqlConf.setConf(SQLConf.STATE_STORE_COMPRESSION_CODEC, SQLConf.get.stateStoreCompressionCodec)
+    sqlConf.setConfString(
+      SQLConf.STATE_STORE_PROVIDER_CLASS.key,
+      "org.apache.spark.sql.execution.streaming.state.RocksDbStateStoreProvider")
+    sqlConf.setConfString(RocksDbStateStoreProvider.ROCKSDB_STATE_STORE_LOCAL_DIR, newDir())
+    sqlConf
+  }
+
+  override def getDefaultStoreConf(): StateStoreConf = {
+    val sqlConf = getDefaultSQLConf(SQLConf.STATE_STORE_MIN_DELTAS_FOR_SNAPSHOT.defaultValue.get,
+      SQLConf.MAX_BATCHES_TO_RETAIN_IN_MEMORY.defaultValue.get)
+    new StateStoreConf(sqlConf)
+  }
 }
