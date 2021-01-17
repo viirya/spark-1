@@ -50,9 +50,6 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
   with BeforeAndAfter {
   import StateStoreTestsHelper._
 
-  type MapType = mutable.HashMap[UnsafeRow, UnsafeRow]
-  type ProviderMapType = java.util.concurrent.ConcurrentHashMap[UnsafeRow, UnsafeRow]
-
   override val keySchema = StructType(Seq(StructField("key", StringType, true)))
   override val valueSchema = StructType(Seq(StructField("value", IntegerType, true)))
 
@@ -66,63 +63,21 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     require(!StateStore.isMaintenanceRunning)
   }
 
-  def updateVersionTo(
-      provider: StateStoreProvider,
-      currentVersion: Int,
-      targetVersion: Int): Int = {
-    var newCurrentVersion = currentVersion
-    for (i <- newCurrentVersion until targetVersion) {
-      newCurrentVersion = incrementVersion(provider, i)
-    }
-    require(newCurrentVersion === targetVersion)
-    newCurrentVersion
-  }
-
-  def incrementVersion(provider: StateStoreProvider, currentVersion: Int): Int = {
-    val store = provider.getStore(currentVersion)
-    put(store, "a", currentVersion + 1)
-    store.commit()
-    currentVersion + 1
-  }
-
-  def checkLoadedVersions(
-      loadedMaps: util.SortedMap[Long, ProviderMapType],
-      count: Int,
-      earliestKey: Long,
-      latestKey: Long): Unit = {
-    assert(loadedMaps.size() === count)
-    assert(loadedMaps.firstKey() === earliestKey)
-    assert(loadedMaps.lastKey() === latestKey)
-  }
-
-  def checkVersion(
-      loadedMaps: util.SortedMap[Long, ProviderMapType],
-      version: Long,
-      expectedData: Map[String, Int]): Unit = {
-
-    val originValueMap = loadedMaps.get(version).asScala.map { entry =>
-      rowToString(entry._1) -> rowToInt(entry._2)
-    }.toMap
-
-    assert(originValueMap === expectedData)
-  }
-
   test("retaining only two latest versions when MAX_BATCHES_TO_RETAIN_IN_MEMORY set to 2") {
-    val provider = newStoreProvider(opId = Random.nextInt, partition = 0,
-      numOfVersToRetainInMemory = 2)
+    val provider = newStoreProvider(minDeltasForSnapshot = 10, numOfVersToRetainInMemory = 2)
 
     var currentVersion = 0
 
     // commit the ver 1 : cache will have one element
     currentVersion = incrementVersion(provider, currentVersion)
-    assert(getData(provider) === Set("a" -> 1))
+    assert(getLatestData(provider) === Set("a" -> 1))
     var loadedMaps = provider.getLoadedMaps()
     checkLoadedVersions(loadedMaps, count = 1, earliestKey = 1, latestKey = 1)
     checkVersion(loadedMaps, 1, Map("a" -> 1))
 
     // commit the ver 2 : cache will have two elements
     currentVersion = incrementVersion(provider, currentVersion)
-    assert(getData(provider) === Set("a" -> 2))
+    assert(getLatestData(provider) === Set("a" -> 2))
     loadedMaps = provider.getLoadedMaps()
     checkLoadedVersions(loadedMaps, count = 2, earliestKey = 2, latestKey = 1)
     checkVersion(loadedMaps, 2, Map("a" -> 2))
@@ -131,7 +86,7 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     // commit the ver 3 : cache has already two elements and adding ver 3 incurs exceeding cache,
     // and ver 3 will be added but ver 1 will be evicted
     currentVersion = incrementVersion(provider, currentVersion)
-    assert(getData(provider) === Set("a" -> 3))
+    assert(getLatestData(provider) === Set("a" -> 3))
     loadedMaps = provider.getLoadedMaps()
     checkLoadedVersions(loadedMaps, count = 2, earliestKey = 3, latestKey = 2)
     checkVersion(loadedMaps, 3, Map("a" -> 3))
@@ -146,7 +101,7 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
 
     // commit the ver 1 : cache will have one element
     currentVersion = incrementVersion(provider, currentVersion)
-    assert(getData(provider) === Set("a" -> 1))
+    assert(getLatestData(provider) === Set("a" -> 1))
     var loadedMaps = provider.getLoadedMaps()
     checkLoadedVersions(loadedMaps, count = 1, earliestKey = 1, latestKey = 1)
     checkVersion(loadedMaps, 1, Map("a" -> 1))
@@ -156,7 +111,7 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     // this fact ensures cache miss will occur when this partition succeeds commit
     // but there's a failure afterwards so have to reprocess previous batch
     currentVersion = incrementVersion(provider, currentVersion)
-    assert(getData(provider) === Set("a" -> 2))
+    assert(getLatestData(provider) === Set("a" -> 2))
     loadedMaps = provider.getLoadedMaps()
     checkLoadedVersions(loadedMaps, count = 1, earliestKey = 2, latestKey = 2)
     checkVersion(loadedMaps, 2, Map("a" -> 2))
@@ -172,7 +127,7 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     currentVersion += 1
 
     // make sure newly committed version is reflected to the cache (overwritten)
-    assert(getData(provider) === Set("a" -> -2))
+    assert(getLatestData(provider) === Set("a" -> -2))
     loadedMaps = provider.getLoadedMaps()
     checkLoadedVersions(loadedMaps, count = 1, earliestKey = 2, latestKey = 2)
     checkVersion(loadedMaps, 2, Map("a" -> -2))
@@ -186,59 +141,15 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
 
     // commit the ver 1 : never cached
     currentVersion = incrementVersion(provider, currentVersion)
-    assert(getData(provider) === Set("a" -> 1))
+    assert(getLatestData(provider) === Set("a" -> 1))
     var loadedMaps = provider.getLoadedMaps()
     assert(loadedMaps.size() === 0)
 
     // commit the ver 2 : never cached
     currentVersion = incrementVersion(provider, currentVersion)
-    assert(getData(provider) === Set("a" -> 2))
+    assert(getLatestData(provider) === Set("a" -> 2))
     loadedMaps = provider.getLoadedMaps()
     assert(loadedMaps.size() === 0)
-  }
-
-  test("snapshotting") {
-    val provider = newStoreProvider(opId = Random.nextInt, partition = 0, minDeltasForSnapshot = 5)
-
-    var currentVersion = 0
-
-    currentVersion = updateVersionTo(provider, currentVersion, 2)
-    require(getData(provider) === Set("a" -> 2))
-    provider.doMaintenance()               // should not generate snapshot files
-    assert(getData(provider) === Set("a" -> 2))
-
-    for (i <- 1 to currentVersion) {
-      assert(fileExists(provider, i, isSnapshot = false))  // all delta files present
-      assert(!fileExists(provider, i, isSnapshot = true))  // no snapshot files present
-    }
-
-    // After version 6, snapshotting should generate one snapshot file
-    currentVersion = updateVersionTo(provider, currentVersion, 6)
-    require(getData(provider) === Set("a" -> 6), "store not updated correctly")
-    provider.doMaintenance()       // should generate snapshot files
-
-    val snapshotVersion = (0 to 6).find(version => fileExists(provider, version, isSnapshot = true))
-    assert(snapshotVersion.nonEmpty, "snapshot file not generated")
-    deleteFilesEarlierThanVersion(provider, snapshotVersion.get)
-    assert(
-      getData(provider, snapshotVersion.get) === Set("a" -> snapshotVersion.get),
-      "snapshotting messed up the data of the snapshotted version")
-    assert(
-      getData(provider) === Set("a" -> 6),
-      "snapshotting messed up the data of the final version")
-
-    // After version 20, snapshotting should generate newer snapshot files
-    currentVersion = updateVersionTo(provider, currentVersion, 20)
-    require(getData(provider) === Set("a" -> 20), "store not updated correctly")
-    provider.doMaintenance()       // do snapshot
-
-    val latestSnapshotVersion = (0 to 20).filter(version =>
-      fileExists(provider, version, isSnapshot = true)).lastOption
-    assert(latestSnapshotVersion.nonEmpty, "no snapshot file found")
-    assert(latestSnapshotVersion.get > snapshotVersion.get, "newer snapshot not generated")
-
-    deleteFilesEarlierThanVersion(provider, latestSnapshotVersion.get)
-    assert(getData(provider) === Set("a" -> 20), "snapshotting messed up the data")
   }
 
   test("cleaning") {
@@ -306,15 +217,6 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     intercept[Exception] {
       getData(provider, snapshotVersion - 1)
     }
-  }
-
-  test("reports memory usage") {
-    val provider = newStoreProvider()
-    val store = provider.getStore(0)
-    val noDataMemoryUsed = store.metrics.memoryUsedBytes
-    put(store, "a", 1)
-    store.commit()
-    assert(store.metrics.memoryUsedBytes > noDataMemoryUsed)
   }
 
   test("reports memory usage on current version") {
@@ -590,13 +492,21 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     newStoreProvider(storeId.operatorId, storeId.partitionId, dir = storeId.checkpointRootLocation)
   }
 
+  override def newStoreProvider(
+      minDeltasForSnapshot: Int,
+      numOfVersToRetainInMemory: Int): HDFSBackedStateStoreProvider = {
+    newStoreProvider(opId = Random.nextInt(), partition = 0,
+      minDeltasForSnapshot = minDeltasForSnapshot,
+      numOfVersToRetainInMemory = numOfVersToRetainInMemory)
+  }
+
   override def getLatestData(storeProvider: HDFSBackedStateStoreProvider): Set[(String, Int)] = {
-    getData(storeProvider)
+    getData(storeProvider, -1)
   }
 
   override def getData(
     provider: HDFSBackedStateStoreProvider,
-    version: Int = -1): Set[(String, Int)] = {
+    version: Int): Set[(String, Int)] = {
     val reloadedProvider = newStoreProvider(provider.stateStoreId)
     if (version < 0) {
       reloadedProvider.latestIterator().map(rowsToStringInt).toSet
@@ -635,18 +545,6 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
     provider
   }
 
-  def deleteFilesEarlierThanVersion(provider: HDFSBackedStateStoreProvider, version: Long): Unit = {
-    val method = PrivateMethod[Path](Symbol("baseDir"))
-    val basePath = provider invokePrivate method()
-    for (version <- 0 until version.toInt) {
-      for (isSnapshot <- Seq(false, true)) {
-        val fileName = if (isSnapshot) s"$version.snapshot" else s"$version.delta"
-        val filePath = new File(basePath.toString, fileName)
-        if (filePath.exists) filePath.delete()
-      }
-    }
-  }
-
   def corruptFile(
     provider: HDFSBackedStateStoreProvider,
     version: Long,
@@ -661,9 +559,12 @@ class StateStoreSuite extends StateStoreSuiteBase[HDFSBackedStateStoreProvider]
 }
 
 abstract class StateStoreSuiteBase[ProviderClass <: StateStoreProvider]
-  extends StateStoreCodecsTest with PrivateMethodTester {
+    extends StateStoreCodecsTest with PrivateMethodTester {
   import StateStoreTestsHelper._
   import StateStoreCoordinatorSuite._
+
+  type MapType = mutable.HashMap[UnsafeRow, UnsafeRow]
+  type ProviderMapType = java.util.concurrent.ConcurrentHashMap[UnsafeRow, UnsafeRow]
 
   protected val keySchema: StructType
   protected val valueSchema: StructType
@@ -1004,11 +905,67 @@ abstract class StateStoreSuiteBase[ProviderClass <: StateStoreProvider]
     }
   }
 
+  test("snapshotting") {
+    val provider = newStoreProvider(minDeltasForSnapshot = 5, numOfVersToRetainInMemory = 2)
+
+    var currentVersion = 0
+
+    currentVersion = updateVersionTo(provider, currentVersion, 2)
+    require(getLatestData(provider) === Set("a" -> 2))
+    provider.doMaintenance()               // should not generate snapshot files
+    assert(getLatestData(provider) === Set("a" -> 2))
+
+    for (i <- 1 to currentVersion) {
+      assert(fileExists(provider, i, isSnapshot = false))  // all delta files present
+      assert(!fileExists(provider, i, isSnapshot = true))  // no snapshot files present
+    }
+
+    // After version 6, snapshotting should generate one snapshot file
+    currentVersion = updateVersionTo(provider, currentVersion, 6)
+    require(getLatestData(provider) === Set("a" -> 6), "store not updated correctly")
+    provider.doMaintenance()       // should generate snapshot files
+
+    val snapshotVersion = (0 to 6).find(version => fileExists(provider, version, isSnapshot = true))
+    assert(snapshotVersion.nonEmpty, "snapshot file not generated")
+    deleteFilesEarlierThanVersion(provider, snapshotVersion.get)
+    assert(
+      getData(provider, snapshotVersion.get) === Set("a" -> snapshotVersion.get),
+      "snapshotting messed up the data of the snapshotted version")
+    assert(
+      getLatestData(provider) === Set("a" -> 6),
+      "snapshotting messed up the data of the final version")
+
+    // After version 20, snapshotting should generate newer snapshot files
+    currentVersion = updateVersionTo(provider, currentVersion, 20)
+    require(getLatestData(provider) === Set("a" -> 20), "store not updated correctly")
+    provider.doMaintenance()       // do snapshot
+
+    val latestSnapshotVersion = (0 to 20).filter(version =>
+      fileExists(provider, version, isSnapshot = true)).lastOption
+    assert(latestSnapshotVersion.nonEmpty, "no snapshot file found")
+    assert(latestSnapshotVersion.get > snapshotVersion.get, "newer snapshot not generated")
+
+    deleteFilesEarlierThanVersion(provider, latestSnapshotVersion.get)
+    assert(getLatestData(provider) === Set("a" -> 20), "snapshotting messed up the data")
+  }
+
+  test("reports memory usage") {
+    val provider = newStoreProvider()
+    val store = provider.getStore(0)
+    val noDataMemoryUsed = store.metrics.memoryUsedBytes
+    put(store, "a", 1)
+    store.commit()
+    assert(store.metrics.memoryUsedBytes > noDataMemoryUsed)
+  }
+
   /** Return a new provider with a random id */
   def newStoreProvider(): ProviderClass
 
   /** Return a new provider with the given id */
   def newStoreProvider(storeId: StateStoreId): ProviderClass
+
+  /** Return a new provider with minimum delta and version to retain in memory */
+  def newStoreProvider(minDeltasForSnapshot: Int, numOfVersToRetainInMemory: Int): ProviderClass
 
   /** Get the latest data referred to by the given provider but not using this provider */
   def getLatestData(storeProvider: ProviderClass): Set[(String, Int)]
@@ -1039,6 +996,58 @@ abstract class StateStoreSuiteBase[ProviderClass <: StateStoreProvider]
     val fileName = if (isSnapshot) s"$version.snapshot" else s"$version.delta"
     val filePath = new File(basePath.toString, fileName)
     filePath.exists
+  }
+
+  def updateVersionTo(
+      provider: StateStoreProvider,
+      currentVersion: Int,
+      targetVersion: Int): Int = {
+    var newCurrentVersion = currentVersion
+    for (i <- newCurrentVersion until targetVersion) {
+      newCurrentVersion = incrementVersion(provider, i)
+    }
+    require(newCurrentVersion === targetVersion)
+    newCurrentVersion
+  }
+
+  def incrementVersion(provider: StateStoreProvider, currentVersion: Int): Int = {
+    val store = provider.getStore(currentVersion)
+    put(store, "a", currentVersion + 1)
+    store.commit()
+    currentVersion + 1
+  }
+
+  def checkLoadedVersions(
+      loadedMaps: util.SortedMap[Long, ProviderMapType],
+      count: Int,
+      earliestKey: Long,
+      latestKey: Long): Unit = {
+    assert(loadedMaps.size() === count)
+    assert(loadedMaps.firstKey() === earliestKey)
+    assert(loadedMaps.lastKey() === latestKey)
+  }
+
+  def checkVersion(
+      loadedMaps: util.SortedMap[Long, ProviderMapType],
+      version: Long,
+      expectedData: Map[String, Int]): Unit = {
+    val originValueMap = loadedMaps.get(version).asScala.map { entry =>
+      rowToString(entry._1) -> rowToInt(entry._2)
+    }.toMap
+
+    assert(originValueMap === expectedData)
+  }
+
+  def deleteFilesEarlierThanVersion(provider: ProviderClass, version: Long): Unit = {
+    val method = PrivateMethod[Path](Symbol("baseDir"))
+    val basePath = provider invokePrivate method()
+    for (version <- 0 until version.toInt) {
+      for (isSnapshot <- Seq(false, true)) {
+        val fileName = if (isSnapshot) s"$version.snapshot" else s"$version.delta"
+        val filePath = new File(basePath.toString, fileName)
+        if (filePath.exists) filePath.delete()
+      }
+    }
   }
 }
 

@@ -29,7 +29,6 @@ import scala.collection.mutable
 import scala.util.Random
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.count
 import org.apache.spark.sql.internal.SQLConf
@@ -40,8 +39,6 @@ class RocksDbStateStoreSuite
   extends StateStoreSuiteBase[RocksDbStateStoreProvider]
     with BeforeAndAfter
     with PrivateMethodTester {
-  type MapType = mutable.HashMap[UnsafeRow, UnsafeRow]
-  type ProviderMapType = java.util.concurrent.ConcurrentHashMap[UnsafeRow, UnsafeRow]
 
   import StateStoreTestsHelper._
 
@@ -56,48 +53,6 @@ class RocksDbStateStoreSuite
   after {
     StateStore.stop()
     require(!StateStore.isMaintenanceRunning)
-  }
-
-  def updateVersionTo(
-                       provider: StateStoreProvider,
-                       currentVersion: Int,
-                       targetVersion: Int): Int = {
-    var newCurrentVersion = currentVersion
-    for (i <- newCurrentVersion until targetVersion) {
-      newCurrentVersion = incrementVersion(provider, i)
-    }
-    require(newCurrentVersion === targetVersion)
-    newCurrentVersion
-  }
-
-  def incrementVersion(provider: StateStoreProvider, currentVersion: Int): Int = {
-    val store = provider.getStore(currentVersion)
-    put(store, "a", currentVersion + 1)
-    store.commit()
-    currentVersion + 1
-  }
-
-  def checkLoadedVersions(
-                           rocksDbWriteInstance: RocksDbInstance,
-                           count: Int,
-                           earliestKey: Long,
-                           latestKey: Long): Unit = {
-    assert(rocksDbWriteInstance.iterator(false).length === count)
-  }
-
-  def checkVersion(
-                    rocksDbWriteInstance: RocksDbInstance,
-                    version: Long,
-                    expectedData: Map[String, Int]): Unit = {
-
-    val originValueMap = rocksDbWriteInstance
-      .iterator(false)
-      .map { row =>
-        rowToString(row.key) -> rowToInt(row.value)
-      }
-      .toMap[String, Int]
-
-    assert(originValueMap === expectedData)
   }
 
   test("New get, put, remove, commit, and all data iterator") {
@@ -144,52 +99,6 @@ class RocksDbStateStoreSuite
     assert(rowsToSet(reloadedStore.iterator()) === Set("b" -> 2, "c" -> 4))
     assert(getLatestData(provider) === Set("b" -> 2, "c" -> 4))
     assert(getData(provider, version = 1) === Set("b" -> 2))
-  }
-
-  test("snapshotting") {
-    val provider =
-      newStoreProvider(opId = Random.nextInt, partition = 0, minDeltasForSnapshot = 5)
-
-    var currentVersion = 0
-
-    currentVersion = updateVersionTo(provider, currentVersion, 2)
-    require(getData(provider) === Set("a" -> 2))
-    provider.doMaintenance() // should not generate snapshot files
-    assert(getData(provider) === Set("a" -> 2))
-
-    for (i <- 1 to currentVersion) {
-      assert(fileExists(provider, i, isSnapshot = false)) // all delta files present
-      assert(!fileExists(provider, i, isSnapshot = true)) // no snapshot files present
-    }
-
-    // After version 6, snapshotting should generate one snapshot file
-    currentVersion = updateVersionTo(provider, currentVersion, 6)
-    require(getData(provider) === Set("a" -> 6), "store not updated correctly")
-    provider.doMaintenance() // should generate snapshot files
-
-    val snapshotVersion =
-      (0 to 6).find(version => fileExists(provider, version, isSnapshot = true))
-    assert(snapshotVersion.nonEmpty, "snapshot file not generated")
-    deleteFilesEarlierThanVersion(provider, snapshotVersion.get)
-    assert(
-      getData(provider, snapshotVersion.get) === Set("a" -> snapshotVersion.get),
-      "snapshotting messed up the data of the snapshotted version")
-    assert(
-      getData(provider) === Set("a" -> 6),
-      "snapshotting messed up the data of the final version")
-
-    // After version 20, snapshotting should generate newer snapshot files
-    currentVersion = updateVersionTo(provider, currentVersion, 20)
-    require(getData(provider) === Set("a" -> 20), "store not updated correctly")
-    provider.doMaintenance() // do snapshot
-
-    val latestSnapshotVersion =
-      (0 to 20).filter(version => fileExists(provider, version, isSnapshot = true)).lastOption
-    assert(latestSnapshotVersion.nonEmpty, "no snapshot file found")
-    assert(latestSnapshotVersion.get > snapshotVersion.get, "newer snapshot not generated")
-
-    deleteFilesEarlierThanVersion(provider, latestSnapshotVersion.get)
-    assert(getData(provider) === Set("a" -> 20), "snapshotting messed up the data")
   }
 
   test("cleaning") {
@@ -367,6 +276,14 @@ class RocksDbStateStoreSuite
       localDir = localDir)
   }
 
+  override def newStoreProvider(
+      minDeltasForSnapshot: Int,
+      numOfVersToRetainInMemory: Int): RocksDbStateStoreProvider = {
+    newStoreProvider(opId = Random.nextInt(), partition = 0,
+      minDeltasForSnapshot = minDeltasForSnapshot,
+      numOfVersToRetainInMemory = numOfVersToRetainInMemory)
+  }
+
   override def getLatestData(storeProvider: RocksDbStateStoreProvider): Set[(String, Int)] = {
     getData(storeProvider)
   }
@@ -404,18 +321,6 @@ class RocksDbStateStoreSuite
       new StateStoreConf(sqlConf),
       hadoopConf)
     provider
-  }
-
-  def deleteFilesEarlierThanVersion(provider: RocksDbStateStoreProvider, version: Long): Unit = {
-    val method = PrivateMethod[Path]('baseDir)
-    val basePath = provider invokePrivate method()
-    for (version <- 0 until version.toInt) {
-      for (isSnapshot <- Seq(false, true)) {
-        val fileName = if (isSnapshot) s"$version.snapshot" else s"$version.delta"
-        val filePath = new File(basePath.toString, fileName)
-        if (filePath.exists) filePath.delete()
-      }
-    }
   }
 
   def corruptFile(
