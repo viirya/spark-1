@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution.{BinaryExecNode, SparkPlan}
 import org.apache.spark.sql.execution.streaming.StreamingSymmetricHashJoinHelper._
 import org.apache.spark.sql.execution.streaming.state._
-import org.apache.spark.sql.execution.streaming.state.SymmetricHashJoinStateManager.KeyToValuePair
+import org.apache.spark.sql.execution.streaming.state.StreamingStateManagerBase.KeyToValuePair
 import org.apache.spark.sql.internal.SessionState
 import org.apache.spark.util.{CompletionIterator, SerializableConfiguration}
 

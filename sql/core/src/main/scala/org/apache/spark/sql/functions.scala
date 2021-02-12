@@ -33,6 +33,7 @@ import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, TimestampFormatter}
 import org.apache.spark.sql.execution.SparkSqlParser
 import org.apache.spark.sql.expressions.{Aggregator, SparkUserDefinedFunction, UserDefinedAggregator, UserDefinedFunction}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.streaming.GroupStateTimeout
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.types.DataType.parseTypeWithFallback
 import org.apache.spark.util.Utils
@@ -3626,7 +3627,7 @@ object functions {
    */
   def session_window(keyColumn: Column, timeColumn: Column): Column = {
     withExpr {
-      SessionWindow(keyColumn.expr, timeColumn.expr)
+      SessionWindow(keyColumn.expr, timeColumn.expr, GroupStateTimeout.EventTimeTimeout())
     }.as("session_window")
   }
 
