@@ -27,7 +27,7 @@ import org.apache.spark.sql.streaming._
 /**
  * Counts words in UTF8 encoded, '\n' delimited text received from the network.
  *
- * Usage: MapGroupsWithState <hostname> <port>
+ * Usage: StructuredSessionization <hostname> <port>
  * <hostname> and <port> describe the TCP server that Structured Streaming
  * would connect to receive data.
  *

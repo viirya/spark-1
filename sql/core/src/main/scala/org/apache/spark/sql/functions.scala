@@ -3617,6 +3617,21 @@ object functions {
   }
 
   /**
+   *
+   * @param keyColumn
+   * @param timeColumn
+   *
+   * @group datetime_funcs
+   * @since 3.2.0
+   */
+  def session_window(keyColumn: Column, timeColumn: Column): Column = {
+    withExpr {
+      SessionWindow(keyColumn.expr, timeColumn.expr)
+    }.as("session_window")
+  }
+
+
+  /**
    * Creates timestamp from the number of seconds since UTC epoch.
    * @group datetime_funcs
    * @since 3.1.0

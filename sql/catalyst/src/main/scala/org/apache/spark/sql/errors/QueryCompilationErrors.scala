@@ -351,6 +351,12 @@ private[spark] object QueryCompilationErrors {
       "of rows, therefore they are currently not supported.", t.origin.line, t.origin.startPosition)
   }
 
+  def multiSessionWindowExpressionsNotSupportedError(t: TreeNode[_]): Throwable = {
+    new AnalysisException("Multiple session window expressions would result in " +
+      "a cartesian product of rows, therefore they are currently not supported.",
+      t.origin.line, t.origin.startPosition)
+  }
+
   def viewOutputNumberMismatchQueryColumnNamesError(
       output: Seq[Attribute], queryColumnNames: Seq[String]): Throwable = {
     new AnalysisException(

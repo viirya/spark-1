@@ -31,7 +31,7 @@ import java.util.*;
 /**
  * Counts words in UTF8 encoded, '\n' delimited text received from the network.
  * <p>
- * Usage: JavaStructuredNetworkWordCount <hostname> <port>
+ * Usage: JavaStructuredSessionization <hostname> <port>
  * <hostname> and <port> describe the TCP server that Structured Streaming
  * would connect to receive data.
  * <p>
