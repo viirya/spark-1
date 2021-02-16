@@ -73,4 +73,43 @@ class VersionUtilsSuite extends SparkFunSuite {
       }
     }
   }
+
+  test("Return short version number") {
+    assert(shortVersion("3.0.0") === "3.0.0")
+    assert(shortVersion("3.0.0-SNAPSHOT") === "3.0.0")
+    withClue("shortVersion parsing should fail for missing maintenance version number") {
+      intercept[IllegalArgumentException] {
+        shortVersion("3.0")
+      }
+    }
+    withClue("shortVersion parsing should fail for invalid major version number") {
+      intercept[IllegalArgumentException] {
+        shortVersion("x.0.0")
+      }
+    }
+    withClue("shortVersion parsing should fail for invalid minor version number") {
+      intercept[IllegalArgumentException] {
+        shortVersion("3.x.0")
+      }
+    }
+    withClue("shortVersion parsing should fail for invalid maintenance version number") {
+      intercept[IllegalArgumentException] {
+        shortVersion("3.0.x")
+      }
+    }
+  }
+
+  test("SPARK-33212: retrieve major/minor/patch version parts") {
+    assert(VersionUtils.majorMinorPatchVersion("3.2.2").contains((3, 2, 2)))
+    assert(VersionUtils.majorMinorPatchVersion("3.2.2.4").contains((3, 2, 2)))
+    assert(VersionUtils.majorMinorPatchVersion("3.2.2-SNAPSHOT").contains((3, 2, 2)))
+    assert(VersionUtils.majorMinorPatchVersion("3.2.2.4XXX").contains((3, 2, 2)))
+    assert(VersionUtils.majorMinorPatchVersion("3.2").contains((3, 2, 0)))
+    assert(VersionUtils.majorMinorPatchVersion("3").contains((3, 0, 0)))
+
+    // illegal cases
+    Seq("ABC", "3X", "3.2-SNAPSHOT", "3.2ABC", "3-ABC", "3.2.4XYZ").foreach { version =>
+      assert(VersionUtils.majorMinorPatchVersion(version).isEmpty, s"version $version")
+    }
+  }
 }

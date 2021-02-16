@@ -17,8 +17,7 @@
 
 package org.apache.spark.sql.catalyst.expressions
 
-import java.sql.{Date, Timestamp}
-import java.util.TimeZone
+import java.sql.Timestamp
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.types._
@@ -32,18 +31,10 @@ class SortOrderExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper 
     val b2 = Literal.create(true, BooleanType)
     val i1 = Literal.create(20132983, IntegerType)
     val i2 = Literal.create(-20132983, IntegerType)
-    val l1 = Literal.create(20132983, LongType)
-    val l2 = Literal.create(-20132983, LongType)
-    val millis = 1524954911000L;
-    // Explicitly choose a time zone, since Date objects can create different values depending on
-    // local time zone of the machine on which the test is running
-    val oldDefaultTZ = TimeZone.getDefault
-    val d1 = try {
-      TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
-      Literal.create(new java.sql.Date(millis), DateType)
-    } finally {
-      TimeZone.setDefault(oldDefaultTZ)
-    }
+    val l1 = Literal.create(20132983L, LongType)
+    val l2 = Literal.create(-20132983L, LongType)
+    val millis = 1524954911000L
+    val d1 = Literal.create(new java.sql.Date(millis), DateType)
     val t1 = Literal.create(new Timestamp(millis), TimestampType)
     val f1 = Literal.create(0.7788229f, FloatType)
     val f2 = Literal.create(-0.7788229f, FloatType)
@@ -57,7 +48,7 @@ class SortOrderExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper 
     val dec1 = Literal(Decimal(20132983L, 10, 2))
     val dec2 = Literal(Decimal(20132983L, 19, 2))
     val dec3 = Literal(Decimal(20132983L, 21, 2))
-    val list1 = Literal(List(1, 2), ArrayType(IntegerType))
+    val list1 = Literal.create(Seq(1, 2), ArrayType(IntegerType))
     val nullVal = Literal.create(null, IntegerType)
 
     checkEvaluation(SortPrefix(SortOrder(b1, Ascending)), 0L)

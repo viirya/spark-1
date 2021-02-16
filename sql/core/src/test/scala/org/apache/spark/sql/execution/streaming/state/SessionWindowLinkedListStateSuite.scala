@@ -19,10 +19,7 @@ package org.apache.spark.sql.execution.streaming.state
 
 import java.util.UUID
 
-import scala.util.Random
-
 import org.apache.hadoop.conf.Configuration
-import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericInternalRow, LessThanOrEqual, Literal, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.expressions.codegen.GeneratePredicate

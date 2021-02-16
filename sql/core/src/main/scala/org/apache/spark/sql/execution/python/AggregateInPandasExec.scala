@@ -29,8 +29,8 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.physical.{AllTuples, ClusteredDistribution, Distribution, Partitioning}
 import org.apache.spark.sql.execution.{GroupedIterator, SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.aggregate.UpdatingSessionIterator
-import org.apache.spark.sql.execution.arrow.ArrowUtils
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
+import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.util.Utils
 
 /**
@@ -120,12 +120,13 @@ case class AggregateInPandasExec(
     // Schema of input rows to the python runner
     val aggInputSchema = StructType(dataTypes.zipWithIndex.map { case (dt, i) =>
       StructField(s"_$i", dt)
-    })
+    }.toSeq)
 
-    inputRDD.mapPartitionsInternal { iter =>
+    // Map grouped rows to ArrowPythonRunner results, Only execute if partition is not empty
+    inputRDD.mapPartitionsInternal { iter => if (iter.isEmpty) iter else {
       val newIter: Iterator[InternalRow] = mayAppendUpdatingSessionIterator(iter)
 
-      val prunedProj = UnsafeProjection.create(allInputs, child.output)
+      val prunedProj = UnsafeProjection.create(allInputs.toSeq, child.output)
 
       val grouped = if (groupingExpressions.isEmpty) {
         // Use an empty unsafe row as a place holder for the grouping key
@@ -170,7 +171,7 @@ case class AggregateInPandasExec(
         val joinedRow = joined(leftRow, aggOutputRow)
         resultProj(joinedRow)
       }
-    }
+    }}
   }
 
   private def mayAppendUpdatingSessionIterator(iter: Iterator[InternalRow])

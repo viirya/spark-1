@@ -62,7 +62,7 @@ private[r] object AFTSurvivalRegressionWrapper extends MLReadable[AFTSurvivalReg
   private val FORMULA_REGEXP = """Surv\(([^,]+), ([^,]+)\) ~ (.+)""".r
 
   private def formulaRewrite(formula: String): (String, String) = {
-    var rewritedFormula: String = null
+    var rewrittenFormula: String = null
     var censorCol: String = null
     try {
       val FORMULA_REGEXP(label, censor, features) = formula
@@ -71,14 +71,14 @@ private[r] object AFTSurvivalRegressionWrapper extends MLReadable[AFTSurvivalReg
         throw new UnsupportedOperationException(
           "Terms of survreg formula can not support dot operator.")
       }
-      rewritedFormula = label.trim + "~" + features.trim
+      rewrittenFormula = label.trim + "~" + features.trim
       censorCol = censor.trim
     } catch {
       case e: MatchError =>
         throw new SparkException(s"Could not parse formula: $formula")
     }
 
-    (rewritedFormula, censorCol)
+    (rewrittenFormula, censorCol)
   }
 
 
@@ -88,9 +88,9 @@ private[r] object AFTSurvivalRegressionWrapper extends MLReadable[AFTSurvivalReg
       aggregationDepth: Int,
       stringIndexerOrderType: String): AFTSurvivalRegressionWrapper = {
 
-    val (rewritedFormula, censorCol) = formulaRewrite(formula)
+    val (rewrittenFormula, censorCol) = formulaRewrite(formula)
 
-    val rFormula = new RFormula().setFormula(rewritedFormula)
+    val rFormula = new RFormula().setFormula(rewrittenFormula)
       .setStringIndexerOrderType(stringIndexerOrderType)
     RWrapperUtils.checkDataColumns(rFormula, data)
     val rFormulaModel = rFormula.fit(data)

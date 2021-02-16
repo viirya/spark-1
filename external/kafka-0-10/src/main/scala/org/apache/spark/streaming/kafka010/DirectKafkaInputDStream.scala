@@ -70,7 +70,8 @@ private[spark] class DirectKafkaInputDStream[K, V](
   @transient private var kc: Consumer[K, V] = null
   def consumer(): Consumer[K, V] = this.synchronized {
     if (null == kc) {
-      kc = consumerStrategy.onStart(currentOffsets.mapValues(l => new java.lang.Long(l)).asJava)
+      kc = consumerStrategy.onStart(
+        currentOffsets.mapValues(l => java.lang.Long.valueOf(l)).toMap.asJava)
     }
     kc
   }
@@ -108,7 +109,6 @@ private[spark] class DirectKafkaInputDStream[K, V](
     }
   }
 
-  // Keep this consistent with how other streams are named (e.g. "Flume polling stream [2]")
   private[streaming] override def name: String = s"Kafka 0.10 direct stream [$id]"
 
   protected[streaming] override val checkpointData =
@@ -230,8 +230,7 @@ private[spark] class DirectKafkaInputDStream[K, V](
       val fo = currentOffsets(tp)
       OffsetRange(tp.topic, tp.partition, fo, uo)
     }
-    val useConsumerCache = context.conf.getBoolean("spark.streaming.kafka.consumer.cache.enabled",
-      true)
+    val useConsumerCache = context.conf.get(CONSUMER_CACHE_ENABLED)
     val rdd = new KafkaRDD[K, V](context.sparkContext, executorKafkaParams, offsetRanges.toArray,
       getPreferredHosts, useConsumerCache)
 
@@ -239,9 +238,10 @@ private[spark] class DirectKafkaInputDStream[K, V](
     val description = offsetRanges.filter { offsetRange =>
       // Don't display empty ranges.
       offsetRange.fromOffset != offsetRange.untilOffset
-    }.map { offsetRange =>
+    }.toSeq.sortBy(-_.count()).map { offsetRange =>
       s"topic: ${offsetRange.topic}\tpartition: ${offsetRange.partition}\t" +
-        s"offsets: ${offsetRange.fromOffset} to ${offsetRange.untilOffset}"
+      s"offsets: ${offsetRange.fromOffset} to ${offsetRange.untilOffset}\t" +
+      s"count: ${offsetRange.count()}"
     }.mkString("\n")
     // Copy offsetRanges to immutable.List to prevent from being modified by the user
     val metadata = Map(
@@ -316,7 +316,7 @@ private[spark] class DirectKafkaInputDStream[K, V](
     override def update(time: Time): Unit = {
       batchForTime.clear()
       generatedRDDs.foreach { kv =>
-        val a = kv._2.asInstanceOf[KafkaRDD[K, V]].offsetRanges.map(_.toTuple).toArray
+        val a = kv._2.asInstanceOf[KafkaRDD[K, V]].offsetRanges.map(_.toTuple)
         batchForTime += kv._1 -> a
       }
     }

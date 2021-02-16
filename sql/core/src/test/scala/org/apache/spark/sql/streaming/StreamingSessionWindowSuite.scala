@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.streaming
 
-import org.scalatest.{BeforeAndAfter, Matchers}
+import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution.streaming.MemoryStream
@@ -25,7 +25,7 @@ import org.apache.spark.sql.functions.{count, session_window, sum}
 import org.apache.spark.sql.internal.SQLConf
 
 class StreamingSessionWindowSuite extends StreamTest
-  with BeforeAndAfter with Matchers with Logging {
+  with BeforeAndAfter with Logging {
 
   import testImplicits._
 

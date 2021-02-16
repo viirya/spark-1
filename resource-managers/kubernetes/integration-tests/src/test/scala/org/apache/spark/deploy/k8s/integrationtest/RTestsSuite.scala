@@ -16,20 +16,17 @@
  */
 package org.apache.spark.deploy.k8s.integrationtest
 
-import org.apache.spark.deploy.k8s.integrationtest.TestConfig.{getTestImageRepo, getTestImageTag}
-
 private[spark] trait RTestsSuite { k8sSuite: KubernetesSuite =>
 
   import RTestsSuite._
-  import KubernetesSuite.k8sTestTag
+  import KubernetesSuite.{k8sTestTag, rTestTag}
 
-  test("Run SparkR on simple dataframe.R example", k8sTestTag) {
-    sparkAppConf
-      .set("spark.kubernetes.container.image", s"${getTestImageRepo}/spark-r:${getTestImageTag}")
+  test("Run SparkR on simple dataframe.R example", k8sTestTag, rTestTag) {
+    sparkAppConf.set("spark.kubernetes.container.image", rImage)
     runSparkApplicationAndVerifyCompletion(
       appResource = SPARK_R_DATAFRAME_TEST,
       mainClass = "",
-      expectedLogOnCompletion = Seq("name: string (nullable = true)", "1 Justin"),
+      expectedDriverLogOnCompletion = Seq("name: string (nullable = true)", "1 Justin"),
       appArgs = Array.empty[String],
       driverPodChecker = doBasicDriverRPodCheck,
       executorPodChecker = doBasicExecutorRPodCheck,

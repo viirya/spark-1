@@ -23,7 +23,6 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
 import org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray
-import org.apache.spark.sql.types.{LongType, TimestampType}
 
 // FIXME: javadoc!!
 class UpdatingSessionIterator(

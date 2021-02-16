@@ -21,10 +21,10 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.catalyst.plans.logical.Expand
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StringType
 
-class DataFrameSessionWindowingSuite extends QueryTest with SharedSQLContext
+class DataFrameSessionWindowingSuite extends QueryTest with SharedSparkSession
   with BeforeAndAfterEach {
 
   import testImplicits._

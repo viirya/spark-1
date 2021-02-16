@@ -19,7 +19,7 @@ package org.apache.spark.sql.execution.aggregate
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, AttributeSet, Expression, NamedExpression, SortOrder, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, AttributeSet, Expression, MutableProjection, NamedExpression, SortOrder, UnsafeRow}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
@@ -96,7 +96,7 @@ case class MergingSessionsExec(
           initialInputBufferOffset,
           resultExpressions,
           (expressions, inputSchema) =>
-            newMutableProjection(expressions, inputSchema, subexpressionEliminationEnabled),
+            MutableProjection.create(expressions, inputSchema),
           numOutputRows)
         if (!hasInput && groupingExpressions.isEmpty) {
           // There is no input and there is no grouping expressions.

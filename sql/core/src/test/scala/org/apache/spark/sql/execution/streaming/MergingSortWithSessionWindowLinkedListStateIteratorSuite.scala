@@ -26,11 +26,11 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, GenericInternalRow, UnsafeRow}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
 import org.apache.spark.sql.execution.streaming.state.{SessionWindowLinkedListState, StateStore, StateStoreConf}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 
-class MergingSortWithSessionWindowLinkedListStateIteratorSuite extends SharedSQLContext {
+class MergingSortWithSessionWindowLinkedListStateIteratorSuite extends SharedSparkSession {
 
   val rowSchema = new StructType().add("key1", StringType).add("key2", IntegerType)
     .add("session", new StructType().add("start", LongType).add("end", LongType))
