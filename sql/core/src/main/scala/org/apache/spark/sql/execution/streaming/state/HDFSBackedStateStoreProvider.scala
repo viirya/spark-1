@@ -179,8 +179,12 @@ private[state] class HDFSBackedStateStoreProvider extends StateStoreProvider wit
      */
     override def iterator(): Iterator[UnsafeRowPair] = {
       val unsafeRowPair = new UnsafeRowPair()
-      mapToUpdate.entrySet.asScala.iterator.map { entry =>
-        unsafeRowPair.withRows(entry.getKey, entry.getValue)
+      mapToUpdate.entrySet.asScala.iterator.flatMap { entry =>
+        if (entry == null) {
+          None
+        } else {
+          Some(unsafeRowPair.withRows(entry.getKey, entry.getValue))
+        }
       }
     }
 
