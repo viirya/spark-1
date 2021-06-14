@@ -264,7 +264,7 @@ case class HashAggregateExec(
     } else {
       val inputVars = aggBufferUpdatingExprs.map { aggExprsForOneFunc =>
         val inputVarsForOneFunc = aggExprsForOneFunc.map(
-          CodeGenerator.getLocalInputVariableValues(ctx, _, subExprs)._1).reduce(_ ++ _).toSeq
+          CodeGenerator.getLocalInputVariableValues(ctx, _)._1).reduce(_ ++ _).toSeq
         val paramLength = CodeGenerator.calculateParamLengthFromExprValues(inputVarsForOneFunc)
 
         // Checks if a parameter length for the `aggExprsForOneFunc` does not go over the JVM limit

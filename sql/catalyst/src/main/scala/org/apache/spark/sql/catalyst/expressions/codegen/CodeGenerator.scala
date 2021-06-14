@@ -1756,9 +1756,7 @@ object CodeGenerator extends Logging {
    */
   def getLocalInputVariableValues(
       ctx: CodegenContext,
-      expr: Expression,
-      subExprs: Map[Expression, SubExprEliminationState] = Map.empty)
-      : (Set[VariableValue], Set[ExprCode]) = {
+      expr: Expression): (Set[VariableValue], Set[ExprCode]) = {
     val argSet = mutable.Set[VariableValue]()
     val exprCodesNeedEvaluate = mutable.Set[ExprCode]()
 
@@ -1775,11 +1773,6 @@ object CodeGenerator extends Logging {
     val stack = mutable.Stack[Expression](expr)
     while (stack.nonEmpty) {
       stack.pop() match {
-        case e if subExprs.contains(e) =>
-          val SubExprEliminationState(isNull, value) = subExprs(e)
-          collectLocalVariable(value)
-          collectLocalVariable(isNull)
-
         case ref: BoundReference if ctx.currentVars != null &&
             ctx.currentVars(ref.ordinal) != null =>
           val exprCode = ctx.currentVars(ref.ordinal)
