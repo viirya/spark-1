@@ -19,7 +19,8 @@ package org.apache.spark.deploy.yarn
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.yarn.util.RackResolver
-import org.apache.log4j.{Level, Logger}
+import org.apache.logging.log4j.{Level, LogManager}
+import org.apache.logging.log4j.core.Logger
 
 /**
  * Wrapper around YARN's [[RackResolver]]. This allows Spark tests to easily override the
@@ -29,8 +30,9 @@ import org.apache.log4j.{Level, Logger}
 private[yarn] class SparkRackResolver {
 
   // RackResolver logs an INFO message whenever it resolves a rack, which is way too often.
-  if (Logger.getLogger(classOf[RackResolver]).getLevel == null) {
-    Logger.getLogger(classOf[RackResolver]).setLevel(Level.WARN)
+  val logger = LogManager.getLogger(classOf[RackResolver])
+  if (logger.getLevel != Level.WARN) {
+    logger.asInstanceOf[Logger].setLevel(Level.WARN)
   }
 
   def resolve(conf: Configuration, hostName: String): String = {

@@ -35,7 +35,10 @@ import scala.sys.process.{Process, ProcessLogger}
 import scala.util.Try
 
 import com.google.common.io.{ByteStreams, Files}
-import org.apache.log4j.PropertyConfigurator
+import org.apache.logging.log4j.LogManager
+import org.apache.logging.log4j.core.LoggerContext
+import org.apache.logging.log4j.core.appender.ConsoleAppender
+import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory
 
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.scheduler._
@@ -275,17 +278,18 @@ private[spark] object TestUtils {
   }
 
   /**
-   * config a log4j properties used for testsuite
+   * config a log4j2 properties used for testsuite
    */
-  def configTestLog4j(level: String): Unit = {
-    val pro = new Properties()
-    pro.put("log4j.rootLogger", s"$level, console")
-    pro.put("log4j.appender.console", "org.apache.log4j.ConsoleAppender")
-    pro.put("log4j.appender.console.target", "System.err")
-    pro.put("log4j.appender.console.layout", "org.apache.log4j.PatternLayout")
-    pro.put("log4j.appender.console.layout.ConversionPattern",
-      "%d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n")
-    PropertyConfigurator.configure(pro)
+  def configTestLog4j2(level: String): Unit = {
+    val builder = ConfigurationBuilderFactory.newConfigurationBuilder()
+    val appenderBuilder = builder.newAppender("console", "CONSOLE")
+      .addAttribute("target", ConsoleAppender.Target.SYSTEM_ERR)
+    appenderBuilder.add(builder.newLayout("PatternLayout")
+      .addAttribute("pattern", "%d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n"))
+    builder.add(appenderBuilder)
+    builder.add(builder.newRootLogger(level).add(builder.newAppenderRef("console")))
+    val configuration = builder.build()
+    LogManager.getContext(false).asInstanceOf[LoggerContext].reconfigure(configuration)
   }
 
   /**

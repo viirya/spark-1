@@ -17,7 +17,9 @@
 
 package org.apache.spark.internal
 
-import org.apache.log4j.{Level, LogManager, PropertyConfigurator}
+import org.apache.logging.log4j.{Level, LogManager}
+import org.apache.logging.log4j.core.{Logger => Log4jLogger, LoggerContext}
+import org.apache.logging.log4j.core.config.DefaultConfiguration
 import org.slf4j.{Logger, LoggerFactory}
 import org.slf4j.impl.StaticLoggerBinder
 
@@ -114,17 +116,18 @@ trait Logging {
   }
 
   private def initializeLogging(isInterpreter: Boolean, silent: Boolean): Unit = {
-    // Don't use a logger in here, as this is itself occurring during initialization of a logger
-    // If Log4j 1.2 is being used, but is not initialized, load a default properties file
-    if (Logging.isLog4j12()) {
-      val log4j12Initialized = LogManager.getRootLogger.getAllAppenders.hasMoreElements
+    if (Logging.isLog4j2()) {
+      val rootLogger = LogManager.getRootLogger.asInstanceOf[Log4jLogger]
+      // If Log4j 2 is used but is initialized by default configuration,
+      // load a default properties file
       // scalastyle:off println
-      if (!log4j12Initialized) {
+      if (Logging.islog4j2DefaultConfigured()) {
         Logging.defaultSparkLog4jConfig = true
-        val defaultLogProps = "org/apache/spark/log4j-defaults.properties"
+        val defaultLogProps = "org/apache/spark/log4j2-defaults.properties"
         Option(Utils.getSparkClassLoader.getResource(defaultLogProps)) match {
           case Some(url) =>
-            PropertyConfigurator.configure(url)
+            val context = LogManager.getContext(false).asInstanceOf[LoggerContext]
+            context.setConfigLocation(url.toURI)
             if (!silent) {
               System.err.println(s"Using Spark's default log4j profile: $defaultLogProps")
             }
@@ -133,7 +136,6 @@ trait Logging {
         }
       }
 
-      val rootLogger = LogManager.getRootLogger()
       if (Logging.defaultRootLevel == null) {
         Logging.defaultRootLevel = rootLogger.getLevel()
       }
@@ -141,9 +143,9 @@ trait Logging {
       if (isInterpreter) {
         // Use the repl's main class to define the default log level when running the shell,
         // overriding the root logger's config if they're different.
-        val replLogger = LogManager.getLogger(logName)
+        val replLogger = LogManager.getLogger(logName).asInstanceOf[Log4jLogger]
         val replLevel = Option(replLogger.getLevel()).getOrElse(Level.WARN)
-        if (replLevel != rootLogger.getEffectiveLevel()) {
+        if (replLevel != rootLogger.getLevel()) {
           if (!silent) {
             System.err.printf("Setting default log level to \"%s\".\n", replLevel)
             System.err.println("To adjust logging level use sc.setLogLevel(newLevel). " +
@@ -187,22 +189,37 @@ private[spark] object Logging {
    * initialization again.
    */
   def uninitialize(): Unit = initLock.synchronized {
-    if (isLog4j12()) {
+    if (isLog4j2()) {
       if (defaultSparkLog4jConfig) {
         defaultSparkLog4jConfig = false
-        LogManager.resetConfiguration()
+        val context = LogManager.getContext(false).asInstanceOf[LoggerContext]
+        context.reconfigure()
       } else {
-        LogManager.getRootLogger().setLevel(defaultRootLevel)
+        val rootLogger = LogManager.getRootLogger().asInstanceOf[Log4jLogger]
+        rootLogger.setLevel(defaultRootLevel)
       }
     }
     this.initialized = false
   }
 
-  private def isLog4j12(): Boolean = {
+  private def isLog4j2(): Boolean = {
     // This distinguishes the log4j 1.2 binding, currently
     // org.slf4j.impl.Log4jLoggerFactory, from the log4j 2.0 binding, currently
     // org.apache.logging.slf4j.Log4jLoggerFactory
     val binderClass = StaticLoggerBinder.getSingleton.getLoggerFactoryClassStr
-    "org.slf4j.impl.Log4jLoggerFactory".equals(binderClass)
+    "org.apache.logging.slf4j.Log4jLoggerFactory".equals(binderClass)
+  }
+
+  /**
+   * Return true if log4j2 is initialized by default configuration which has one
+   * appender with error level. See `org.apache.logging.log4j.core.config.DefaultConfiguration`.
+   */
+  private[spark] def islog4j2DefaultConfigured(): Boolean = {
+    val rootLogger = LogManager.getRootLogger.asInstanceOf[Log4jLogger]
+    rootLogger.getAppenders.isEmpty ||
+      (rootLogger.getAppenders.size() == 1 &&
+        rootLogger.getLevel == Level.ERROR &&
+        LogManager.getContext.asInstanceOf[LoggerContext]
+          .getConfiguration.isInstanceOf[DefaultConfiguration])
   }
 }
