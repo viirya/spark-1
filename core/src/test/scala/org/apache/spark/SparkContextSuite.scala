@@ -30,6 +30,8 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.io.{BytesWritable, LongWritable, Text}
 import org.apache.hadoop.mapred.TextInputFormat
 import org.apache.hadoop.mapreduce.lib.input.{TextInputFormat => NewTextInputFormat}
+import org.apache.logging.log4j.{Level, LogManager}
+import org.apache.logging.log4j.core.Logger
 import org.scalatest.Matchers._
 import org.scalatest.concurrent.Eventually
 
@@ -470,15 +472,16 @@ class SparkContextSuite extends SparkFunSuite with LocalSparkContext with Eventu
 
   test("log level case-insensitive and reset log level") {
     sc = new SparkContext(new SparkConf().setAppName("test").setMaster("local"))
-    val originalLevel = org.apache.log4j.Logger.getRootLogger().getLevel
+    val rootLogger = LogManager.getRootLogger().asInstanceOf[Logger]
+    val originalLevel = rootLogger.getLevel
     try {
       sc.setLogLevel("debug")
-      assert(org.apache.log4j.Logger.getRootLogger().getLevel === org.apache.log4j.Level.DEBUG)
+      assert(rootLogger.getLevel === Level.DEBUG)
       sc.setLogLevel("INfo")
-      assert(org.apache.log4j.Logger.getRootLogger().getLevel === org.apache.log4j.Level.INFO)
+      assert(rootLogger.getLevel === Level.INFO)
     } finally {
       sc.setLogLevel(originalLevel.toString)
-      assert(org.apache.log4j.Logger.getRootLogger().getLevel === originalLevel)
+      assert(rootLogger.getLevel === originalLevel)
       sc.stop()
     }
   }
