@@ -250,8 +250,6 @@ private[spark] object ClosureCleaner extends Logging {
         innerClasses.foreach { c => logDebug(s"     ${c.getName}") }
         logDebug(s" + outer classes: ${outerClasses.size}" )
         outerClasses.foreach { c => logDebug(s"     ${c.getName}") }
-        logDebug(s" + outer objects: ${outerObjects.size}")
-        outerObjects.foreach { o => logDebug(s"     $o") }
       }
 
       // Fail fast if we detect return statements in closures
