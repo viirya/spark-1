@@ -23,7 +23,8 @@ import java.net.URLClassLoader
 import scala.collection.mutable.ArrayBuffer
 import scala.tools.nsc.interpreter.SimpleReader
 
-import org.apache.log4j.{Level, LogManager}
+import org.apache.logging.log4j.{Level, LogManager}
+import org.apache.logging.log4j.core.Logger
 
 import org.apache.spark.{SparkContext, SparkFunSuite}
 import org.apache.spark.sql.SparkSession
@@ -107,7 +108,7 @@ class ReplSuite extends SparkFunSuite {
   test("SPARK-15236: use Hive catalog") {
     // turn on the INFO log so that it is possible the code will dump INFO
     // entry for using "HiveMetastore"
-    val rootLogger = LogManager.getRootLogger()
+    val rootLogger = LogManager.getRootLogger().asInstanceOf[Logger]
     val logLevel = rootLogger.getLevel
     rootLogger.setLevel(Level.INFO)
     try {
@@ -133,7 +134,7 @@ class ReplSuite extends SparkFunSuite {
   }
 
   test("SPARK-15236: use in-memory catalog") {
-    val rootLogger = LogManager.getRootLogger()
+    val rootLogger = LogManager.getRootLogger().asInstanceOf[Logger]
     val logLevel = rootLogger.getLevel
     rootLogger.setLevel(Level.INFO)
     try {
