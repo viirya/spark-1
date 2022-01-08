@@ -30,8 +30,9 @@ import scala.util.Properties
 import org.apache.commons.lang3.time.FastDateFormat
 import org.apache.hadoop.io.SequenceFile.CompressionType
 import org.apache.hadoop.io.compress.GzipCodec
-import org.apache.log4j.{AppenderSkeleton, LogManager}
-import org.apache.log4j.spi.LoggingEvent
+import org.apache.logging.log4j.LogManager
+import org.apache.logging.log4j.core.{LogEvent, Logger}
+import org.apache.logging.log4j.core.appender.AbstractAppender
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -1673,28 +1674,30 @@ class CSVSuite extends QueryTest with SharedSQLContext with SQLTestUtils with Te
   }
 
   test("SPARK-23786: warning should be printed if CSV header doesn't conform to schema") {
-    class TestAppender extends AppenderSkeleton {
-      var events = new java.util.ArrayList[LoggingEvent]
-      override def close(): Unit = {}
-      override def requiresLayout: Boolean = false
-      protected def append(event: LoggingEvent): Unit = events.add(event)
+    class TestAppender extends AbstractAppender("testAppender", null, null) {
+      var events = new java.util.ArrayList[LogEvent]
+      override def append(event: LogEvent): Unit = events.add(event)
     }
 
     val testAppender1 = new TestAppender
-    LogManager.getRootLogger.addAppender(testAppender1)
+    val rootLogger = LogManager.getRootLogger().asInstanceOf[Logger]
+    rootLogger.addAppender(testAppender1)
+    testAppender1.start()
     try {
       val ds = Seq("columnA,columnB", "1.0,1000.0").toDS()
       val ischema = new StructType().add("columnB", DoubleType).add("columnA", DoubleType)
 
       spark.read.schema(ischema).option("header", true).option("enforceSchema", true).csv(ds)
     } finally {
-      LogManager.getRootLogger.removeAppender(testAppender1)
+      rootLogger.removeAppender(testAppender1)
     }
     assert(testAppender1.events.asScala
-      .exists(msg => msg.getRenderedMessage.contains("CSV header does not conform to the schema")))
+      .exists(msg =>
+        msg.getMessage.getFormattedMessage.contains("CSV header does not conform to the schema")))
 
     val testAppender2 = new TestAppender
-    LogManager.getRootLogger.addAppender(testAppender2)
+    rootLogger.addAppender(testAppender2)
+    testAppender2.start()
     try {
       withTempPath { path =>
         val oschema = new StructType().add("f1", DoubleType).add("f2", DoubleType)
@@ -1709,10 +1712,11 @@ class CSVSuite extends QueryTest with SharedSQLContext with SQLTestUtils with Te
           .collect()
       }
     } finally {
-      LogManager.getRootLogger.removeAppender(testAppender2)
+      rootLogger.removeAppender(testAppender2)
     }
     assert(testAppender2.events.asScala
-      .exists(msg => msg.getRenderedMessage.contains("CSV header does not conform to the schema")))
+      .exists(msg =>
+        msg.getMessage.getFormattedMessage.contains("CSV header does not conform to the schema")))
   }
 
   test("SPARK-25134: check header on parsing of dataset with projection and column pruning") {

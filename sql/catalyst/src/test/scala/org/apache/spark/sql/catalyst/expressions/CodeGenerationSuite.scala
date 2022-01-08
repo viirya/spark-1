@@ -19,8 +19,9 @@ package org.apache.spark.sql.catalyst.expressions
 
 import java.sql.Timestamp
 
-import org.apache.log4j.{Appender, AppenderSkeleton, Logger}
-import org.apache.log4j.spi.LoggingEvent
+import org.apache.logging.log4j.LogManager
+import org.apache.logging.log4j.core.{LogEvent, Logger}
+import org.apache.logging.log4j.core.appender.AbstractAppender
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.metrics.source.CodegenMetrics
@@ -505,17 +506,14 @@ class CodeGenerationSuite extends SparkFunSuite with ExpressionEvalHelper {
   }
 
   test("SPARK-25113: should log when there exists generated methods above HugeMethodLimit") {
-    class MockAppender extends AppenderSkeleton {
+    class MockAppender extends AbstractAppender("mockAppender", null, null) {
       var seenMessage = false
 
-      override def append(loggingEvent: LoggingEvent): Unit = {
-        if (loggingEvent.getRenderedMessage().contains("Generated method too long")) {
+      override def append(event: LogEvent): Unit = {
+        if (event.getMessage().getFormattedMessage.contains("Generated method too long")) {
           seenMessage = true
         }
       }
-
-      override def close(): Unit = {}
-      override def requiresLayout(): Boolean = false
     }
 
     val appender = new MockAppender()
@@ -529,9 +527,9 @@ class CodeGenerationSuite extends SparkFunSuite with ExpressionEvalHelper {
     assert(appender.seenMessage)
   }
 
-  private def withLogAppender(appender: Appender)(f: => Unit): Unit = {
+  private def withLogAppender(appender: AbstractAppender)(f: => Unit): Unit = {
     val logger =
-      Logger.getLogger(classOf[CodeGenerator[_, _]].getName)
+      LogManager.getLogger(classOf[CodeGenerator[_, _]].getName).asInstanceOf[Logger]
     logger.addAppender(appender)
     try f finally {
       logger.removeAppender(appender)
