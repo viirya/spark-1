@@ -18,7 +18,8 @@
 package org.apache.spark.scheduler.cluster
 
 import org.apache.hadoop.yarn.util.RackResolver
-import org.apache.log4j.{Level, Logger}
+import org.apache.logging.log4j.{Level, LogManager}
+import org.apache.logging.log4j.core.Logger
 
 import org.apache.spark._
 import org.apache.spark.scheduler.TaskSchedulerImpl
@@ -27,8 +28,8 @@ import org.apache.spark.util.Utils
 private[spark] class YarnScheduler(sc: SparkContext) extends TaskSchedulerImpl(sc) {
 
   // RackResolver logs an INFO message whenever it resolves a rack, which is way too often.
-  if (Logger.getLogger(classOf[RackResolver]).getLevel == null) {
-    Logger.getLogger(classOf[RackResolver]).setLevel(Level.WARN)
+  if (LogManager.getLogger(classOf[RackResolver]).getLevel == null) {
+    LogManager.getLogger(classOf[RackResolver]).asInstanceOf[Logger].setLevel(Level.WARN)
   }
 
   // By default, rack is unknown
