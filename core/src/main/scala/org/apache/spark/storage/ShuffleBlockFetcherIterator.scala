@@ -1354,7 +1354,9 @@ private class BufferReleasingInputStream(
     }
   }
 
-  override def available(): Int = tryOrFetchFailedException(delegate.available())
+  override def available(): Int = {
+    tryOrFetchFailedException(delegate.available())
+  }
 
   override def mark(readlimit: Int): Unit = delegate.mark(readlimit)
 
