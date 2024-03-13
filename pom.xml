@@ -148,6 +148,8 @@
     <chill.version>0.10.0</chill.version>
     <ivy.version>2.5.1</ivy.version>
     <oro.version>2.0.8</oro.version>
+    <spark.version.short>3.4</spark.version.short>
+    <comet.version>0.1.0-SNAPSHOT</comet.version>
     <!--
     If you changes codahale.metrics.version, you also need to change
     the link to metrics.dropwizard.io in docs/monitoring.md.
@@ -2765,6 +2767,25 @@
         <groupId>dev.ludovic.netlib</groupId>
         <artifactId>arpack</artifactId>
         <version>${netlib.ludovic.dev.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.comet</groupId>
+        <artifactId>comet-spark-spark${spark.version.short}_${scala.binary.version}</artifactId>
+        <version>${comet.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-sql_${scala.binary.version}</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-core_${scala.binary.version}</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-catalyst_${scala.binary.version}</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
     </dependencies>
   </dependencyManagement>

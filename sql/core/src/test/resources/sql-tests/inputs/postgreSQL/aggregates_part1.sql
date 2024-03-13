@@ -7,6 +7,9 @@
 
 -- avoid bit-exact output here because operations may not be bit-exact.
 -- SET extra_float_digits = 0;
+-- Disable Comet exec due to floating point precision difference
+--SET spark.comet.exec.enabled = false
+
 
 -- Test aggregate operator with codegen on and off.
 --CONFIG_DIM1 spark.sql.codegen.wholeStage=true

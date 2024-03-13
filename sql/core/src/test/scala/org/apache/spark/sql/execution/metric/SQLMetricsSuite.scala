@@ -737,7 +737,8 @@ class SQLMetricsSuite extends SharedSparkSession with SQLMetricsTestUtils
     }
   }
 
-  test("SPARK-26327: FileSourceScanExec metrics") {
+  test("SPARK-26327: FileSourceScanExec metrics",
+      DisableComet("Spark uses row-based Parquet reader while Comet is vectorized")) {
     withTable("testDataForScan") {
       spark.range(10).selectExpr("id", "id % 3 as p")
         .write.partitionBy("p").saveAsTable("testDataForScan")

@@ -1,5 +1,6 @@
 --SET spark.sql.cbo.enabled=true
 --SET spark.sql.maxMetadataStringLength = 500
+--SET spark.comet.enabled = false
 
 CREATE TABLE explain_temp1(a INT, b INT) USING PARQUET;
 CREATE TABLE explain_temp2(c INT, d INT) USING PARQUET;

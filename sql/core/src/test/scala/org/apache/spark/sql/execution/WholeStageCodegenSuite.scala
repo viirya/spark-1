@@ -616,7 +616,9 @@ class WholeStageCodegenSuite extends QueryTest with SharedSparkSession
           .write.mode(SaveMode.Overwrite).parquet(path)
 
         withSQLConf(SQLConf.WHOLESTAGE_MAX_NUM_FIELDS.key -> "255",
-            SQLConf.WHOLESTAGE_SPLIT_CONSUME_FUNC_BY_OPERATOR.key -> "true") {
+            SQLConf.WHOLESTAGE_SPLIT_CONSUME_FUNC_BY_OPERATOR.key -> "true",
+            // Disable Comet native execution because this checks wholestage codegen.
+            "spark.comet.exec.enabled" -> "false") {
           val projection = Seq.tabulate(columnNum)(i => s"c$i + c$i as newC$i")
           val df = spark.read.parquet(path).selectExpr(projection: _*)
 
