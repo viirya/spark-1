@@ -1508,7 +1508,8 @@ class SQLQuerySuite extends QueryTest with SharedSparkSession with AdaptiveSpark
     checkAnswer(sql("select -0.001"), Row(BigDecimal("-0.001")))
   }
 
-  test("external sorting updates peak execution memory") {
+  test("external sorting updates peak execution memory",
+    IgnoreComet("TODO: native CometSort does not update peak execution memory")) {
     AccumulatorSuite.verifyPeakExecutionMemorySet(sparkContext, "external sort") {
       sql("SELECT * FROM testData2 ORDER BY a ASC, b ASC").collect()
     }

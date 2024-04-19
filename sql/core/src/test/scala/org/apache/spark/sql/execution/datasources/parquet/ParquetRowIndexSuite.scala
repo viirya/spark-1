@@ -26,6 +26,7 @@ import org.apache.parquet.hadoop.{ParquetFileReader, ParquetOutputFormat}
 import org.apache.parquet.hadoop.ParquetWriter.DEFAULT_BLOCK_SIZE
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.comet.{CometBatchScanExec, CometScanExec}
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
@@ -230,6 +231,12 @@ class ParquetRowIndexSuite extends QueryTest with SharedSparkSession {
             case f: FileSourceScanExec =>
               numPartitions += f.inputRDD.partitions.length
               numOutputRows += f.metrics("numOutputRows").value
+            case b: CometScanExec =>
+              numPartitions += b.inputRDD.partitions.length
+              numOutputRows += b.metrics("numOutputRows").value
+            case b: CometBatchScanExec =>
+              numPartitions += b.inputRDD.partitions.length
+              numOutputRows += b.metrics("numOutputRows").value
             case _ =>
           }
           assert(numPartitions > 0)

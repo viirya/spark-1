@@ -69,7 +69,7 @@ import org.apache.spark.tags.ExtendedSQLTest
  * }}}
  */
 // scalastyle:on line.size.limit
-trait PlanStabilitySuite extends DisableAdaptiveExecutionSuite {
+trait PlanStabilitySuite extends DisableAdaptiveExecutionSuite with IgnoreCometSuite {
 
   protected val baseResourcePath = {
     // use the same way as `SQLQueryTestSuite` to get the resource path

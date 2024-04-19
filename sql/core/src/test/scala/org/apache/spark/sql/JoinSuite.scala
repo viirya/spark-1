@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
 import org.apache.spark.sql.catalyst.expressions.{Ascending, GenericRow, SortOrder}
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.comet._
 import org.apache.spark.sql.execution.{BinaryExecNode, FilterExec, ProjectExec, SortExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.exchange.{ShuffleExchangeExec, ShuffleExchangeLike}
@@ -1369,9 +1370,12 @@ class JoinSuite extends QueryTest with SharedSparkSession with AdaptiveSparkPlan
           }
           val plan = sql(getJoinQuery(selectExpr, joinType)).queryExecution.executedPlan
           assert(collect(plan) { case _: BroadcastNestedLoopJoinExec => true }.size === 1)
-          assert(collect(plan) { case _: SortMergeJoinExec => true }.size === 3)
+          assert(collect(plan) {
+            case _: SortMergeJoinExec => true
+            case _: CometSortMergeJoinExec => true
+          }.size === 3)
           // No extra sort on left side before last sort merge join
-          assert(collect(plan) { case _: SortExec => true }.size === 5)
+          assert(collect(plan) { case _: SortExec | _: CometSortExec => true }.size === 5)
       }
 
       // Test output ordering is not preserved
@@ -1380,9 +1384,12 @@ class JoinSuite extends QueryTest with SharedSparkSession with AdaptiveSparkPlan
           val selectExpr = "/*+ BROADCAST(left_t) */ k1 as k0"
           val plan = sql(getJoinQuery(selectExpr, joinType)).queryExecution.executedPlan
           assert(collect(plan) { case _: BroadcastNestedLoopJoinExec => true }.size === 1)
-          assert(collect(plan) { case _: SortMergeJoinExec => true }.size === 3)
+          assert(collect(plan) {
+            case _: SortMergeJoinExec => true
+            case _: CometSortMergeJoinExec => true
+          }.size === 3)
           // Have sort on left side before last sort merge join
-          assert(collect(plan) { case _: SortExec => true }.size === 6)
+          assert(collect(plan) { case _: SortExec | _: CometSortExec => true }.size === 6)
       }
 
       // Test singe partition

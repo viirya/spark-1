@@ -22,7 +22,7 @@ import java.util
 
 import org.scalatest.BeforeAndAfter
 
-import org.apache.spark.sql.{AnalysisException, Row, SaveMode}
+import org.apache.spark.sql.{AnalysisException, IgnoreComet, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
@@ -327,7 +327,8 @@ class DataStreamTableAPISuite extends StreamTest with BeforeAndAfter {
     }
   }
 
-  test("explain with table on DSv1 data source") {
+  test("explain with table on DSv1 data source",
+      IgnoreComet("Comet explain output is different")) {
     val tblSourceName = "tbl_src"
     val tblTargetName = "tbl_target"
     val tblSourceQualified = s"default.$tblSourceName"

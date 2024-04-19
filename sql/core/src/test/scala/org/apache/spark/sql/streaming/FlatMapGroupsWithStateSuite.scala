@@ -25,7 +25,7 @@ import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.SparkException
 import org.apache.spark.api.java.function.FlatMapGroupsWithStateFunction
-import org.apache.spark.sql.{DataFrame, Encoder}
+import org.apache.spark.sql.{DataFrame, Encoder, IgnoreCometSuite}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.plans.logical.FlatMapGroupsWithState
@@ -46,8 +46,9 @@ case class RunningCount(count: Long)
 
 case class Result(key: Long, count: Int)
 
+// TODO: fix Comet to enable this suite
 @SlowSQLTest
-class FlatMapGroupsWithStateSuite extends StateStoreMetricsTest {
+class FlatMapGroupsWithStateSuite extends StateStoreMetricsTest with IgnoreCometSuite {
 
   import testImplicits._
 

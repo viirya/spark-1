@@ -23,7 +23,7 @@ import scala.util.Random
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{DataFrame, IgnoreComet, QueryTest}
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.execution.datasources.v2.orc.OrcScan
 import org.apache.spark.sql.internal.SQLConf
@@ -195,7 +195,7 @@ class DataSourceV2ScanExecRedactionSuite extends DataSourceScanRedactionTest {
     }
   }
 
-  test("FileScan description") {
+  test("FileScan description", IgnoreComet("Comet doesn't use BatchScan")) {
     Seq("json", "orc", "parquet").foreach { format =>
       withTempPath { path =>
         val dir = path.getCanonicalPath

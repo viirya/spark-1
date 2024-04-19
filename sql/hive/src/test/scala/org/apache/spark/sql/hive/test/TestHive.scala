@@ -55,25 +55,46 @@ object TestHive
     new SparkContext(
       System.getProperty("spark.sql.test.master", "local[1]"),
       "TestSQLContext",
-      new SparkConf()
-        .set("spark.sql.test", "")
-        .set(SQLConf.CODEGEN_FALLBACK.key, "false")
-        .set(SQLConf.CODEGEN_FACTORY_MODE.key, CodegenObjectFactoryMode.CODEGEN_ONLY.toString)
-        .set(HiveUtils.HIVE_METASTORE_BARRIER_PREFIXES.key,
-          "org.apache.spark.sql.hive.execution.PairSerDe")
-        .set(WAREHOUSE_PATH.key, TestHiveContext.makeWarehouseDir().toURI.getPath)
-        // SPARK-8910
-        .set(UI_ENABLED, false)
-        .set(config.UNSAFE_EXCEPTION_ON_MEMORY_LEAK, true)
-        // Hive changed the default of hive.metastore.disallow.incompatible.col.type.changes
-        // from false to true. For details, see the JIRA HIVE-12320 and HIVE-17764.
-        .set("spark.hadoop.hive.metastore.disallow.incompatible.col.type.changes", "false")
-        // Disable ConvertToLocalRelation for better test coverage. Test cases built on
-        // LocalRelation will exercise the optimization rules better by disabling it as
-        // this rule may potentially block testing of other optimization rules such as
-        // ConstantPropagation etc.
-        .set(SQLConf.OPTIMIZER_EXCLUDED_RULES.key, ConvertToLocalRelation.ruleName)))
+      {
+        val conf = new SparkConf()
+          .set("spark.sql.test", "")
+          .set(SQLConf.CODEGEN_FALLBACK.key, "false")
+          .set(SQLConf.CODEGEN_FACTORY_MODE.key, CodegenObjectFactoryMode.CODEGEN_ONLY.toString)
+          .set(HiveUtils.HIVE_METASTORE_BARRIER_PREFIXES.key,
+            "org.apache.spark.sql.hive.execution.PairSerDe")
+          .set(WAREHOUSE_PATH.key, TestHiveContext.makeWarehouseDir().toURI.getPath)
+          // SPARK-8910
+          .set(UI_ENABLED, false)
+          .set(config.UNSAFE_EXCEPTION_ON_MEMORY_LEAK, true)
+          // Hive changed the default of hive.metastore.disallow.incompatible.col.type.changes
+          // from false to true. For details, see the JIRA HIVE-12320 and HIVE-17764.
+          .set("spark.hadoop.hive.metastore.disallow.incompatible.col.type.changes", "false")
+          // Disable ConvertToLocalRelation for better test coverage. Test cases built on
+          // LocalRelation will exercise the optimization rules better by disabling it as
+          // this rule may potentially block testing of other optimization rules such as
+          // ConstantPropagation etc.
+          .set(SQLConf.OPTIMIZER_EXCLUDED_RULES.key, ConvertToLocalRelation.ruleName)
 
+        val v = System.getenv("ENABLE_COMET")
+        if (v != null && v.toBoolean) {
+          conf
+            .set("spark.sql.extensions", "org.apache.spark.CometSparkSessionExtensions")
+            .set("spark.comet.enabled", "true")
+
+          val v = System.getenv("ENABLE_COMET_SCAN_ONLY")
+          if (v == null || !v.toBoolean) {
+            conf
+              .set("spark.comet.exec.enabled", "true")
+              .set("spark.comet.exec.all.enabled", "true")
+              .set("spark.shuffle.manager",
+                "org.apache.spark.sql.comet.execution.shuffle.CometShuffleManager")
+              .set("spark.comet.exec.shuffle.enabled", "true")
+          }
+        }
+
+        conf
+      }
+    ))
 
 case class TestHiveVersion(hiveClient: HiveClient)
   extends TestHiveContext(TestHive.sparkContext, hiveClient)

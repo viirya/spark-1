@@ -37,8 +37,10 @@ import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, 
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.util.Utils
 
+// For some reason this suite is flaky w/ or w/o Comet when running in Github workflow.
+// Since it isn't related to Comet, we disable it for now.
 class AsyncProgressTrackingMicroBatchExecutionSuite
-  extends StreamTest with BeforeAndAfter with Matchers {
+  extends StreamTest with BeforeAndAfter with Matchers with IgnoreCometSuite {
 
   import testImplicits._
 

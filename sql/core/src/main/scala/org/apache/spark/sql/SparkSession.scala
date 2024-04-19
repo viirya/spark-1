@@ -102,7 +102,7 @@ class SparkSession private(
       sc: SparkContext,
       initialSessionOptions: java.util.HashMap[String, String]) = {
     this(sc, None, None,
-      SparkSession.applyExtensions(
+      SparkSession.applyExtensions(sc,
         sc.getConf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS).getOrElse(Seq.empty),
         new SparkSessionExtensions), initialSessionOptions.asScala.toMap)
   }
@@ -1028,7 +1028,7 @@ object SparkSession extends Logging {
         }
 
         loadExtensions(extensions)
-        applyExtensions(
+        applyExtensions(sparkContext,
           sparkContext.getConf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS).getOrElse(Seq.empty),
           extensions)
 
@@ -1282,14 +1282,24 @@ object SparkSession extends Logging {
     }
   }
 
+  private def loadCometExtension(sparkContext: SparkContext): Seq[String] = {
+    if (sparkContext.getConf.getBoolean("spark.comet.enabled", false)) {
+      Seq("org.apache.comet.CometSparkSessionExtensions")
+    } else {
+      Seq.empty
+    }
+  }
+
   /**
    * Initialize extensions for given extension classnames. The classes will be applied to the
    * extensions passed into this function.
    */
   private def applyExtensions(
+      sparkContext: SparkContext,
       extensionConfClassNames: Seq[String],
       extensions: SparkSessionExtensions): SparkSessionExtensions = {
-    extensionConfClassNames.foreach { extensionConfClassName =>
+    val extensionClassNames = extensionConfClassNames ++ loadCometExtension(sparkContext)
+    extensionClassNames.foreach { extensionConfClassName =>
       try {
         val extensionConfClass = Utils.classForName(extensionConfClassName)
         val extensionConf = extensionConfClass.getConstructor().newInstance()
