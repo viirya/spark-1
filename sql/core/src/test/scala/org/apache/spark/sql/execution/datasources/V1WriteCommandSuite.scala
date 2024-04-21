@@ -17,9 +17,10 @@
 
 package org.apache.spark.sql.execution.datasources
 
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{IgnoreComet, QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{Ascending, AttributeReference, NullsFirst, SortOrder}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Sort}
+import org.apache.spark.sql.comet.CometSortExec
 import org.apache.spark.sql.execution.{QueryExecution, SortExec}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 import org.apache.spark.sql.internal.SQLConf
@@ -224,7 +225,7 @@ class V1WriteCommandSuite extends QueryTest with SharedSparkSession with V1Write
 
           // assert the outer most sort in the executed plan
           assert(plan.collectFirst {
-            case s: SortExec => s
+            case s: CometSortExec => s.originalPlan
           }.exists {
             case SortExec(Seq(
               SortOrder(AttributeReference("key", IntegerType, _, _), Ascending, NullsFirst, _),
@@ -271,7 +272,7 @@ class V1WriteCommandSuite extends QueryTest with SharedSparkSession with V1Write
 
         // assert the outer most sort in the executed plan
         assert(plan.collectFirst {
-          case s: SortExec => s
+          case s: CometSortExec => s.originalPlan
         }.exists {
           case SortExec(Seq(
             SortOrder(AttributeReference("value", StringType, _, _), Ascending, NullsFirst, _),
@@ -305,7 +306,8 @@ class V1WriteCommandSuite extends QueryTest with SharedSparkSession with V1Write
     }
   }
 
-  test("v1 write with AQE changing SMJ to BHJ") {
+  test("v1 write with AQE changing SMJ to BHJ",
+      IgnoreComet("TODO: Comet SMJ to BHJ by AQE")) {
     withPlannedWrite { enabled =>
       withTable("t") {
         sql(
