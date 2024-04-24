@@ -591,6 +591,8 @@ case class AdaptiveSparkPlanExec(
         case p if p.logicalLink.isDefined => p.logicalLink.get
       }))
     assert(link.isDefined)
+    // scalastyle:off println
+    println(s"plan: $plan, plan.logicalLink: ${plan.logicalLink}, link: $link")
     stage.setLogicalLink(link.get)
   }
 
@@ -633,6 +635,11 @@ case class AdaptiveSparkPlanExec(
         val logicalNodeOpt = stage.getTagValue(TEMP_LOGICAL_PLAN_TAG).orElse(stage.logicalLink)
         assert(logicalNodeOpt.isDefined)
         val logicalNode = logicalNodeOpt.get
+
+        // scalastyle:off println
+        println(s"stage: $stage, logicalNode: $logicalNode, " +
+          s"temp: ${stage.getTagValue(TEMP_LOGICAL_PLAN_TAG)}")
+
         val physicalNode = currentPhysicalPlan.collectFirst {
           case p if p.eq(stage) ||
             p.getTagValue(TEMP_LOGICAL_PLAN_TAG).exists(logicalNode.eq) ||
@@ -648,13 +655,13 @@ case class AdaptiveSparkPlanExec(
         val newLogicalPlan = logicalPlan.transformDown {
           case p if p.eq(logicalNode) =>
             // scalastyle:off println
-            println(s"stage: $stage, " +
-              s"Logical node replaced: ${p.treeString}, logicalNode: $logicalNode")
+            // println(s"stage: $stage, " +
+            //  s"Logical node replaced: ${p.treeString}, logicalNode: $logicalNode")
             newLogicalNode
           case p =>
             // scalastyle:off println
-            println(s"stage: $stage, " +
-              s"Logical node not replaced: ${p.treeString}, logicalNode: $logicalNode")
+            // println(s"stage: $stage, " +
+            //  s"Logical node not replaced: ${p.treeString}, logicalNode: $logicalNode")
             p
         }
         logicalPlan = newLogicalPlan
