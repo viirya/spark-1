@@ -138,6 +138,8 @@ object OptimizeShuffleWithLocalRead extends AQEShuffleReadRule {
 
   def canUseLocalShuffleRead(plan: SparkPlan): Boolean = plan match {
     case s: ShuffleQueryStageExec =>
+      // scalastyle:off println
+      println(s"s: $s, mapStats: ${s.mapStats.isDefined}, isSupported: ${isSupported(s.shuffle)}")
       s.mapStats.isDefined && isSupported(s.shuffle)
     case AQEShuffleReadExec(s: ShuffleQueryStageExec, _) =>
       s.mapStats.isDefined && isSupported(s.shuffle) &&

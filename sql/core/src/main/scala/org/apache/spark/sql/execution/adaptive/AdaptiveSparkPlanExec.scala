@@ -646,7 +646,16 @@ case class AdaptiveSparkPlanExec(
         // Replace the corresponding logical node with LogicalQueryStage
         val newLogicalNode = LogicalQueryStage(logicalNode, physicalNode.get)
         val newLogicalPlan = logicalPlan.transformDown {
-          case p if p.eq(logicalNode) => newLogicalNode
+          case p if p.eq(logicalNode) =>
+            // scalastyle:off println
+            println(s"stage: $stage, " +
+              s"Logical node replaced: ${p.treeString}, logicalNode: $logicalNode")
+            newLogicalNode
+          case p =>
+            // scalastyle:off println
+            println(s"stage: $stage, " +
+              s"Logical node not replaced: ${p.treeString}, logicalNode: $logicalNode")
+            p
         }
         logicalPlan = newLogicalPlan
 

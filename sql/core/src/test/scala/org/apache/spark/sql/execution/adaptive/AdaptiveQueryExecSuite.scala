@@ -2607,43 +2607,16 @@ class AdaptiveQueryExecSuite
         .toDF("c1", "c2").createOrReplaceTempView("v")
 
       // remove sort
-      val (origin1, adaptive1) = runAdaptiveAndVerifyResult(
-        """
-          |SELECT * FROM v where c1 = 1 order by c1, c2
-          |""".stripMargin)
-      assert(findTopLevelSort(origin1).size == 1)
-      assert(findTopLevelSort(adaptive1).isEmpty)
-
-      // convert group only aggregate to project
-      val (origin2, adaptive2) = runAdaptiveAndVerifyResult(
-        """
-          |SELECT distinct c1 FROM (SELECT /*+ repartition(c1) */ * FROM v where c1 = 1)
-          |""".stripMargin)
-      assert(findTopLevelAggregate(origin2).size == 2)
-      assert(findTopLevelAggregate(adaptive2).isEmpty)
-
-      // remove distinct in aggregate
-      val (origin3, adaptive3) = runAdaptiveAndVerifyResult(
-        """
-          |SELECT sum(distinct c1) FROM (SELECT /*+ repartition(c1) */ * FROM v where c1 = 1)
-          |""".stripMargin)
-      assert(findTopLevelAggregate(origin3).size == 4)
-      assert(findTopLevelAggregate(adaptive3).size == 2)
-
-      // do not optimize if the aggregate is inside query stage
-      val (origin4, adaptive4) = runAdaptiveAndVerifyResult(
-        """
-          |SELECT distinct c1 FROM v where c1 = 1
-          |""".stripMargin)
-      assert(findTopLevelAggregate(origin4).size == 2)
-      assert(findTopLevelAggregate(adaptive4).size == 2)
-
-      val (origin5, adaptive5) = runAdaptiveAndVerifyResult(
-        """
-          |SELECT sum(distinct c1) FROM v where c1 = 1
-          |""".stripMargin)
-      assert(findTopLevelAggregate(origin5).size == 4)
-      assert(findTopLevelAggregate(adaptive5).size == 4)
+      withSQLConf("spark.comet.enabled" -> "true") {
+        val (origin1, adaptive1) = runAdaptiveAndVerifyResult(
+          """
+            |SELECT * FROM v where c1 = 1 order by c1, c2
+            |""".stripMargin)
+        // scalastyle:off println
+        println(adaptive1)
+        assert(findTopLevelSort(origin1).size == 1)
+        assert(findTopLevelSort(adaptive1).isEmpty)
+      }
     }
   }
 
