@@ -592,7 +592,7 @@ case class AdaptiveSparkPlanExec(
       }))
     assert(link.isDefined)
     // scalastyle:off println
-    println(s"plan: $plan, plan.logicalLink: ${plan.logicalLink}, link: $link")
+    // println(s"plan: $plan, plan.logicalLink: ${plan.logicalLink}, link: $link")
     stage.setLogicalLink(link.get)
   }
 
@@ -637,8 +637,8 @@ case class AdaptiveSparkPlanExec(
         val logicalNode = logicalNodeOpt.get
 
         // scalastyle:off println
-        println(s"stage: $stage, logicalNode: $logicalNode, " +
-          s"temp: ${stage.getTagValue(TEMP_LOGICAL_PLAN_TAG)}")
+        // println(s"stage: $stage, logicalNode: $logicalNode, " +
+        //  s"temp: ${stage.getTagValue(TEMP_LOGICAL_PLAN_TAG)}")
 
         val physicalNode = currentPhysicalPlan.collectFirst {
           case p if p.eq(stage) ||

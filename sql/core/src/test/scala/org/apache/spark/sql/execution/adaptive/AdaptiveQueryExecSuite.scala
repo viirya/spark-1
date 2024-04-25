@@ -2680,12 +2680,32 @@ class AdaptiveQueryExecSuite
     }
   }
 
-test("SPARK-44040: Fix compute stats when AggregateExec nodes above QueryStageExec") {
+  test("SPARK-44040: Fix compute stats when AggregateExec nodes above QueryStageExec") {
     val emptyDf = spark.range(1).where("false")
     val aggDf1 = emptyDf.agg(sum("id").as("id")).withColumn("name", lit("df1"))
     val aggDf2 = emptyDf.agg(sum("id").as("id")).withColumn("name", lit("df2"))
     val unionDF = aggDf1.union(aggDf2)
     checkAnswer(unionDF.select("id").distinct, Seq(Row(null)))
+  }
+
+  test("Comet AQE") {
+    withTempView("v") {
+      spark.sparkContext.parallelize(
+          (1 to 4).map(i => TestData(i, i.toString)), 2)
+        .toDF("c1", "c2").createOrReplaceTempView("v")
+
+      // remove sort
+      withSQLConf("spark.comet.enabled" -> "true") {
+        val (origin1, adaptive1) = runAdaptiveAndVerifyResult(
+          """
+            |SELECT * FROM v where c1 = 1 order by c1, c2
+            |""".stripMargin)
+        // scalastyle:off println
+        println(adaptive1)
+        assert(findTopLevelSort(origin1).size == 1)
+        assert(findTopLevelSort(adaptive1).isEmpty)
+      }
+    }
   }
 }
 
