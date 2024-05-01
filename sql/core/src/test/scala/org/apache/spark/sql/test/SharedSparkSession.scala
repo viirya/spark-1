@@ -74,6 +74,22 @@ trait SharedSparkSessionBase
       // this rule may potentially block testing of other optimization rules such as
       // ConstantPropagation etc.
       .set(SQLConf.OPTIMIZER_EXCLUDED_RULES.key, ConvertToLocalRelation.ruleName)
+    // Enable Comet if `ENABLE_COMET` environment variable is set
+    if (isCometEnabled) {
+      conf
+        .set("spark.sql.extensions", "org.apache.comet.CometSparkSessionExtensions")
+        .set("spark.comet.enabled", "true")
+
+      if (!isCometScanOnly) {
+        conf
+          .set("spark.comet.exec.enabled", "true")
+          .set("spark.comet.exec.all.enabled", "true")
+          .set("spark.shuffle.manager",
+            "org.apache.spark.sql.comet.execution.shuffle.CometShuffleManager")
+          .set("spark.comet.exec.shuffle.enabled", "true")
+          .set("spark.comet.memoryOverhead", "10g")
+      }
+    }
     conf.set(
       StaticSQLConf.WAREHOUSE_PATH,
       conf.get(StaticSQLConf.WAREHOUSE_PATH) + "/" + getClass.getCanonicalName)

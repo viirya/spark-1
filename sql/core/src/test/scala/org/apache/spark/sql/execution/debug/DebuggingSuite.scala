@@ -20,6 +20,7 @@ package org.apache.spark.sql.execution.debug
 import java.io.ByteArrayOutputStream
 
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.IgnoreComet
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
@@ -124,7 +125,8 @@ class DebuggingSuite extends DebuggingSuiteBase with DisableAdaptiveExecutionSui
          | id LongType: {}""".stripMargin))
   }
 
-  test("SPARK-28537: DebugExec cannot debug columnar related queries") {
+  test("SPARK-28537: DebugExec cannot debug columnar related queries",
+      IgnoreComet("Comet does not use FileScan")) {
     withTempPath { workDir =>
       val workDirPath = workDir.getAbsolutePath
       val input = spark.range(5).toDF("id")

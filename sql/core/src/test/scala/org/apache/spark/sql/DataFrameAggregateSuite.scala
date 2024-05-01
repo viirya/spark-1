@@ -24,6 +24,7 @@ import scala.util.Random
 import org.scalatest.matchers.must.Matchers.the
 
 import org.apache.spark.SparkException
+import org.apache.spark.sql.comet.execution.shuffle.CometShuffleExchangeExec
 import org.apache.spark.sql.execution.WholeStageCodegenExec
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.aggregate.{HashAggregateExec, ObjectHashAggregateExec, SortAggregateExec}
@@ -756,6 +757,7 @@ class DataFrameAggregateSuite extends QueryTest
 
       val exchangePlans = collect(aggPlan) {
         case shuffle: ShuffleExchangeExec => shuffle
+        case shuffle: CometShuffleExchangeExec => shuffle
       }
       assert(exchangePlans.length == 1)
     }

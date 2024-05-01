@@ -43,7 +43,7 @@ class SqlResourceWithActualMetricsSuite
   import testImplicits._
 
   // Exclude nodes which may not have the metrics
-  val excludedNodes = List("WholeStageCodegen", "Project", "SerializeFromObject")
+  val excludedNodes = List("WholeStageCodegen", "Project", "SerializeFromObject", "RowToColumnar")
 
   implicit val formats = new DefaultFormats {
     override def dateFormatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss")

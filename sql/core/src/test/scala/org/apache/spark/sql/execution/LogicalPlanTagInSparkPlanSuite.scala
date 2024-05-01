@@ -53,6 +53,10 @@ class LogicalPlanTagInSparkPlanSuite extends TPCDSQuerySuite with DisableAdaptiv
     case ColumnarToRowExec(i: InputAdapter) => isScanPlanTree(i.child)
     case p: ProjectExec => isScanPlanTree(p.child)
     case f: FilterExec => isScanPlanTree(f.child)
+    // Comet produces scan plan tree like:
+    // ColumnarToRow
+    //  +- ReusedExchange
+    case _: ReusedExchangeExec => false
     case _: LeafExecNode => true
     case _ => false
   }

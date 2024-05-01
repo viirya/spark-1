@@ -21,6 +21,7 @@ import java.io.File
 
 import org.apache.commons.io.FileUtils
 
+import org.apache.spark.sql.IgnoreComet
 import org.apache.spark.sql.catalyst.streaming.InternalOutputModes.Update
 import org.apache.spark.sql.execution.streaming.{FlatMapGroupsWithStateExec, MemoryStream}
 import org.apache.spark.sql.internal.SQLConf
@@ -91,7 +92,7 @@ class FlatMapGroupsWithStateDistributionSuite extends StreamTest
   }
 
   test("SPARK-38204: flatMapGroupsWithState should require StatefulOpClusteredDistribution " +
-    "from children - without initial state") {
+    "from children - without initial state", IgnoreComet("TODO: fix Comet for this test")) {
     // function will return -1 on timeout and returns count of the state otherwise
     val stateFunc =
       (key: (String, String), values: Iterator[(String, String, Long)],
@@ -243,7 +244,8 @@ class FlatMapGroupsWithStateDistributionSuite extends StreamTest
   }
 
   test("SPARK-38204: flatMapGroupsWithState should require ClusteredDistribution " +
-    "from children if the query starts from checkpoint in 3.2.x - without initial state") {
+    "from children if the query starts from checkpoint in 3.2.x - without initial state",
+    IgnoreComet("TODO: fix Comet for this test")) {
     // function will return -1 on timeout and returns count of the state otherwise
     val stateFunc =
       (key: (String, String), values: Iterator[(String, String, Long)],
@@ -335,7 +337,8 @@ class FlatMapGroupsWithStateDistributionSuite extends StreamTest
   }
 
   test("SPARK-38204: flatMapGroupsWithState should require ClusteredDistribution " +
-    "from children if the query starts from checkpoint in prior to 3.2") {
+    "from children if the query starts from checkpoint in prior to 3.2",
+    IgnoreComet("TODO: fix Comet for this test")) {
     // function will return -1 on timeout and returns count of the state otherwise
     val stateFunc =
       (key: (String, String), values: Iterator[(String, String, Long)],

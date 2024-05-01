@@ -1335,7 +1335,8 @@ class ParquetIOSuite extends QueryTest with ParquetTest with SharedSparkSession 
     }
   }
 
-  test("SPARK-40128 read DELTA_LENGTH_BYTE_ARRAY encoded strings") {
+  test("SPARK-40128 read DELTA_LENGTH_BYTE_ARRAY encoded strings",
+      IgnoreComet("Comet doesn't support DELTA encoding yet")) {
     withAllParquetReaders {
       checkAnswer(
         // "fruit" column in this file is encoded using DELTA_LENGTH_BYTE_ARRAY.

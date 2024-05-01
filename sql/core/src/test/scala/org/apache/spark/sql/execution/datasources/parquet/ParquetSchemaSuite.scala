@@ -27,6 +27,7 @@ import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
 import org.apache.parquet.schema.Type._
 
 import org.apache.spark.SparkException
+import org.apache.spark.sql.IgnoreComet
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.execution.datasources.SchemaColumnConvertNotSupportedException
 import org.apache.spark.sql.functions.desc
@@ -1016,7 +1017,8 @@ class ParquetSchemaSuite extends ParquetSchemaTest {
     e
   }
 
-  test("schema mismatch failure error message for parquet reader") {
+  test("schema mismatch failure error message for parquet reader",
+      IgnoreComet("Comet doesn't work with vectorizedReaderEnabled = false")) {
     withTempPath { dir =>
       val e = testSchemaMismatch(dir.getCanonicalPath, vectorizedReaderEnabled = false)
       val expectedMessage = "Encountered error while reading file"

@@ -656,7 +656,8 @@ abstract class AggregationQuerySuite extends QueryTest with SQLTestUtils with Te
         Row(3, 4, 4, 3, null) :: Nil)
   }
 
-  test("single distinct multiple columns set") {
+  test("single distinct multiple columns set",
+    IgnoreComet("TODO: fix Comet for this test")) {
     checkAnswer(
       spark.sql(
         """

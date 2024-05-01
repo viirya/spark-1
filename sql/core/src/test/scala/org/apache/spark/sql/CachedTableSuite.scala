@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.analysis.TempTableAlreadyExistsException
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical.{BROADCAST, Join, JoinStrategyHint, SHUFFLE_HASH}
 import org.apache.spark.sql.catalyst.util.DateTimeConstants
+import org.apache.spark.sql.comet.execution.shuffle.CometShuffleExchangeExec
 import org.apache.spark.sql.execution.{ColumnarToRowExec, ExecSubqueryExpression, RDDScanExec, SparkPlan}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.columnar._
@@ -516,7 +517,8 @@ class CachedTableSuite extends QueryTest with SQLTestUtils
    */
   private def verifyNumExchanges(df: DataFrame, expected: Int): Unit = {
     assert(
-      collect(df.queryExecution.executedPlan) { case e: ShuffleExchangeExec => e }.size == expected)
+      collect(df.queryExecution.executedPlan) {
+        case _: ShuffleExchangeExec | _: CometShuffleExchangeExec => 1 }.size == expected)
   }
 
   test("A cached table preserves the partitioning and ordering of its cached SparkPlan") {

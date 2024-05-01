@@ -45,8 +45,10 @@ import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.{AccumulatorContext, JsonProtocol}
 
 // Disable AQE because metric info is different with AQE on/off
+// This test suite runs tests against the metrics of physical operators.
+// Disabling it for Comet because the metrics are different with Comet enabled.
 class SQLMetricsSuite extends SharedSparkSession with SQLMetricsTestUtils
-  with DisableAdaptiveExecutionSuite {
+  with DisableAdaptiveExecutionSuite with IgnoreCometSuite {
   import testImplicits._
 
   /**
@@ -737,7 +739,8 @@ class SQLMetricsSuite extends SharedSparkSession with SQLMetricsTestUtils
     }
   }
 
-  test("SPARK-26327: FileSourceScanExec metrics") {
+  test("SPARK-26327: FileSourceScanExec metrics",
+      IgnoreComet("Spark uses row-based Parquet reader while Comet is vectorized")) {
     withTable("testDataForScan") {
       spark.range(10).selectExpr("id", "id % 3 as p")
         .write.partitionBy("p").saveAsTable("testDataForScan")

@@ -23,6 +23,7 @@ import org.apache.commons.io.FileUtils
 import org.scalatest.Assertions
 
 import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
+import org.apache.spark.sql.comet.CometHashAggregateExec
 import org.apache.spark.sql.execution.aggregate.BaseAggregateExec
 import org.apache.spark.sql.execution.streaming.{MemoryStream, StateStoreRestoreExec, StateStoreSaveExec}
 import org.apache.spark.sql.functions.count
@@ -67,6 +68,7 @@ class StreamingAggregationDistributionSuite extends StreamTest
         // verify aggregations in between, except partial aggregation
         val allAggregateExecs = query.lastExecution.executedPlan.collect {
           case a: BaseAggregateExec => a
+          case c: CometHashAggregateExec => c.originalPlan
         }
 
         val aggregateExecsWithoutPartialAgg = allAggregateExecs.filter {
@@ -201,6 +203,7 @@ class StreamingAggregationDistributionSuite extends StreamTest
         // verify aggregations in between, except partial aggregation
         val allAggregateExecs = executedPlan.collect {
           case a: BaseAggregateExec => a
+          case c: CometHashAggregateExec => c.originalPlan
         }
 
         val aggregateExecsWithoutPartialAgg = allAggregateExecs.filter {

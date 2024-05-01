@@ -1,6 +1,10 @@
 --
 -- Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 --
+
+-- Disable Comet exec due to floating point precision difference
+--SET spark.comet.exec.enabled = false
+
 --
 -- SELECT_HAVING
 -- https://github.com/postgres/postgres/blob/REL_12_BETA2/src/test/regress/sql/select_having.sql

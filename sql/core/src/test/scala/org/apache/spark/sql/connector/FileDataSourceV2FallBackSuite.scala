@@ -21,6 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.comet.CometScanExec
 import org.apache.spark.sql.connector.catalog.{SupportsRead, SupportsWrite, Table, TableCapability}
 import org.apache.spark.sql.connector.read.ScanBuilder
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, WriteBuilder}
@@ -184,7 +185,11 @@ class FileDataSourceV2FallBackSuite extends QueryTest with SharedSparkSession {
             val df = spark.read.format(format).load(path.getCanonicalPath)
             checkAnswer(df, inputData.toDF())
             assert(
-              df.queryExecution.executedPlan.exists(_.isInstanceOf[FileSourceScanExec]))
+              df.queryExecution.executedPlan.exists {
+                case _: FileSourceScanExec | _: CometScanExec => true
+                case _ => false
+              }
+            )
           }
         } finally {
           spark.listenerManager.unregister(listener)

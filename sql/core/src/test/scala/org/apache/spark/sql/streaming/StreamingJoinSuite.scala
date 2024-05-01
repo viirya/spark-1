@@ -31,7 +31,7 @@ import org.apache.spark.scheduler.ExecutorCacheTaskLocation
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
-import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.streaming.{MemoryStream, StatefulOperatorStateInfo, StreamingSymmetricHashJoinExec, StreamingSymmetricHashJoinHelper}
 import org.apache.spark.sql.execution.streaming.state.{RocksDBStateStoreProvider, StateStore, StateStoreProviderId}
 import org.apache.spark.sql.functions._
@@ -619,14 +619,28 @@ class StreamingInnerJoinSuite extends StreamingJoinSuite {
 
         val numPartitions = spark.sqlContext.conf.getConf(SQLConf.SHUFFLE_PARTITIONS)
 
-        assert(query.lastExecution.executedPlan.collect {
-          case j @ StreamingSymmetricHashJoinExec(_, _, _, _, _, _, _, _, _,
-            ShuffleExchangeExec(opA: HashPartitioning, _, _),
-            ShuffleExchangeExec(opB: HashPartitioning, _, _))
-              if partitionExpressionsColumns(opA.expressions) === Seq("a", "b")
-                && partitionExpressionsColumns(opB.expressions) === Seq("a", "b")
-                && opA.numPartitions == numPartitions && opB.numPartitions == numPartitions => j
-        }.size == 1)
+        val join = query.lastExecution.executedPlan.collect {
+          case j: StreamingSymmetricHashJoinExec => j
+        }.head
+        val opA = join.left.collect {
+          case s: ShuffleExchangeLike
+            if s.outputPartitioning.isInstanceOf[HashPartitioning] &&
+              partitionExpressionsColumns(
+                s.outputPartitioning
+                  .asInstanceOf[HashPartitioning].expressions) === Seq("a", "b") =>
+            s.outputPartitioning
+              .asInstanceOf[HashPartitioning]
+        }.head
+        val opB = join.right.collect {
+          case s: ShuffleExchangeLike
+            if s.outputPartitioning.isInstanceOf[HashPartitioning] &&
+              partitionExpressionsColumns(
+                s.outputPartitioning
+                  .asInstanceOf[HashPartitioning].expressions) === Seq("a", "b") =>
+            s.outputPartitioning
+              .asInstanceOf[HashPartitioning]
+        }.head
+        assert(opA.numPartitions == numPartitions && opB.numPartitions == numPartitions)
       })
   }
 

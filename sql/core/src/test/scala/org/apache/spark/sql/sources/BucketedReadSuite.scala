@@ -24,7 +24,9 @@ import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
-import org.apache.spark.sql.execution.{FileSourceScanExec, SortExec, SparkPlan}
+import org.apache.spark.sql.comet._
+import org.apache.spark.sql.comet.execution.shuffle._
+import org.apache.spark.sql.execution.{ColumnarToRowExec, FileSourceScanExec, SortExec, SparkPlan}
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AdaptiveSparkPlanHelper, DisableAdaptiveExecution}
 import org.apache.spark.sql.execution.datasources.BucketingUtils
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
@@ -101,10 +103,18 @@ abstract class BucketedReadSuite extends QueryTest with SQLTestUtils with Adapti
     }
   }
 
-  private def getFileScan(plan: SparkPlan): FileSourceScanExec = {
-    val fileScan = collect(plan) { case f: FileSourceScanExec => f }
+  private def getFileScan(plan: SparkPlan): SparkPlan = {
+    val fileScan = collect(plan) {
+      case f: FileSourceScanExec => f
+      case f: CometScanExec => f
+    }
     assert(fileScan.nonEmpty, plan)
     fileScan.head
+  }
+
+  private def getBucketScan(plan: SparkPlan): Boolean = getFileScan(plan) match {
+    case fs: FileSourceScanExec => fs.bucketedScan
+    case bs: CometScanExec => bs.bucketedScan
   }
 
   // To verify if the bucket pruning works, this function checks two conditions:
@@ -155,7 +165,8 @@ abstract class BucketedReadSuite extends QueryTest with SQLTestUtils with Adapti
           val planWithoutBucketedScan = bucketedDataFrame.filter(filterCondition)
             .queryExecution.executedPlan
           val fileScan = getFileScan(planWithoutBucketedScan)
-          assert(!fileScan.bucketedScan, s"except no bucketed scan but found\n$fileScan")
+          val bucketedScan = getBucketScan(planWithoutBucketedScan)
+          assert(!bucketedScan, s"except no bucketed scan but found\n$fileScan")
 
           val bucketColumnType = bucketedDataFrame.schema.apply(bucketColumnIndex).dataType
           val rowsWithInvalidBuckets = fileScan.execute().filter(row => {
@@ -451,28 +462,46 @@ abstract class BucketedReadSuite extends QueryTest with SQLTestUtils with Adapti
         val joinOperator = if (joined.sqlContext.conf.adaptiveExecutionEnabled) {
           val executedPlan =
             joined.queryExecution.executedPlan.asInstanceOf[AdaptiveSparkPlanExec].executedPlan
-          assert(executedPlan.isInstanceOf[SortMergeJoinExec])
-          executedPlan.asInstanceOf[SortMergeJoinExec]
+          executedPlan match {
+            case s: SortMergeJoinExec => s
+            case b: CometSortMergeJoinExec =>
+              b.originalPlan match {
+                case s: SortMergeJoinExec => s
+                case o => fail(s"expected SortMergeJoinExec, but found\n$o")
+              }
+            case o => fail(s"expected SortMergeJoinExec, but found\n$o")
+          }
         } else {
           val executedPlan = joined.queryExecution.executedPlan
-          assert(executedPlan.isInstanceOf[SortMergeJoinExec])
-          executedPlan.asInstanceOf[SortMergeJoinExec]
+          executedPlan match {
+            case s: SortMergeJoinExec => s
+            case ColumnarToRowExec(child) =>
+              child.asInstanceOf[CometSortMergeJoinExec].originalPlan match {
+                case s: SortMergeJoinExec => s
+                case o => fail(s"expected SortMergeJoinExec, but found\n$o")
+              }
+            case o => fail(s"expected SortMergeJoinExec, but found\n$o")
+          }
         }
 
         // check existence of shuffle
         assert(
-          joinOperator.left.exists(_.isInstanceOf[ShuffleExchangeExec]) == shuffleLeft,
+          joinOperator.left.exists(op => op.isInstanceOf[ShuffleExchangeExec] ||
+          op.isInstanceOf[CometShuffleExchangeExec]) == shuffleLeft,
           s"expected shuffle in plan to be $shuffleLeft but found\n${joinOperator.left}")
         assert(
-          joinOperator.right.exists(_.isInstanceOf[ShuffleExchangeExec]) == shuffleRight,
+          joinOperator.right.exists(op => op.isInstanceOf[ShuffleExchangeExec] ||
+          op.isInstanceOf[CometShuffleExchangeExec]) == shuffleRight,
           s"expected shuffle in plan to be $shuffleRight but found\n${joinOperator.right}")
 
         // check existence of sort
         assert(
-          joinOperator.left.exists(_.isInstanceOf[SortExec]) == sortLeft,
+          joinOperator.left.exists(op => op.isInstanceOf[SortExec] || op.isInstanceOf[CometExec] &&
+            op.asInstanceOf[CometExec].originalPlan.isInstanceOf[SortExec]) == sortLeft,
           s"expected sort in the left child to be $sortLeft but found\n${joinOperator.left}")
         assert(
-          joinOperator.right.exists(_.isInstanceOf[SortExec]) == sortRight,
+          joinOperator.right.exists(op => op.isInstanceOf[SortExec] || op.isInstanceOf[CometExec] &&
+            op.asInstanceOf[CometExec].originalPlan.isInstanceOf[SortExec]) == sortRight,
           s"expected sort in the right child to be $sortRight but found\n${joinOperator.right}")
 
         // check the output partitioning
@@ -835,11 +864,11 @@ abstract class BucketedReadSuite extends QueryTest with SQLTestUtils with Adapti
       df1.write.format("parquet").bucketBy(8, "i").saveAsTable("bucketed_table")
 
       val scanDF = spark.table("bucketed_table").select("j")
-      assert(!getFileScan(scanDF.queryExecution.executedPlan).bucketedScan)
+      assert(!getBucketScan(scanDF.queryExecution.executedPlan))
       checkAnswer(scanDF, df1.select("j"))
 
       val aggDF = spark.table("bucketed_table").groupBy("j").agg(max("k"))
-      assert(!getFileScan(aggDF.queryExecution.executedPlan).bucketedScan)
+      assert(!getBucketScan(aggDF.queryExecution.executedPlan))
       checkAnswer(aggDF, df1.groupBy("j").agg(max("k")))
     }
   }
@@ -1026,15 +1055,24 @@ abstract class BucketedReadSuite extends QueryTest with SQLTestUtils with Adapti
             expectedNumShuffles: Int,
             expectedCoalescedNumBuckets: Option[Int]): Unit = {
           val plan = sql(query).queryExecution.executedPlan
-          val shuffles = plan.collect { case s: ShuffleExchangeExec => s }
+          val shuffles = plan.collect {
+            case s: ShuffleExchangeExec => s
+            case s: CometShuffleExchangeExec => s
+          }
           assert(shuffles.length == expectedNumShuffles)
 
           val scans = plan.collect {
             case f: FileSourceScanExec if f.optionalNumCoalescedBuckets.isDefined => f
+            case b: CometScanExec if b.optionalNumCoalescedBuckets.isDefined => b
           }
           if (expectedCoalescedNumBuckets.isDefined) {
             assert(scans.length == 1)
-            assert(scans.head.optionalNumCoalescedBuckets == expectedCoalescedNumBuckets)
+            scans.head match {
+              case f: FileSourceScanExec =>
+                assert(f.optionalNumCoalescedBuckets == expectedCoalescedNumBuckets)
+              case b: CometScanExec =>
+                assert(b.optionalNumCoalescedBuckets == expectedCoalescedNumBuckets)
+            }
           } else {
             assert(scans.isEmpty)
           }

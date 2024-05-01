@@ -41,6 +41,7 @@ import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.catalyst.plans.PlanTestBase
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util._
+import org.apache.spark.sql.comet._
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.execution.datasources.DataSourceUtils
@@ -126,7 +127,11 @@ private[sql] trait SQLTestUtils extends SparkFunSuite with SQLTestUtilsBase with
         }
       }
     } else {
-      super.test(testName, testTags: _*)(testFun)
+      if (isCometEnabled && testTags.exists(_.isInstanceOf[IgnoreComet])) {
+        ignore(testName + " (disabled when Comet is on)", testTags: _*)(testFun)
+      } else {
+        super.test(testName, testTags: _*)(testFun)
+      }
     }
   }
 
@@ -240,6 +245,23 @@ private[sql] trait SQLTestUtilsBase
    */
   protected object testImplicits extends SQLImplicits {
     protected override def _sqlContext: SQLContext = self.spark.sqlContext
+  }
+
+  /**
+   * Whether Comet extension is enabled
+   */
+  protected def isCometEnabled: Boolean = {
+    val v = System.getenv("ENABLE_COMET")
+    v != null && v.toBoolean
+  }
+
+  /**
+   * Whether Spark should only apply Comet scan optimization. This is only effective when
+   * [[isCometEnabled]] returns true.
+   */
+  protected def isCometScanOnly: Boolean = {
+    val v = System.getenv("ENABLE_COMET_SCAN_ONLY")
+    v != null && v.toBoolean
   }
 
   protected override def withSQLConf(pairs: (String, String)*)(f: => Unit): Unit = {
@@ -434,6 +456,8 @@ private[sql] trait SQLTestUtilsBase
     val schema = df.schema
     val withoutFilters = df.queryExecution.executedPlan.transform {
       case FilterExec(_, child) => child
+      case CometFilterExec(_, _, _, child, _) => child
+      case CometProjectExec(_, _, _, _, CometFilterExec(_, _, _, child, _), _) => child
     }
 
     spark.internalCreateDataFrame(withoutFilters.execute(), schema)

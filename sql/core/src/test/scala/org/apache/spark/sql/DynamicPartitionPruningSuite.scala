@@ -22,6 +22,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.sql.catalyst.expressions.{DynamicPruningExpression, Expression}
 import org.apache.spark.sql.catalyst.expressions.CodegenObjectFactoryMode._
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
+import org.apache.spark.sql.comet.CometScanExec
 import org.apache.spark.sql.connector.catalog.{InMemoryTableCatalog, InMemoryTableWithV2FilterCatalog}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.adaptive._
@@ -260,6 +261,9 @@ abstract class DynamicPartitionPruningSuiteBase
         case d: DynamicPruningExpression => d.child
       }
       case s: BatchScanExec => s.runtimeFilters.collect {
+        case d: DynamicPruningExpression => d.child
+      }
+      case s: CometScanExec => s.partitionFilters.collect {
         case d: DynamicPruningExpression => d.child
       }
       case _ => Nil
@@ -1187,7 +1191,8 @@ abstract class DynamicPartitionPruningSuiteBase
     }
   }
 
-  test("Make sure dynamic pruning works on uncorrelated queries") {
+  test("Make sure dynamic pruning works on uncorrelated queries",
+    IgnoreComet("TODO: Support SubqueryBroadcastExec in Comet: #242")) {
     withSQLConf(SQLConf.DYNAMIC_PARTITION_PRUNING_REUSE_BROADCAST_ONLY.key -> "true") {
       val df = sql(
         """
@@ -1238,7 +1243,8 @@ abstract class DynamicPartitionPruningSuiteBase
     }
   }
 
-  test("Plan broadcast pruning only when the broadcast can be reused") {
+  test("Plan broadcast pruning only when the broadcast can be reused",
+    IgnoreComet("TODO: Support SubqueryBroadcastExec in Comet: #242")) {
     Given("dynamic pruning filter on the build side")
     withSQLConf(SQLConf.DYNAMIC_PARTITION_PRUNING_REUSE_BROADCAST_ONLY.key -> "true") {
       val df = sql(
@@ -1485,7 +1491,7 @@ abstract class DynamicPartitionPruningSuiteBase
   }
 
   test("SPARK-38148: Do not add dynamic partition pruning if there exists static partition " +
-    "pruning") {
+    "pruning", IgnoreComet("TODO: Support SubqueryBroadcastExec in Comet: #242")) {
     withSQLConf(SQLConf.DYNAMIC_PARTITION_PRUNING_ENABLED.key -> "true") {
       Seq(
         "f.store_id = 1" -> false,
@@ -1729,6 +1735,8 @@ abstract class DynamicPartitionPruningV1Suite extends DynamicPartitionPruningDat
               case s: BatchScanExec =>
                 // we use f1 col for v2 tables due to schema pruning
                 s.output.exists(_.exists(_.argString(maxFields = 100).contains("f1")))
+              case s: CometScanExec =>
+                s.output.exists(_.exists(_.argString(maxFields = 100).contains("fid")))
               case _ => false
             }
           assert(scanOption.isDefined)

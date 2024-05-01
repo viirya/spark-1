@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.optimizer.{BuildLeft, BuildRight, BuildSide
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.RuleExecutor
+import org.apache.spark.sql.comet.{CometHashJoinExec, CometSortMergeJoinExec}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.joins._
 import org.apache.spark.sql.internal.SQLConf
@@ -362,6 +363,7 @@ class JoinHintSuite extends PlanTest with SharedSparkSession with AdaptiveSparkP
     val executedPlan = df.queryExecution.executedPlan
     val shuffleHashJoins = collect(executedPlan) {
       case s: ShuffledHashJoinExec => s
+      case c: CometHashJoinExec => c.originalPlan.asInstanceOf[ShuffledHashJoinExec]
     }
     assert(shuffleHashJoins.size == 1)
     assert(shuffleHashJoins.head.buildSide == buildSide)
@@ -371,6 +373,7 @@ class JoinHintSuite extends PlanTest with SharedSparkSession with AdaptiveSparkP
     val executedPlan = df.queryExecution.executedPlan
     val shuffleMergeJoins = collect(executedPlan) {
       case s: SortMergeJoinExec => s
+      case c: CometSortMergeJoinExec => c
     }
     assert(shuffleMergeJoins.size == 1)
   }

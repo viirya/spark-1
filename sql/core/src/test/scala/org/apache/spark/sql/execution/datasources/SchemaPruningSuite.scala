@@ -27,6 +27,7 @@ import org.apache.spark.sql.catalyst.SchemaPruningTest
 import org.apache.spark.sql.catalyst.expressions.Concat
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.plans.logical.Expand
+import org.apache.spark.sql.comet.CometScanExec
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.functions._
@@ -867,6 +868,7 @@ abstract class SchemaPruningSuite
     val fileSourceScanSchemata =
       collect(df.queryExecution.executedPlan) {
         case scan: FileSourceScanExec => scan.requiredSchema
+        case scan: CometScanExec => scan.requiredSchema
       }
     assert(fileSourceScanSchemata.size === expectedSchemaCatalogStrings.size,
       s"Found ${fileSourceScanSchemata.size} file sources in dataframe, " +

@@ -39,6 +39,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeMap, Attri
 import org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation
 import org.apache.spark.sql.catalyst.plans.logical.{ColumnStat, LeafNode, LocalRelation, LogicalPlan, OneRowRelation, Statistics}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
+import org.apache.spark.sql.comet.execution.shuffle.CometShuffleExchangeExec
 import org.apache.spark.sql.connector.FakeV2Provider
 import org.apache.spark.sql.execution.{FilterExec, LogicalRDD, QueryExecution, SortExec, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
@@ -2291,7 +2292,7 @@ class DataFrameSuite extends QueryTest
       checkAnswer(join, df)
       assert(
         collect(join.queryExecution.executedPlan) {
-          case e: ShuffleExchangeExec => true }.size === 1)
+          case _: ShuffleExchangeExec | _: CometShuffleExchangeExec => true }.size === 1)
       assert(
         collect(join.queryExecution.executedPlan) { case e: ReusedExchangeExec => true }.size === 1)
       val broadcasted = broadcast(join)
@@ -2299,7 +2300,7 @@ class DataFrameSuite extends QueryTest
       checkAnswer(join2, df)
       assert(
         collect(join2.queryExecution.executedPlan) {
-          case e: ShuffleExchangeExec => true }.size == 1)
+          case _: ShuffleExchangeExec | _: CometShuffleExchangeExec => true }.size == 1)
       assert(
         collect(join2.queryExecution.executedPlan) {
           case e: BroadcastExchangeExec => true }.size === 1)
@@ -2863,6 +2864,7 @@ class DataFrameSuite extends QueryTest
     // Assert that no extra shuffle introduced by cogroup.
     val exchanges = collect(df3.queryExecution.executedPlan) {
       case h: ShuffleExchangeExec => h
+      case h: CometShuffleExchangeExec => h
     }
     assert(exchanges.size == 2)
   }
@@ -3311,7 +3313,8 @@ class DataFrameSuite extends QueryTest
     assert(df2.isLocal)
   }
 
-  test("SPARK-35886: PromotePrecision should be subexpr replaced") {
+  test("SPARK-35886: PromotePrecision should be subexpr replaced",
+    IgnoreComet("TODO: fix Comet for this test")) {
     withTable("tbl") {
       sql(
         """

@@ -18,6 +18,7 @@
 package org.apache.spark.sql.execution
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.comet.CometProjectExec
 import org.apache.spark.sql.connector.SimpleWritableDataSource
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanHelper, DisableAdaptiveExecutionSuite, EnableAdaptiveExecutionSuite}
 import org.apache.spark.sql.internal.SQLConf
@@ -34,7 +35,10 @@ abstract class RemoveRedundantProjectsSuiteBase
   private def assertProjectExecCount(df: DataFrame, expected: Int): Unit = {
     withClue(df.queryExecution) {
       val plan = df.queryExecution.executedPlan
-      val actual = collectWithSubqueries(plan) { case p: ProjectExec => p }.size
+      val actual = collectWithSubqueries(plan) {
+        case p: ProjectExec => p
+        case p: CometProjectExec => p
+      }.size
       assert(actual == expected)
     }
   }

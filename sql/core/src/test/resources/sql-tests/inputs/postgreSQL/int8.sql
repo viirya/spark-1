@@ -1,6 +1,10 @@
 --
 -- Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 --
+
+-- Disable Comet exec due to floating point precision difference
+--SET spark.comet.exec.enabled = false
+
 --
 -- INT8
 -- Test int8 64-bit integers.

@@ -21,6 +21,8 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Join, LogicalPlan, Project, Sort, Union}
+import org.apache.spark.sql.comet.CometScanExec
+import org.apache.spark.sql.comet.execution.shuffle.CometShuffleExchangeExec
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanHelper, DisableAdaptiveExecution}
 import org.apache.spark.sql.execution.datasources.FileScanRDD
@@ -1543,6 +1545,12 @@ class SubquerySuite extends QueryTest
             fs.inputRDDs().forall(
               _.asInstanceOf[FileScanRDD].filePartitions.forall(
                 _.files.forall(_.urlEncodedPath.contains("p=0"))))
+        case WholeStageCodegenExec(ColumnarToRowExec(InputAdapter(
+        fs @ CometScanExec(_, _, _, partitionFilters, _, _, _, _, _, _)))) =>
+          partitionFilters.exists(ExecSubqueryExpression.hasSubquery) &&
+            fs.inputRDDs().forall(
+              _.asInstanceOf[FileScanRDD].filePartitions.forall(
+                _.files.forall(_.urlEncodedPath.contains("p=0"))))
         case _ => false
       })
     }
@@ -2109,6 +2117,7 @@ class SubquerySuite extends QueryTest
       df.collect()
       val exchanges = collect(df.queryExecution.executedPlan) {
         case s: ShuffleExchangeExec => s
+        case s: CometShuffleExchangeExec => s
       }
       assert(exchanges.size === 1)
     }

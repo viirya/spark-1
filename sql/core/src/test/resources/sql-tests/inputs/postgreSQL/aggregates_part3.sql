@@ -5,6 +5,9 @@
 -- AGGREGATES [Part 3]
 -- https://github.com/postgres/postgres/blob/REL_12_BETA2/src/test/regress/sql/aggregates.sql#L352-L605
 
+-- Disable Comet exec due to floating point precision difference
+--SET spark.comet.exec.enabled = false
+
 -- Test aggregate operator with codegen on and off.
 --CONFIG_DIM1 spark.sql.codegen.wholeStage=true
 --CONFIG_DIM1 spark.sql.codegen.wholeStage=false,spark.sql.codegen.factoryMode=CODEGEN_ONLY

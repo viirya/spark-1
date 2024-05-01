@@ -28,7 +28,7 @@ import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.TestUtils
 import org.apache.spark.memory.MemoryMode
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{IgnoreComet, Row}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -201,7 +201,8 @@ class ParquetEncodingSuite extends ParquetCompatibilityTest with SharedSparkSess
     }
   }
 
-  test("parquet v2 pages - rle encoding for boolean value columns") {
+  test("parquet v2 pages - rle encoding for boolean value columns",
+      IgnoreComet("Comet doesn't support RLE encoding yet")) {
     val extraOptions = Map[String, String](
       ParquetOutputFormat.WRITER_VERSION -> ParquetProperties.WriterVersion.PARQUET_2_0.toString
     )

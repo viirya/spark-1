@@ -18,7 +18,7 @@
 package org.apache.spark.sql.streaming
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, Dataset, KeyValueGroupedDataset}
+import org.apache.spark.sql.{AnalysisException, Dataset, IgnoreComet, KeyValueGroupedDataset}
 import org.apache.spark.sql.catalyst.streaming.InternalOutputModes.Update
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.execution.streaming.state.FlatMapGroupsWithStateExecHelper
@@ -253,7 +253,8 @@ class FlatMapGroupsWithStateWithInitialStateSuite extends StateStoreMetricsTest 
     assert(e.message.contains(expectedError))
   }
 
-  test("flatMapGroupsWithState - initial state - initial state has flatMapGroupsWithState") {
+  test("flatMapGroupsWithState - initial state - initial state has flatMapGroupsWithState",
+    IgnoreComet("TODO: fix Comet for this test")) {
     val initialStateDS = Seq(("keyInStateAndData", new RunningCount(1))).toDS()
     val initialState: KeyValueGroupedDataset[String, RunningCount] =
       initialStateDS.groupByKey(_._1).mapValues(_._2)

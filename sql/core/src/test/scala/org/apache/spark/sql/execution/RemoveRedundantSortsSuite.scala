@@ -19,6 +19,7 @@ package org.apache.spark.sql.execution
 
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.plans.physical.{RangePartitioning, UnknownPartitioning}
+import org.apache.spark.sql.comet.CometSortExec
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanHelper, DisableAdaptiveExecutionSuite, EnableAdaptiveExecutionSuite}
 import org.apache.spark.sql.execution.joins.ShuffledJoin
 import org.apache.spark.sql.internal.SQLConf
@@ -33,7 +34,7 @@ abstract class RemoveRedundantSortsSuiteBase
 
   private def checkNumSorts(df: DataFrame, count: Int): Unit = {
     val plan = df.queryExecution.executedPlan
-    assert(collectWithSubqueries(plan) { case s: SortExec => s }.length == count)
+    assert(collectWithSubqueries(plan) { case _: SortExec | _: CometSortExec => 1 }.length == count)
   }
 
   private def checkSorts(query: String, enabledCount: Int, disabledCount: Int): Unit = {

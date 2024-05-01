@@ -37,6 +37,7 @@ import org.apache.spark.sql.catalyst.encoders.{OuterScopes, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.sql.catalyst.plans.{LeftAnti, LeftSemi}
 import org.apache.spark.sql.catalyst.util.sideBySide
+import org.apache.spark.sql.comet.execution.shuffle.CometShuffleExchangeExec
 import org.apache.spark.sql.execution.{LogicalRDD, RDDScanExec, SQLExecution}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ShuffleExchangeExec}
@@ -2255,6 +2256,7 @@ class DatasetSuite extends QueryTest
     // Assert that no extra shuffle introduced by cogroup.
     val exchanges = collect(df3.queryExecution.executedPlan) {
       case h: ShuffleExchangeExec => h
+      case c: CometShuffleExchangeExec => c
     }
     assert(exchanges.size == 2)
   }
