@@ -548,7 +548,7 @@ object QueryExecution {
         Nil
       } else {
         Seq(ReuseExchangeAndSubquery)
-      })
+      }) ++ Seq(ExecuteAsLocalRelation)
   }
 
   /**

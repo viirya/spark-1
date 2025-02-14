@@ -2721,6 +2721,24 @@ class DataFrameSuite extends QueryTest
       parameters = Map("name" -> ".whatever")
     )
   }
+
+  test("local") {
+    withTable("test") {
+      sql(
+        """
+          |CREATE TABLE test (
+          |  value INT)
+          |USING parquet;
+          |""".stripMargin)
+      sql("INSERT INTO test SELECT 1")
+      sql("INSERT INTO test SELECT 2")
+      sql("INSERT INTO test SELECT 3")
+
+      val df = spark.table("test").filter($"value" > 1)
+      df.explain(true)
+      df.collect()
+    }
+  }
 }
 
 case class GroupByKey(a: Int, b: Int)
