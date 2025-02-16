@@ -23,12 +23,13 @@ import scala.collection.mutable.{ArrayBuffer, HashSet, ListBuffer}
 
 import org.apache.spark.{ShuffleDependency, SparkEnv, TaskContext, TaskContextImpl}
 import org.apache.spark.executor.TaskMetrics
+import org.apache.spark.internal.Logging
 import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 
-object ExecuteAsLocalRelation extends Rule[SparkPlan] {
+object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
   /**
    * Check whether the given RDD is qualified for local execution.
    * An RDD is qualified for local execution if it does not have any parent RDDs with shuffle
@@ -99,6 +100,12 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] {
   def isPlanSupported(plan: SparkPlan): Boolean = {
     plan match {
       case _: AdaptiveSparkPlanExec => false
+      case fileSourceScanLike: FileSourceScanLike if !fileSourceScanLike.supportsColumnar =>
+        fileSourceScanLike.relation.sizeInBytes < 1024 * 1024 * 1024 &&
+          fileSourceScanLike.children.forall(isPlanSupported) &&
+          fileSourceScanLike.relation.inputFiles.length == 1
+      case d: DataSourceScanExec if !d.supportsColumnar =>
+        d.relation.sizeInBytes < 1024 * 1024 * 1024 && d.children.forall(isPlanSupported)
       case _: ProjectExec | _: FilterExec | _: LocalLimitExec | _: UnionExec |
            _: WholeStageCodegenExec | _: InputAdapter |  _: LocalTableScanExec
           if !plan.supportsColumnar =>
@@ -122,7 +129,8 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] {
       if (isQualified(rdd)) {
         val results = execute(SparkEnv.get, rdd)
         // scalastyle:off println
-        println(s"localzed ${s.simpleString(100)}")
+        println(s"localized $s as LocalTableScanExec")
+        logInfo(s"localized $s as LocalTableScanExec")
         LocalTableScanExec(s.output, results, None)
       } else {
        s
