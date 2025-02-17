@@ -28,7 +28,13 @@ import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
 
+/**
+ * A rule to execute a SparkPlan locally. Under certain conditions, Spark will execute a plan
+ * locally without submitting it as a job. The result of the execution is wrapped in a
+ * LocalTableScanExec.
+ */
 object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
   /**
    * Check whether the given RDD is qualified for local execution.
@@ -57,6 +63,9 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
     parents.isEmpty && rdd.partitions.length == 1
   }
 
+  /**
+   * Execute the given RDD locally and return the result as a sequence.
+   */
   def execute[T](env: SparkEnv, rdd: RDD[T]): Seq[T] = {
     val partitions = rdd.partitions
 
@@ -97,16 +106,21 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
     resultsArray.toSeq
   }
 
+  /**
+   * Check whether the given plan is supported by this rule.
+   */
   def isPlanSupported(plan: SparkPlan): Boolean = {
     plan match {
       case _: AdaptiveSparkPlanExec => false
       // TODO: Delta?
+      case d: DataSourceV2ScanExecBase if !d.supportsColumnar =>
+        // TODO: How to know the size of the relation?
+        d.partitions.length == 1
       case fileSourceScanLike: FileSourceScanLike if !fileSourceScanLike.supportsColumnar =>
         fileSourceScanLike.relation.sizeInBytes < 1024 * 1024 * 1024 &&
-          fileSourceScanLike.children.forall(isPlanSupported) &&
           fileSourceScanLike.relation.inputFiles.length == 1
       case d: DataSourceScanExec if !d.supportsColumnar =>
-        d.relation.sizeInBytes < 1024 * 1024 * 1024 && d.children.forall(isPlanSupported)
+        d.relation.sizeInBytes < 1024 * 1024 * 1024
       case _: ProjectExec | _: FilterExec | _: LocalLimitExec | _: UnionExec |
            _: WholeStageCodegenExec | _: InputAdapter |  _: LocalTableScanExec
           if !plan.supportsColumnar =>
