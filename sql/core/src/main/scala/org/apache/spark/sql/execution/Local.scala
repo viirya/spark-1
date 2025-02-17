@@ -100,6 +100,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
   def isPlanSupported(plan: SparkPlan): Boolean = {
     plan match {
       case _: AdaptiveSparkPlanExec => false
+      // TODO: Delta?
       case fileSourceScanLike: FileSourceScanLike if !fileSourceScanLike.supportsColumnar =>
         fileSourceScanLike.relation.sizeInBytes < 1024 * 1024 * 1024 &&
           fileSourceScanLike.children.forall(isPlanSupported) &&
