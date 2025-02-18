@@ -28,6 +28,7 @@ import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
 
 /**
@@ -107,7 +108,8 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
   }
 
   /**
-   * Check whether the given plan is supported by this rule.
+   * Check whether the given plan is supported by this rule. Columnar plans are not supported
+   * because Spark ColumnarBatch is not serializable.
    */
   def isPlanSupported(plan: SparkPlan): Boolean = {
     plan match {
@@ -122,8 +124,8 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
       case d: DataSourceScanExec if !d.supportsColumnar =>
         d.relation.sizeInBytes < 1024 * 1024 * 1024
       case _: ProjectExec | _: FilterExec | _: LocalLimitExec | _: UnionExec |
-           _: WholeStageCodegenExec | _: InputAdapter |  _: LocalTableScanExec
-          if !plan.supportsColumnar =>
+           _: WholeStageCodegenExec | _: InputAdapter |  _: LocalTableScanExec |
+           _: HashAggregateExec if !plan.supportsColumnar =>
         plan.children.forall(isPlanSupported)
       case _ => false
     }
