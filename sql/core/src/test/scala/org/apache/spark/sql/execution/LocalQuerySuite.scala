@@ -91,5 +91,38 @@ class LocalQuerySuite extends QueryTest
     }
   }
 
+  test("local query from scan: aggregation") {
+    var results: Array[Row] = Array.empty
+
+    withTable("test_table") {
+      (0 until 10000).map { i =>
+        ((i % 20).toString, i)
+      }.toDF("id", "value").repartition(1).write.saveAsTable("test_table")
+
+      withSQLConf(SQLConf.LOCAL_QUERY_ENABLED.key -> "false") {
+        val df = spark.table("test_table").groupBy("id").agg(sum("value"))
+        val start = System.currentTimeMillis()
+        results = df.collect()
+        val end = System.currentTimeMillis()
+        val elapsedTime = end - start
+        // scalastyle:off println
+        println(s"Elapsed time: $elapsedTime ms")
+      }
+
+      withSQLConf(SQLConf.LOCAL_QUERY_ENABLED.key -> "true") {
+        val df = spark.table("test_table").groupBy("id").agg(sum("value"))
+        val start = System.currentTimeMillis()
+        df.collect()
+        val end = System.currentTimeMillis()
+        val elapsedTime = end - start
+        // scalastyle:off println
+        println(s"Elapsed time: $elapsedTime ms")
+
+        checkAnswer(df, results)
+        checkLocalQuery(df)
+      }
+    }
+  }
+
   // todo: UDF test
 }

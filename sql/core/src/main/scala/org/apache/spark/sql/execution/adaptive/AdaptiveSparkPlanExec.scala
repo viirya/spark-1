@@ -161,7 +161,8 @@ case class AdaptiveSparkPlanExec(
   private def postStageCreationRules(outputsColumnar: Boolean) = Seq(
     ApplyColumnarRulesAndInsertTransitions(
       context.session.sessionState.columnarRules, outputsColumnar),
-    collapseCodegenStagesRule
+    collapseCodegenStagesRule,
+    ExecuteAsLocalRelation
   )
 
   private def optimizeQueryStage(plan: SparkPlan, isFinalStage: Boolean): SparkPlan = {
@@ -601,17 +602,20 @@ case class AdaptiveSparkPlanExec(
           val newPlan = e.withNewChildren(Seq(result.newPlan)).asInstanceOf[Exchange]
           // Create a query stage only when all the child query stages are ready.
           if (result.allChildStagesMaterialized) {
-            var newStage = newQueryStage(newPlan).asInstanceOf[ExchangeQueryStageExec]
-            if (conf.exchangeReuseEnabled) {
-              // Check the `stageCache` again for reuse. If a match is found, ditch the new stage
-              // and reuse the existing stage found in the `stageCache`, otherwise update the
-              // `stageCache` with the new stage.
-              val queryStage = context.stageCache.getOrElseUpdate(
-                newStage.plan.canonicalized, newStage)
-              if (queryStage.ne(newStage)) {
-                newStage = reuseQueryStage(queryStage, e)
-              }
+            var newStage = newQueryStage(newPlan)
+            newStage match {
+              case s: ExchangeQueryStageExec if conf.exchangeReuseEnabled =>
+                // Check the `stageCache` again for reuse. If a match is found, ditch the new stage
+                // and reuse the existing stage found in the `stageCache`, otherwise update the
+                // `stageCache` with the new stage.
+                val queryStage = context.stageCache.getOrElseUpdate(
+                  newStage.plan.canonicalized, s)
+                if (queryStage.ne(newStage)) {
+                  newStage = reuseQueryStage(queryStage, e)
+                }
+              case _ =>
             }
+
             val isMaterialized = newStage.isMaterialized
             CreateStageResult(
               newPlan = newStage,
@@ -672,11 +676,15 @@ case class AdaptiveSparkPlanExec(
           postStageCreationRules(outputsColumnar = plan.supportsColumnar),
           Some((planChangeLogger, "AQE Post Stage Creation")))
         if (e.isInstanceOf[ShuffleExchangeLike]) {
-          if (!newPlan.isInstanceOf[ShuffleExchangeLike]) {
-            throw SparkException.internalError(
-              "Custom columnar rules cannot transform shuffle node to something else.")
+          newPlan match {
+            case _: ShuffleExchangeLike =>
+              ShuffleQueryStageExec(currentStageId, newPlan, e.canonicalized)
+            case l: LocalTableScanExec =>
+              LocalTableQueryStageExec(currentStageId, l)
+            case _ =>
+              throw SparkException.internalError(
+                "Custom columnar rules cannot transform shuffle node to something else.")
           }
-          ShuffleQueryStageExec(currentStageId, newPlan, e.canonicalized)
         } else {
           assert(e.isInstanceOf[BroadcastExchangeLike])
           if (!newPlan.isInstanceOf[BroadcastExchangeLike]) {

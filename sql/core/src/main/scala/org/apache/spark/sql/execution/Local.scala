@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RoundRobinPartitioning, SinglePartition, UnknownPartitioning}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AQEShuffleReadExec}
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AQEShuffleReadExec, LocalTableQueryStageExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
@@ -137,6 +137,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
         isPlanSupported(a.child, allowColumnar)
       case ShuffleExchangeExec(_, s: SparkPlan, _, _) =>
         isPlanSupported(s, allowColumnar) && isQualified(s.execute())
+      case _: LocalTableQueryStageExec => true
       case ColumnarToRowExec(p) =>
         isPlanSupported(p, allowColumnar = true)
       case _ => false
@@ -164,14 +165,10 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
           if isPlanSupported(s, allowColumnar = false) &&
             qualifiedPartitioning(s.outputPartitioning) =>
         val local = doExecute(s.child)
-        // scalastyle:off println
-        println(s"localized $s as LocalTableScanExec")
         logInfo(s"localized $s as LocalTableScanExec")
         local
       case s: SparkPlan if isPlanSupported(s, allowColumnar = false) =>
         val local = doExecute(s)
-        // scalastyle:off println
-        println(s"localized $s as LocalTableScanExec")
         logInfo(s"localized $s as LocalTableScanExec")
         local
       case o =>

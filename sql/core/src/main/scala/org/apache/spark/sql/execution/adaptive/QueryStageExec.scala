@@ -309,6 +309,24 @@ case class TableCacheQueryStageExec(
   override def getRuntimeStatistics: Statistics = inMemoryTableScan.runtimeStatistics
 }
 
+/**
+ * A table cache query stage whose child is a [[LocalTableScanExec]].
+ *
+ * @param id the query stage id.
+ * @param plan the underlying plan.
+ */
+case class LocalTableQueryStageExec(
+    override val id: Int,
+    override val plan: LocalTableScanExec) extends QueryStageExec {
+
+  @transient
+  private lazy val future: Future[Unit] = Future.successful(())
+
+  override protected def doMaterialize(): Future[Any] = future
+
+  override def getRuntimeStatistics: Statistics = Statistics.DUMMY
+}
+
 case class ResultQueryStageExec(
     override val id: Int,
     override val plan: SparkPlan,
