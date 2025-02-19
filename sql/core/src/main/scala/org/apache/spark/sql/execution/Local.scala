@@ -89,7 +89,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
       0,
       1,
       taskMemoryManager,
-      new Properties,
+      new Properties, // TODO: task proproperties?
       env.metricsSystem,
       TaskMetrics.empty)
     TaskContext.setTaskContext(taskContext)
