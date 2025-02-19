@@ -131,14 +131,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
       case a: AQEShuffleReadExec =>
         isPlanSupported(a.child)
       case ShuffleExchangeExec(_, s: SparkPlan, _, _) =>
-        val supported = if (isPlanSupported(s)) {
-          isQualified(s.execute())
-        } else {
-          false
-        }
-        // scalastyle:off println
-        println(s"shuffle supported: $supported")
-        supported
+        isPlanSupported(s) && isQualified(s.execute())
       case _ => false
     }
   }
@@ -162,9 +155,17 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
       // shuffle locally.
       case s: ShuffleExchangeExec
           if isPlanSupported(s) && qualifiedPartitioning(s.outputPartitioning) =>
-        doExecute(s)
+        val local = doExecute(s.child)
+        // scalastyle:off println
+        println(s"localized $s as LocalTableScanExec")
+        logInfo(s"localized $s as LocalTableScanExec")
+        local
       case s: SparkPlan if isPlanSupported(s) =>
-        doExecute(s)
+        val local = doExecute(s)
+        // scalastyle:off println
+        println(s"localized $s as LocalTableScanExec")
+        logInfo(s"localized $s as LocalTableScanExec")
+        local
       case o =>
         o
     }
@@ -185,9 +186,6 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
 
     if (isQualified(rdd)) {
       val results = execute(SparkEnv.get, rdd)
-      // scalastyle:off println
-      println(s"localized $plan as LocalTableScanExec")
-      logInfo(s"localized $plan as LocalTableScanExec")
       LocalTableScanExec(plan.output, results, None, localQuery = Some(plan), parallelism = Some(1))
     } else {
       plan
