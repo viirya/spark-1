@@ -120,7 +120,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
     plan match {
       case _: AdaptiveSparkPlanExec => false
       // TODO: Delta?
-      case d: DataSourceV2ScanExecBase if !d.supportsColumnar =>
+      case d: DataSourceV2ScanExecBase if !d.supportsColumnar || allowColumnar =>
         // TODO: How to know the size of the relation?
         d.partitions.length == 1
       case fileSourceScanLike: FileSourceScanLike
@@ -133,7 +133,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
            _: WholeStageCodegenExec | _: InputAdapter |  _: LocalTableScanExec |
            _: HashAggregateExec if !plan.supportsColumnar || allowColumnar =>
         plan.children.forall(isPlanSupported(_, allowColumnar))
-      case a: AQEShuffleReadExec =>
+      case a: AQEShuffleReadExec if !a.supportsColumnar || allowColumnar =>
         isPlanSupported(a.child, allowColumnar)
       case ShuffleExchangeExec(_, s: SparkPlan, _, _) =>
         isPlanSupported(s, allowColumnar) && isQualified(s.execute())
