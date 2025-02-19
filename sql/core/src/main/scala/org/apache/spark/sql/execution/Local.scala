@@ -17,8 +17,6 @@
 
 package org.apache.spark.sql.execution
 
-import java.util.Properties
-
 import scala.collection.mutable.{ArrayBuffer, HashSet, ListBuffer}
 
 import org.apache.spark.{ShuffleDependency, SparkEnv, TaskContext, TaskContextImpl}
@@ -89,7 +87,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
       0,
       1,
       taskMemoryManager,
-      new Properties, // TODO: task proproperties?
+      rdd.sparkContext.getLocalProperties,
       env.metricsSystem,
       TaskMetrics.empty)
     TaskContext.setTaskContext(taskContext)
