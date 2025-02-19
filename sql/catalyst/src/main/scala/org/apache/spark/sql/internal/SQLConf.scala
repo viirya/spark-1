@@ -5554,6 +5554,14 @@ object SQLConf {
     .booleanConf
     .createWithDefault(true)
 
+  val LOCAL_QUERY_ENABLED = buildConf("spark.sql.localQuery.enabled")
+    .internal()
+    .doc("When set to true, Spark SQL will execute the query locally if the query has only " +
+      "one partition or the scan data size is less than 1GB.")
+    .version("4.0.0")
+    .booleanConf
+    .createWithDefault(false)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -5955,6 +5963,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def codegenFactoryMode: String = getConf(CODEGEN_FACTORY_MODE)
 
   def codegenComments: Boolean = getConf(StaticSQLConf.CODEGEN_COMMENTS)
+
+  def localQueryEnabled: Boolean = getConf(LOCAL_QUERY_ENABLED)
 
   def loggingMaxLinesForCodegen: Int = getConf(CODEGEN_LOGGING_MAX_LINES)
 

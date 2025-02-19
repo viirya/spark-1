@@ -34,7 +34,9 @@ import org.apache.spark.util.ArrayImplicits._
 case class LocalTableScanExec(
     output: Seq[Attribute],
     @transient rows: Seq[InternalRow],
-    @transient stream: Option[SparkDataStream])
+    @transient stream: Option[SparkDataStream],
+    @transient localQuery: Option[SparkPlan] = None,
+    parallelism: Option[Int] = None)
   extends LeafExecNode
   with StreamSourceAwareSparkPlan
   with InputRDDCodegen {
@@ -55,8 +57,8 @@ case class LocalTableScanExec(
     if (rows.isEmpty) {
       sparkContext.emptyRDD
     } else {
-      val numSlices = math.min(
-        unsafeRows.length, session.leafNodeDefaultParallelism)
+      val numSlices = parallelism.getOrElse(math.min(
+        unsafeRows.length, session.leafNodeDefaultParallelism))
       sparkContext.parallelize(unsafeRows.toImmutableArraySeq, numSlices)
     }
   }

@@ -134,7 +134,8 @@ case class AdaptiveSparkPlanExec(
       RemoveRedundantSorts,
       RemoveRedundantWindowGroupLimits,
       DisableUnnecessaryBucketedScan,
-      OptimizeSkewedJoin(ensureRequirements)
+      OptimizeSkewedJoin(ensureRequirements),
+      ExecuteAsLocalRelation
     ) ++ context.session.sessionState.adaptiveRulesHolder.queryStagePrepRules
   }
 

@@ -26,10 +26,13 @@ import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RoundRobinPartitioning, SinglePartition, UnknownPartitioning}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AQEShuffleReadExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanExecBase
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * A rule to execute a SparkPlan locally. Under certain conditions, Spark will execute a plan
@@ -99,8 +102,6 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
 
     while (results.hasNext) {
       val n = results.next()
-      // scalastyle:off println
-      println(n)
       resultsArray += n
     }
 
@@ -127,6 +128,17 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
            _: WholeStageCodegenExec | _: InputAdapter |  _: LocalTableScanExec |
            _: HashAggregateExec if !plan.supportsColumnar =>
         plan.children.forall(isPlanSupported)
+      case a: AQEShuffleReadExec =>
+        isPlanSupported(a.child)
+      case ShuffleExchangeExec(_, s: SparkPlan, _, _) =>
+        val supported = if (isPlanSupported(s)) {
+          isQualified(s.execute())
+        } else {
+          false
+        }
+        // scalastyle:off println
+        println(s"shuffle supported: $supported")
+        supported
       case _ => false
     }
   }
@@ -138,21 +150,47 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
     }
   }
 
-  override def apply(plan: SparkPlan): SparkPlan = plan transformUp {
-    case l: LocalTableScanExec => l
-    case s: SparkPlan if isPlanSupported(s) && s.session != null =>
-      val rdd = s.execute()
+  override def apply(plan: SparkPlan): SparkPlan = {
+    if (!SQLConf.get.localQueryEnabled) {
+      return plan
+    }
 
-      if (isQualified(rdd)) {
-        val results = execute(SparkEnv.get, rdd)
-        // scalastyle:off println
-        println(s"localized $s as LocalTableScanExec")
-        logInfo(s"localized $s as LocalTableScanExec")
-        LocalTableScanExec(s.output, results, None)
-      } else {
-       s
-      }
-    case o =>
-      o
+    plan transformUp {
+      case l: LocalTableScanExec => l
+      // We need to localize a shuffle early if it is possible.
+      // If we ignore it and localized the parent plan, we probably only execute a part of the
+      // shuffle locally.
+      case s: ShuffleExchangeExec
+          if isPlanSupported(s) && qualifiedPartitioning(s.outputPartitioning) =>
+        doExecute(s)
+      case s: SparkPlan if isPlanSupported(s) =>
+        doExecute(s)
+      case o =>
+        o
+    }
+  }
+
+  private def qualifiedPartitioning(partitioning: Partitioning): Boolean = {
+    partitioning match {
+      case SinglePartition => true
+      case _: UnknownPartitioning => true
+      case _: RoundRobinPartitioning => true
+      case _: HashPartitioning => true
+      case _ => false
+    }
+  }
+
+  private def doExecute(plan: SparkPlan): SparkPlan = {
+    val rdd = plan.execute()
+
+    if (isQualified(rdd)) {
+      val results = execute(SparkEnv.get, rdd)
+      // scalastyle:off println
+      println(s"localized $plan as LocalTableScanExec")
+      logInfo(s"localized $plan as LocalTableScanExec")
+      LocalTableScanExec(plan.output, results, None, localQuery = Some(plan), parallelism = Some(1))
+    } else {
+      plan
+    }
   }
 }
