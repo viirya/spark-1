@@ -78,4 +78,16 @@ class LocalQuerySuite extends QueryTest
       checkLocalQuery(df)
     }
   }
+
+  test("local query from scan") {
+    withSQLConf(SQLConf.LOCAL_QUERY_ENABLED.key -> "true") {
+      withTable("test_table") {
+        spark.range(0, 101).repartition(1).write.saveAsTable("test_table")
+
+        val df = spark.table("test_table").filter($"id" >= 100)
+        checkAnswer(df, Seq(Row(100)))
+        checkLocalQuery(df)
+      }
+    }
+  }
 }

@@ -24,6 +24,8 @@ import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RoundRobinPartitioning, SinglePartition, UnknownPartitioning}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AQEShuffleReadExec}
@@ -68,7 +70,7 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
   /**
    * Execute the given RDD locally and return the result as a sequence.
    */
-  def execute[T](env: SparkEnv, rdd: RDD[T]): Seq[T] = {
+  def execute(env: SparkEnv, rdd: RDD[InternalRow]): Seq[InternalRow] = {
     val partitions = rdd.partitions
 
     if (partitions.isEmpty) {
@@ -96,11 +98,15 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
 
     TaskContext.unset()
 
-    val resultsArray = ArrayBuffer[T]()
+    val resultsArray = ArrayBuffer[InternalRow]()
 
     while (results.hasNext) {
       val n = results.next()
-      resultsArray += n
+      if (n.isInstanceOf[UnsafeRow]) {
+        resultsArray += n.asInstanceOf[UnsafeRow].copy()
+      } else {
+        resultsArray += n
+      }
     }
 
     resultsArray.toSeq
@@ -110,26 +116,29 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
    * Check whether the given plan is supported by this rule. Columnar plans are not supported
    * because Spark ColumnarBatch is not serializable.
    */
-  def isPlanSupported(plan: SparkPlan): Boolean = {
+  def isPlanSupported(plan: SparkPlan, allowColumnar: Boolean): Boolean = {
     plan match {
       case _: AdaptiveSparkPlanExec => false
       // TODO: Delta?
       case d: DataSourceV2ScanExecBase if !d.supportsColumnar =>
         // TODO: How to know the size of the relation?
         d.partitions.length == 1
-      case fileSourceScanLike: FileSourceScanLike if !fileSourceScanLike.supportsColumnar =>
+      case fileSourceScanLike: FileSourceScanLike
+          if !fileSourceScanLike.supportsColumnar || allowColumnar =>
         fileSourceScanLike.relation.sizeInBytes < 1024 * 1024 * 1024 &&
           fileSourceScanLike.relation.inputFiles.length == 1
-      case d: DataSourceScanExec if !d.supportsColumnar =>
+      case d: DataSourceScanExec if !d.supportsColumnar || allowColumnar =>
         d.relation.sizeInBytes < 1024 * 1024 * 1024
       case _: ProjectExec | _: FilterExec | _: LocalLimitExec | _: UnionExec |
            _: WholeStageCodegenExec | _: InputAdapter |  _: LocalTableScanExec |
-           _: HashAggregateExec if !plan.supportsColumnar =>
-        plan.children.forall(isPlanSupported)
+           _: HashAggregateExec if !plan.supportsColumnar || allowColumnar =>
+        plan.children.forall(isPlanSupported(_, allowColumnar))
       case a: AQEShuffleReadExec =>
-        isPlanSupported(a.child)
+        isPlanSupported(a.child, allowColumnar)
       case ShuffleExchangeExec(_, s: SparkPlan, _, _) =>
-        isPlanSupported(s) && isQualified(s.execute())
+        isPlanSupported(s, allowColumnar) && isQualified(s.execute())
+      case ColumnarToRowExec(p) =>
+        isPlanSupported(p, allowColumnar = true)
       case _ => false
     }
   }
@@ -152,13 +161,14 @@ object ExecuteAsLocalRelation extends Rule[SparkPlan] with Logging {
       // If we ignore it and localized the parent plan, we probably only execute a part of the
       // shuffle locally.
       case s: ShuffleExchangeExec
-          if isPlanSupported(s) && qualifiedPartitioning(s.outputPartitioning) =>
+          if isPlanSupported(s, allowColumnar = false) &&
+            qualifiedPartitioning(s.outputPartitioning) =>
         val local = doExecute(s.child)
         // scalastyle:off println
         println(s"localized $s as LocalTableScanExec")
         logInfo(s"localized $s as LocalTableScanExec")
         local
-      case s: SparkPlan if isPlanSupported(s) =>
+      case s: SparkPlan if isPlanSupported(s, allowColumnar = false) =>
         val local = doExecute(s)
         // scalastyle:off println
         println(s"localized $s as LocalTableScanExec")
