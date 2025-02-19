@@ -90,4 +90,6 @@ class LocalQuerySuite extends QueryTest
       }
     }
   }
+
+  // todo: UDF test
 }
