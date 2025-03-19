@@ -1,3 +1,4 @@
+
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -17,44 +18,37 @@
 package org.apache.spark.shuffle.local;
 
 import java.util.LinkedList;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
-public class Channel<T> {
-    private final ConcurrentLinkedQueue<T> queue;
-    private final ConcurrentLinkedQueue<Waker> receiverWakers;
-    private final ChannelGate channelGate ;
+public class ChannelGate {
+    private int emptyChannelNumber = 0;
+    private final LinkedList<Waker> senderWakers;
 
-    Channel(ConcurrentLinkedQueue<T> queue, ChannelGate channelGate) {
-        this.queue = queue;
-        this.receiverWakers = new ConcurrentLinkedQueue<>();
-        this.channelGate = channelGate;
+    ChannelGate() {
+        this.senderWakers = new LinkedList<>();
     }
 
-    void addReceiverWaker(Waker waker) {
-        receiverWakers.add(waker);
+    void addSenderWaker(Waker waker) {
+        senderWakers.add(waker);
     }
 
-    void wakeReceivers() {
-        for (Waker waker : receiverWakers) {
+    void wakeSenders() {
+        for (Waker waker : senderWakers) {
             waker.wake();
         }
-        receiverWakers.clear();
+        senderWakers.clear();
     }
 
-    void addData(T data) {
-        queue.add(data);
+    synchronized int incrementEmptyChannelNumber() {
+        int oldEmptyChannelNumber = emptyChannelNumber;
+        emptyChannelNumber++;
+        return oldEmptyChannelNumber;
     }
 
-    T getData() {
-        return queue.poll();
+    synchronized void decrementEmptyChannelNumber() {
+        emptyChannelNumber--;
     }
 
-    boolean isEmpty() {
-        return queue.isEmpty();
-    }
-
-    public ChannelGate getChannelGate() {
-        return channelGate;
+    synchronized int getEmptyChannelNumber() {
+        return emptyChannelNumber;
     }
 }
-

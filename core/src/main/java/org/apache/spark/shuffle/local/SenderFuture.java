@@ -20,42 +20,42 @@ import java.util.concurrent.CompletableFuture;
 
 class SenderFuture<T> {
     private final T data;
-    private final Waker waker;
     private final Channel<T> channel;
 
     SenderFuture(T data, Channel<T> channel) {
         this.data = data;
-        this.waker = new SimpleWaker();
         this.channel = channel;
     }
 
     Waker getWaker() {
-        return waker;
+        return new SimpleWaker();
     }
 
-    void wake() {
-        waker.wake();
-    }
-
-    CompletableFuture<T> getFuture() {
-        CompletableFuture<T> future = CompletableFuture.supplyAsync(() -> {
+    CompletableFuture<Boolean> getFuture() {
+        return CompletableFuture.supplyAsync(() -> {
             try {
-                System.out.println("Task Paused...");
-                waker.await();
+                while (true) {
+                    // Check if empty channel number is 0, i.e., no receiver need data,
+                    // then wait for the receiver to wake up the sender
+                    if (channel.getChannelGate().getEmptyChannelNumber() == 0) {
+                        Waker waker = getWaker();
+                        channel.getChannelGate().addSenderWaker(waker);
+                        waker.await();
+                    }
 
-                boolean isEmpty = channel.isEmpty();
-                channel.addData(data);
+                    boolean isEmpty = channel.isEmpty();
+                    channel.addData(data);
 
-                // If data queue was empty before pushing new data, wake up the receivers
-                if (isEmpty) {
-                    channel.wakeReceivers();
+                    // If data queue was empty before pushing new data, wake up the receivers
+                    if (isEmpty) {
+                        channel.getChannelGate().decrementEmptyChannelNumber();
+                        channel.wakeReceivers();
+                        return true;
+                    }
                 }
             } catch (InterruptedException e) {
-                return data;
+                return false;
             }
-            return data;
         });
-
-        return future.get();
     }
 }
