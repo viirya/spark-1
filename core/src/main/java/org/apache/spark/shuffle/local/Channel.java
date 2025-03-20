@@ -17,17 +17,58 @@
 package org.apache.spark.shuffle.local;
 
 import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class Channel<T> {
+    private final int id;
+    private boolean closed = false;
+    private int numSenders = 0;
     private final ConcurrentLinkedQueue<T> queue;
     private final ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
 
-    Channel(ConcurrentLinkedQueue<T> queue, ChannelGate channelGate) {
-        this.queue = queue;
+    public static <T> List<Channel<T>> createChannels(int numChannels) {
+        List<Channel<T>> channels = new LinkedList<>();
+        ChannelGate channelGate = new ChannelGate();
+
+        for (int i = 0; i < numChannels; i++) {
+            channels.add(new Channel<>(i, channelGate));
+        }
+
+        return channels;
+    }
+
+    Channel(int id, ChannelGate channelGate) {
+        this.id = id;
+        this.queue = new ConcurrentLinkedQueue<>();
         this.receiverWakers = new ConcurrentLinkedQueue<>();
         this.channelGate = channelGate;
+    }
+
+    boolean isClosed() {
+        return closed;
+    }
+
+    void close() {
+        closed = true;
+    }
+
+    int getId() {
+        return id;
+    }
+
+    synchronized int getNumSenders() {
+        return numSenders;
+    }
+
+    synchronized Sender<T> createSender() {
+        numSenders += 1;
+        return new Sender<>(this);
+    }
+
+    synchronized Receiver<T> createReceiver() {
+        return new Receiver<>(this);
     }
 
     void addReceiverWaker(Waker waker) {

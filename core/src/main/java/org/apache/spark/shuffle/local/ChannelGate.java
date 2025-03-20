@@ -17,25 +17,37 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.AbstractMap;
 import java.util.LinkedList;
+import java.util.Map;
 
 public class ChannelGate {
     private int emptyChannelNumber = 0;
-    private final LinkedList<Waker> senderWakers;
+    private final LinkedList<Map.Entry<Waker, Integer>> senderWakers;
 
     ChannelGate() {
         this.senderWakers = new LinkedList<>();
     }
 
-    void addSenderWaker(Waker waker) {
-        senderWakers.add(waker);
+    synchronized void addSenderWaker(Waker waker, int channelId) {
+        senderWakers.add(new AbstractMap.SimpleEntry<>(waker, channelId));
     }
 
-    void wakeSenders() {
-        for (Waker waker : senderWakers) {
-            waker.wake();
+    synchronized void wakeSenders() {
+        for (Map.Entry<Waker, Integer> waker : senderWakers) {
+            waker.getKey().wake();
         }
         senderWakers.clear();
+    }
+
+    synchronized void wakeSenders(int channelId) {
+        for (Map.Entry<Waker, Integer> waker : senderWakers) {
+            if (waker.getValue() == channelId) {
+                waker.getKey().wake();
+
+                senderWakers.remove(waker);
+            }
+        }
     }
 
     synchronized int incrementEmptyChannelNumber() {

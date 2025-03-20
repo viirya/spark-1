@@ -39,7 +39,7 @@ class SenderFuture<T> {
                     // then wait for the receiver to wake up the sender
                     if (channel.getChannelGate().getEmptyChannelNumber() == 0) {
                         Waker waker = getWaker();
-                        channel.getChannelGate().addSenderWaker(waker);
+                        channel.getChannelGate().addSenderWaker(waker, channel.getId());
                         waker.await();
                     }
 
