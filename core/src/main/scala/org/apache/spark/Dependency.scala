@@ -257,3 +257,16 @@ class RangeDependency[T](rdd: RDD[T], inStart: Int, outStart: Int, length: Int)
     }
   }
 }
+
+/**
+ * :: DeveloperApi ::
+ * Represents a local dependency between partitions of the parent and child RDDs.
+ * One child partition depends on all parent partitions.
+ * @param rdd the parent RDD
+ */
+@DeveloperApi
+class LocalRepartitionDependency[T](rdd: RDD[T]) extends NarrowDependency[T](rdd) {
+  override def getParents(partitionId: Int): List[Int] = {
+    rdd.partitions.map(_.index).toList
+  }
+}
