@@ -16,7 +16,7 @@
  */
 package org.apache.spark.shuffle.local;
 
-class Sender<T> {
+public class Sender<T> {
     private final Channel<T> channel;
 
     Sender(Channel<T> channel) {

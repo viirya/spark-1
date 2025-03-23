@@ -62,12 +62,12 @@ public class Channel<T> {
         return numSenders;
     }
 
-    synchronized Sender<T> createSender() {
+    public synchronized Sender<T> createSender() {
         numSenders += 1;
         return new Sender<>(this);
     }
 
-    synchronized Receiver<T> createReceiver() {
+    public synchronized Receiver<T> createReceiver() {
         return new Receiver<>(this);
     }
 

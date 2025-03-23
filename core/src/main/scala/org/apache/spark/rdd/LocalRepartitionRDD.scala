@@ -16,18 +16,21 @@
  */
 package org.apache.spark.rdd
 
+import scala.collection.mutable
+import scala.jdk.CollectionConverters.ListHasAsScala
 import scala.reflect.ClassTag
 
 import org.apache.spark.{Dependency, LocalRepartitionDependency, Partition, Partitioner, SparkContext, TaskContext}
 import org.apache.spark.annotation.DeveloperApi
+import org.apache.spark.shuffle.local._
 
-class LocalShufflePartition(rddId: Int, val index: Int) extends Partition {
+class LocalRepartitionPartition(rddId: Int, val index: Int) extends Partition {
   override def hashCode(): Int = 31 * (31 + rddId) + index
   override def equals(other: Any): Boolean = super.equals(other)
 }
 
 @DeveloperApi
-class LocalShuffleRDD[T: ClassTag](
+class LocalRepartitionRDD[T: ClassTag](
     sc: SparkContext,
     var rdd: RDD[T],
     part: Partitioner)
@@ -56,9 +59,34 @@ class LocalShuffleRDD[T: ClassTag](
     val result = new Array[Partition](part.numPartitions)
 
     for (i <- 0 until part.numPartitions) {
-      result(i) = new LocalShufflePartition(id, i)
+      result(i) = new LocalRepartitionPartition(id, i)
     }
 
     result
+  }
+}
+
+object LocalRepartition {
+  val channelMap = new mutable.HashMap[Int,
+    mutable.HashMap[Int, (mutable.ArrayBuffer[Sender[Any]], Receiver[Any])]]()
+
+  def initChannelMap[T](rdd: LocalRepartitionRDD[T], inputPartNums: Int): Unit = {
+    channelMap.synchronized {
+      if (!channelMap.contains(rdd.id)) {
+        channelMap(rdd.id) =
+          new mutable.HashMap[Int, (mutable.ArrayBuffer[Sender[Any]], Receiver[Any])]()
+
+        val channels = Channel.createChannels[T](rdd.getNumPartitions).asScala
+
+        for (i <- 0 until rdd.getNumPartitions) {
+          val senders = mutable.ArrayBuffer[Sender[Any]]()
+          for (_ <- 0 until inputPartNums) {
+            senders += channels(i).createSender().asInstanceOf[Sender[Any]]
+          }
+          channelMap(rdd.id).put(i,
+            (senders, channels(i).createReceiver().asInstanceOf[Receiver[Any]]))
+        }
+      }
+    }
   }
 }
