@@ -18,7 +18,7 @@ package org.apache.spark.shuffle.local;
 
 import java.util.concurrent.CompletableFuture;
 
-class SenderFuture<T> {
+public class SenderFuture<T> {
     private final T data;
     private final Channel<T> channel;
 
@@ -31,7 +31,7 @@ class SenderFuture<T> {
         return new SimpleWaker();
     }
 
-    CompletableFuture<Boolean> getFuture() {
+    public CompletableFuture<Boolean> getFuture() {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 while (true) {

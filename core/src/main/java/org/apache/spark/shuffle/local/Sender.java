@@ -23,7 +23,7 @@ public class Sender<T> {
           this.channel  = channel;
     }
 
-    SenderFuture<T> send(T data) {
+    public SenderFuture<T> send(T data) {
         return new SenderFuture<>(data, channel);
     }
 }
