@@ -25,8 +25,9 @@ public class ChannelGate {
     private int emptyChannelNumber = 0;
     private final LinkedList<Map.Entry<Waker, Integer>> senderWakers;
 
-    ChannelGate() {
+    ChannelGate(int emptyChannelNumber) {
         this.senderWakers = new LinkedList<>();
+        this.emptyChannelNumber = emptyChannelNumber;
     }
 
     synchronized void addSenderWaker(Waker waker, int channelId) {

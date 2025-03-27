@@ -18,12 +18,34 @@ package org.apache.spark.shuffle.local;
 
 public class Sender<T> {
     private final Channel<T> channel;
+    private boolean closed = false;
 
     Sender(Channel<T> channel) {
           this.channel  = channel;
     }
 
+    public Channel<T> getChannel() {
+        return channel;
+    }
+
+    public void close() {
+        if (!closed) {
+            if (!channel.isClosed()) {
+                if (channel.isEmpty() && channel.getNumSenders() == 1) {
+                    channel.getChannelGate().decrementEmptyChannelNumber();
+                }
+            }
+
+            channel.reduceNumSenders();
+            closed = true;
+        }
+    }
+
+    public boolean isClosed() {
+        return closed;
+    }
+
     public SenderFuture<T> send(T data) {
-        return new SenderFuture<>(data, channel);
+        return new SenderFuture<>(data, this, channel);
     }
 }

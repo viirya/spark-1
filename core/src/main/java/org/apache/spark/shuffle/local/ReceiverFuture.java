@@ -17,8 +17,10 @@
 package org.apache.spark.shuffle.local;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.Optional;
 
-class ReceiverFuture<T> {
+public class ReceiverFuture<T> {
     private final Channel<T> channel;
 
     ReceiverFuture(Channel<T> channel) {
@@ -29,10 +31,10 @@ class ReceiverFuture<T> {
         return new SimpleWaker();
     }
 
-    CompletableFuture<T> getFuture() {
+    public CompletableFuture<Optional<T>> getFuture(Executor executor) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                while (true) {
+                while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
                     if (!channel.isEmpty()) {
                         T data = channel.getData();
 
@@ -46,18 +48,24 @@ class ReceiverFuture<T> {
                             }
                         }
 
-                        return data;
-                    } else {
+                        return Optional.of(data);
+                    } else if (channel.getNumSenders() > 0) {
                         // Hold this receiver to wait for the sender to wake up the receiver
                         Waker waker = getWaker();
                         channel.addReceiverWaker(waker);
+                        System.out.println("wait...");
                         waker.await();
+                        System.out.println("woke!");
+                    } else if (channel.isEmpty() && channel.getNumSenders() == 0) {
+                        return Optional.empty();
                     }
                 }
-            } catch (InterruptedException e) {
-                return null;
+                return Optional.empty();
+            } catch (Exception e) {
+                // return Optional.empty();
+                throw new RuntimeException(e);
             }
-        });
+        }, executor);
     }
 
 }

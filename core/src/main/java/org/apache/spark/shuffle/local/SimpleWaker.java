@@ -21,8 +21,12 @@ import java.util.concurrent.CountDownLatch;
 public class SimpleWaker implements Waker {
     private final CountDownLatch latch;
 
-    SimpleWaker() {
+    public SimpleWaker() {
         this.latch = new CountDownLatch(1);
+    }
+
+    public SimpleWaker(int count) {
+        this.latch = new CountDownLatch(count);
     }
 
     @Override

@@ -18,20 +18,32 @@ package org.apache.spark.shuffle.local;
 
 public class Receiver<T> {
     private final Channel<T> channel;
+    private boolean closed = false;
 
     Receiver(Channel<T> channel) {
         this.channel  = channel;
     }
 
-    ReceiverFuture<T> recv() {
+    public ReceiverFuture<T> recv() {
         return new ReceiverFuture<>(channel);
     }
 
-    void close() {
-        if (channel.isEmpty() && channel.getNumSenders() > 0) {
-            channel.getChannelGate().decrementEmptyChannelNumber();
+    public Channel<T> getChannel() {
+        return channel;
+    }
+
+    public void close() {
+        if (!channel.isClosed()) {
+            if (channel.isEmpty() && channel.getNumSenders() > 0) {
+                channel.getChannelGate().decrementEmptyChannelNumber();
+            }
+            channel.getChannelGate().wakeSenders(channel.getId());
+            channel.close();
         }
-        channel.getChannelGate().wakeSenders(channel.getId());
-        channel.close();
+        closed = true;
+    }
+
+    public boolean isClosed() {
+        return channel.isClosed();
     }
 }

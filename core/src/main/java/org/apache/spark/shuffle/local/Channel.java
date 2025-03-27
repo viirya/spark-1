@@ -30,7 +30,7 @@ public class Channel<T> {
 
     public static <T> List<Channel<T>> createChannels(int numChannels) {
         List<Channel<T>> channels = new LinkedList<>();
-        ChannelGate channelGate = new ChannelGate();
+        ChannelGate channelGate = new ChannelGate(numChannels);
 
         for (int i = 0; i < numChannels; i++) {
             channels.add(new Channel<>(i, channelGate));
@@ -46,20 +46,27 @@ public class Channel<T> {
         this.channelGate = channelGate;
     }
 
-    boolean isClosed() {
+    public synchronized boolean isClosed() {
         return closed;
     }
 
-    void close() {
+    public synchronized void close() {
         closed = true;
+
+        channelGate.wakeSenders();
+        wakeReceivers();
     }
 
     int getId() {
         return id;
     }
 
-    synchronized int getNumSenders() {
+    public synchronized int getNumSenders() {
         return numSenders;
+    }
+
+    synchronized void reduceNumSenders() {
+        numSenders -= 1;
     }
 
     public synchronized Sender<T> createSender() {
@@ -71,12 +78,15 @@ public class Channel<T> {
         return new Receiver<>(this);
     }
 
-    void addReceiverWaker(Waker waker) {
+    synchronized void addReceiverWaker(Waker waker) {
         receiverWakers.add(waker);
     }
 
-    void wakeReceivers() {
+    public synchronized void wakeReceivers() {
+        System.out.println("wakeReceivers. num: " + receiverWakers.size());
+
         for (Waker waker : receiverWakers) {
+            System.out.println("wake Waker. Channel id: " + id);
             waker.wake();
         }
         receiverWakers.clear();

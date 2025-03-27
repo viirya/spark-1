@@ -486,6 +486,10 @@ abstract class RDD[T: ClassTag](
     coalesce(numPartitions, shuffle = true)
   }
 
+  def localRepartition(numPartitions: Int): RDD[_] = {
+    new LocalRepartitionRDD(sc, this, new HashPartitioner(numPartitions))
+  }
+
   /**
    * Return a new RDD that is reduced into `numPartitions` partitions.
    *

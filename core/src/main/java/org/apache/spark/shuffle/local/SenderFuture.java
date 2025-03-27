@@ -17,13 +17,16 @@
 package org.apache.spark.shuffle.local;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 public class SenderFuture<T> {
     private final T data;
+    private final Sender<T> sender;
     private final Channel<T> channel;
 
-    SenderFuture(T data, Channel<T> channel) {
+    SenderFuture(T data, Sender<T> sender, Channel<T> channel) {
         this.data = data;
+        this.sender = sender;
         this.channel = channel;
     }
 
@@ -31,16 +34,17 @@ public class SenderFuture<T> {
         return new SimpleWaker();
     }
 
-    public CompletableFuture<Boolean> getFuture() {
+    public CompletableFuture<Boolean> getFuture(Executor executor) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                while (true) {
+                while (!Thread.currentThread().isInterrupted() && !channel.isClosed() && !sender.isClosed()) {
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
                     if (channel.getChannelGate().getEmptyChannelNumber() == 0) {
                         Waker waker = getWaker();
                         channel.getChannelGate().addSenderWaker(waker, channel.getId());
                         waker.await();
+                        continue;
                     }
 
                     boolean isEmpty = channel.isEmpty();
@@ -50,12 +54,13 @@ public class SenderFuture<T> {
                     if (isEmpty) {
                         channel.getChannelGate().decrementEmptyChannelNumber();
                         channel.wakeReceivers();
-                        return true;
                     }
+                    return true;
                 }
+                return false;
             } catch (InterruptedException e) {
                 return false;
             }
-        });
+        }, executor);
     }
 }
