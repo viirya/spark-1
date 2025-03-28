@@ -20,28 +20,50 @@ package org.apache.spark.shuffle.local;
 import java.util.AbstractMap;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class ChannelGate {
-    private int emptyChannelNumber = 0;
-    private final LinkedList<Map.Entry<Waker, Integer>> senderWakers;
+    private AtomicInteger emptyChannelCounter = new AtomicInteger(0);
+    private LinkedList<Map.Entry<Waker, Integer>> senderWakers;
+    private final ReentrantLock lock = new ReentrantLock();
 
     ChannelGate(int emptyChannelNumber) {
         this.senderWakers = new LinkedList<>();
-        this.emptyChannelNumber = emptyChannelNumber;
+        this.emptyChannelCounter = new AtomicInteger(emptyChannelNumber);
     }
 
-    synchronized void addSenderWaker(Waker waker, int channelId) {
-        senderWakers.add(new AbstractMap.SimpleEntry<>(waker, channelId));
-    }
+    boolean addSenderWaker(Waker waker, int channelId) {
+        lock.lock();
 
-    synchronized void wakeSenders() {
-        for (Map.Entry<Waker, Integer> waker : senderWakers) {
-            waker.getKey().wake();
+        if (senderWakers != null) {
+            senderWakers.add(new AbstractMap.SimpleEntry<>(waker, channelId));
+
+            lock.unlock();
+            return true;
         }
-        senderWakers.clear();
+
+        lock.unlock();
+        return false;
     }
 
-    synchronized void wakeSenders(int channelId) {
+    void wakeSenders() {
+        lock.lock();
+
+        if (emptyChannelCounter.get() > 0) {
+            if (senderWakers != null) {
+                for (Map.Entry<Waker, Integer> waker : senderWakers) {
+                    waker.getKey().wake();
+                }
+            }
+            senderWakers = null;
+        }
+
+        lock.unlock();
+    }
+
+    void wakeSenders(int channelId) {
+        lock.lock();
         for (Map.Entry<Waker, Integer> waker : senderWakers) {
             if (waker.getValue() == channelId) {
                 waker.getKey().wake();
@@ -49,19 +71,28 @@ public class ChannelGate {
                 senderWakers.remove(waker);
             }
         }
+        lock.unlock();
     }
 
-    synchronized int incrementEmptyChannelNumber() {
-        int oldEmptyChannelNumber = emptyChannelNumber;
-        emptyChannelNumber++;
-        return oldEmptyChannelNumber;
+    int incrementEmptyChannelNumber() {
+        return emptyChannelCounter.getAndAdd(1);
     }
 
-    synchronized void decrementEmptyChannelNumber() {
-        emptyChannelNumber--;
+    void decrementEmptyChannelNumber() {
+        int oldCount = emptyChannelCounter.getAndAdd(-1);
+
+        if (oldCount == 1) {
+            lock.lock();
+
+            if (emptyChannelCounter.get() == 0 && senderWakers != null) {
+                senderWakers = new LinkedList<>();
+            }
+
+            lock.unlock();
+        }
     }
 
-    synchronized int getEmptyChannelNumber() {
-        return emptyChannelNumber;
+    int getEmptyChannelNumber() {
+        return emptyChannelCounter.get();
     }
 }

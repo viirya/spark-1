@@ -38,17 +38,31 @@ public class SenderFuture<T> {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted() && !channel.isClosed() && !sender.isClosed()) {
+                    System.out.println("sender try to lock..." + ", channel id: " + channel.getId());
+                    channel.lock();
+                    System.out.println("sender got lock..." + ", channel id: " + channel.getId());
+
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
                     if (channel.getChannelGate().getEmptyChannelNumber() == 0) {
                         Waker waker = getWaker();
-                        channel.getChannelGate().addSenderWaker(waker, channel.getId());
-                        waker.await();
-                        continue;
+
+                        if (channel.getChannelGate().addSenderWaker(waker, channel.getId())) {
+                            int emptyChannelNumber = channel.getChannelGate().getEmptyChannelNumber();
+                            System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber);
+
+                            channel.unlock();
+                            waker.await();
+                            System.out.println("sender woke up...");
+                            continue;
+                        }
                     }
 
                     boolean isEmpty = channel.isEmpty();
+                    System.out.println("add data: " + data + ", channel empty: " + isEmpty);
                     channel.addData(data);
+
+                    channel.unlock();
 
                     // If data queue was empty before pushing new data, wake up the receivers
                     if (isEmpty) {

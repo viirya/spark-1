@@ -19,6 +19,7 @@ package org.apache.spark.shuffle.local;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class Channel<T> {
     private final int id;
@@ -27,6 +28,7 @@ public class Channel<T> {
     private final ConcurrentLinkedQueue<T> queue;
     private final ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
+    private final ReentrantLock lock = new ReentrantLock();
 
     public static <T> List<Channel<T>> createChannels(int numChannels) {
         List<Channel<T>> channels = new LinkedList<>();
@@ -44,6 +46,14 @@ public class Channel<T> {
         this.queue = new ConcurrentLinkedQueue<>();
         this.receiverWakers = new ConcurrentLinkedQueue<>();
         this.channelGate = channelGate;
+    }
+
+    void lock() {
+        lock.lock();
+    }
+
+    void unlock() {
+        lock.unlock();
     }
 
     public synchronized boolean isClosed() {
@@ -92,15 +102,15 @@ public class Channel<T> {
         receiverWakers.clear();
     }
 
-    void addData(T data) {
+    synchronized void addData(T data) {
         queue.add(data);
     }
 
-    T getData() {
+    synchronized T getData() {
         return queue.poll();
     }
 
-    boolean isEmpty() {
+    synchronized boolean isEmpty() {
         return queue.isEmpty();
     }
 
