@@ -19,14 +19,15 @@ package org.apache.spark.shuffle.local;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class Channel<T> {
     private final int id;
     private boolean closed = false;
-    private int numSenders = 0;
+    private AtomicInteger numSenders = new AtomicInteger(0);
     private final ConcurrentLinkedQueue<T> queue;
-    private final ConcurrentLinkedQueue<Waker> receiverWakers;
+    private ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
     private final ReentrantLock lock = new ReentrantLock();
 
@@ -64,53 +65,74 @@ public class Channel<T> {
         closed = true;
 
         channelGate.wakeSenders();
-        wakeReceivers();
+        wakeReceivers(true);
     }
 
     int getId() {
         return id;
     }
 
-    public synchronized int getNumSenders() {
-        return numSenders;
+    public int getNumSenders() {
+        return numSenders.get();
     }
 
-    synchronized void reduceNumSenders() {
-        numSenders -= 1;
+    int reduceNumSenders() {
+        return numSenders.decrementAndGet();
     }
 
-    public synchronized Sender<T> createSender() {
-        numSenders += 1;
+    public Sender<T> createSender() {
+        numSenders.incrementAndGet();
         return new Sender<>(this);
     }
 
-    public synchronized Receiver<T> createReceiver() {
+    public Receiver<T> createReceiver() {
         return new Receiver<>(this);
     }
 
-    synchronized void addReceiverWaker(Waker waker) {
-        receiverWakers.add(waker);
-    }
-
-    public synchronized void wakeReceivers() {
-        System.out.println("wakeReceivers. num: " + receiverWakers.size());
-
-        for (Waker waker : receiverWakers) {
-            System.out.println("wake Waker. Channel id: " + id);
-            waker.wake();
+    boolean addReceiverWaker(Waker waker) {
+        synchronized(receiverWakers) {
+            if (receiverWakers != null) {
+                receiverWakers.add(waker);
+                System.out.println("receiver waker added. Waiting wakers: " + receiverWakers.size() + ", channel id: " + id);
+                return true;
+            } else {
+                System.out.println("Cannot add waker to null. " + ", channel id: " + id);
+                return false;
+            }
         }
-        receiverWakers.clear();
     }
 
-    synchronized void addData(T data) {
+    public void wakeReceivers(boolean last) {
+        // System.out.println("wakeReceivers. num: " + receiverWakers.size());
+        synchronized(receiverWakers) {
+            for (Waker waker : receiverWakers) {
+                // System.out.println("wake Waker. Channel id: " + id);
+                waker.wake();
+                receiverWakers.remove(waker);
+            }
+            if (last) {
+                receiverWakers = null;
+            }
+        }
+    }
+
+    int getNumWakers() {
+        return receiverWakers != null ? receiverWakers.size() : 0;
+    }
+
+    void addData(T data) {
         queue.add(data);
     }
 
-    synchronized T getData() {
+    T getData() {
         return queue.poll();
     }
 
-    synchronized boolean isEmpty() {
+    boolean readyToAdd() {
+        return queue.size() < 10000;
+    }
+
+    boolean isEmpty() {
         return queue.isEmpty();
     }
 

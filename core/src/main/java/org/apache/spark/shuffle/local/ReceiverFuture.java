@@ -35,17 +35,17 @@ public class ReceiverFuture<T> {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
-                    System.out.println("receiver try to lock..." + ", channel id: " + channel.getId());
-                    channel.lock();
-                    System.out.println("receiver got lock..." + ", channel id: " + channel.getId());
+                    // System.out.println("receiver try to lock..." + ", channel id: " + channel.getId());
+                    // channel.lock();
+                    // System.out.println("receiver got lock..." + ", channel id: " + channel.getId());
 
                     if (!channel.isEmpty()) {
                         T data = channel.getData();
 
                         System.out.println("get data: " + data  + ", channel id: " + channel.getId());
 
-                        boolean isEmpty = channel.isEmpty();
-                        if (isEmpty) {
+                        boolean readyToAdd = channel.readyToAdd();
+                        if (readyToAdd && channel.getNumSenders() > 0) {
                             // Check if all channels are filled with data before pulling data,
                             // if so, wake up the waiting senders.
                             int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();
@@ -54,18 +54,28 @@ public class ReceiverFuture<T> {
                             }
                         }
 
-                        channel.unlock();
+                        // channel.unlock();
                         return Optional.of(data);
                     } else if (channel.getNumSenders() > 0) {
-                        // Hold this receiver to wait for the sender to wake up the receiver
-                        Waker waker = getWaker();
-                        channel.addReceiverWaker(waker);
-                        System.out.println("wait..." + " channel senders: " + channel.getNumSenders() + " channel empty: " + channel.isEmpty());
-                        channel.unlock();
-                        waker.await();
-                        System.out.println("woke!");
-                    } else if (channel.isEmpty() && channel.getNumSenders() == 0) {
-                        channel.unlock();
+                        if (channel.getNumSenders() > 0) {
+                            channel.lock();
+
+                            // Hold this receiver to wait for the sender to wake up the receiver
+                            Waker waker = getWaker();
+                            if (channel.addReceiverWaker(waker)) {
+                                System.out.println("receiver wait..." + " channel senders: " + channel.getNumSenders() + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
+                                channel.unlock();
+
+                                waker.await();
+                            } else {
+                                channel.unlock();
+                            }
+                        }
+
+                        System.out.println("receiver woke!" + ", channel id: " + channel.getId());
+                    } else {
+                        System.out.println("Receiver exit. No senders. " + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
+                        // channel.unlock();
                         return Optional.empty();
                     }
                 }

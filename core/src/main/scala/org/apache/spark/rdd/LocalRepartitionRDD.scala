@@ -71,7 +71,7 @@ class LocalRepartitionRDD[T: ClassTag](
       override def next(): T = {
         val item = this.item.get()
         // scalastyle:off println
-        println(s"got item: $item")
+        // println(s"got item: $item")
         task = recvFuture.getFuture(LocalRepartition.threadExecutor)
         item
       }
@@ -97,7 +97,7 @@ class LocalRepartitionRDD[T: ClassTag](
 }
 
 object LocalRepartition {
-  val threadExecutor = Executors.newFixedThreadPool(100)
+  val threadExecutor = Executors.newFixedThreadPool(10)
 
   /**
    * A map to store the channels for each LocalRepartitionRDD.
@@ -125,13 +125,13 @@ object LocalRepartition {
       context: TaskContext): Unit =
     LocalRepartition.synchronized {
       // scalastyle:off println
-      println(s"initiate channel map for rdd: ${rdd.id}, " +
-        s"input partition size: ${split.inputPartitions.size}")
+      // println(s"initiate channel map for rdd: ${rdd.id}, " +
+      //  s"input partition size: ${split.inputPartitions.size}")
 
       channelMap.synchronized {
         if (!channelMap.contains(rdd.id)) {
           // scalastyle:off println
-          println(s"no channel map for ${rdd.id}")
+          // println(s"no channel map for ${rdd.id}")
 
           channelMap(rdd.id) =
             new mutable.HashMap[Int, (mutable.ArrayBuffer[Sender[Any]], Receiver[Any])]()
@@ -141,14 +141,14 @@ object LocalRepartition {
 
           // Create sender per input partitions for each output partition
           for (i <- 0 until rdd.part.numPartitions) {
-            println(s"rdd: ${rdd.id}, output partition: $i")
+            // println(s"rdd: ${rdd.id}, output partition: $i")
 
             val senders = mutable.ArrayBuffer[Sender[Any]]()
             for (j <- 0 until split.inputPartitions.length) {
               senders += channels(i).createSender().asInstanceOf[Sender[Any]]
             }
             // scalastyle:off println
-            println(s"rdd: ${rdd.id}, partition: $i, senders: ${senders.size}")
+            // println(s"rdd: ${rdd.id}, partition: $i, senders: ${senders.size}")
 
             channelMap(rdd.id).put(i,
               (senders, channels(i).createReceiver().asInstanceOf[Receiver[Any]]))
@@ -158,13 +158,13 @@ object LocalRepartition {
           launchInputTasks(rdd, split, rdd.part, context)
         } else {
           // scalastyle:off println
-          println(s"already has channel map for rdd: ${rdd.id}")
+          // println(s"already has channel map for rdd: ${rdd.id}")
         }
       }
 
       context.addTaskCompletionListener((_) => {
         // scala:off println
-        println(s"task completed for rdd: ${rdd.id}, split: ${split.index}")
+        // println(s"task completed for rdd: ${rdd.id}, split: ${split.index}")
         channelMap.synchronized {
           LocalRepartition.channelMap(rdd.id).remove(split.index)
           if (LocalRepartition.channelMap(rdd.id).isEmpty) {
@@ -208,7 +208,7 @@ object LocalRepartition {
     // All sender tasks are completed. Close the senders.
     val task = CompletableFuture.allOf(tasks.toArray: _*).whenComplete((_, _) => {
       // scalastyle:off println
-      println(s"all input tasks completed for rdd: ${rdd.id}")
+      // println(s"all input tasks completed for rdd: ${rdd.id}")
     })
 
     sawnedTasks(rdd.id) = task
@@ -235,10 +235,12 @@ object LocalRepartition {
 
       // Close the senders of the input partition for all output partitions
       for (i <- 0 until part.numPartitions) {
+        println(s"closing sender for rdd: $rddId, input partition: $inputPartNum, " +
+          s"output partition: $i")
         LocalRepartition.channelMap(rddId)(i)._1(inputPartNum).close()
 
         // Wake the receivers of the output partitions
-        LocalRepartition.channelMap(rddId)(i)._2.getChannel.wakeReceivers()
+        // LocalRepartition.channelMap(rddId)(i)._2.getChannel.wakeReceivers(false)
       }
 
       CompletableFuture.completedFuture(null)
@@ -246,7 +248,7 @@ object LocalRepartition {
 
     val item = inputIterator.next()
     // scalastyle:off println
-    println(s"item: $item")
+    // println(s"item: $item")
     val key = part.getPartition(item)
     val future = outputChannels(key).send(item).getFuture(threadExecutor)
     // TODO: error handling

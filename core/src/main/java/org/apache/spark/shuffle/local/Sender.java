@@ -30,13 +30,18 @@ public class Sender<T> {
 
     public void close() {
         if (!closed) {
+            channel.lock();
             if (!channel.isClosed()) {
-                if (channel.isEmpty() && channel.getNumSenders() == 1) {
+                if (channel.reduceNumSenders() == 0) {
+                    System.out.println("last sender closed. channel: " + channel.getId());
+                }
+                if (channel.isEmpty()) {
                     channel.getChannelGate().decrementEmptyChannelNumber();
                 }
             }
 
-            channel.reduceNumSenders();
+            channel.wakeReceivers(true);
+            channel.unlock();
             closed = true;
         }
     }

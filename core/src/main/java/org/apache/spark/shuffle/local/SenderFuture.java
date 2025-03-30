@@ -38,9 +38,9 @@ public class SenderFuture<T> {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted() && !channel.isClosed() && !sender.isClosed()) {
-                    System.out.println("sender try to lock..." + ", channel id: " + channel.getId());
-                    channel.lock();
-                    System.out.println("sender got lock..." + ", channel id: " + channel.getId());
+                    // System.out.println("sender try to lock..." + ", channel id: " + channel.getId());
+                    // channel.lock();
+                    // System.out.println("sender got lock..." + ", channel id: " + channel.getId());
 
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
@@ -49,25 +49,25 @@ public class SenderFuture<T> {
 
                         if (channel.getChannelGate().addSenderWaker(waker, channel.getId())) {
                             int emptyChannelNumber = channel.getChannelGate().getEmptyChannelNumber();
-                            System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber);
+                            System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
 
-                            channel.unlock();
+                            // channel.unlock();
                             waker.await();
-                            System.out.println("sender woke up...");
+                            System.out.println("sender woke up..." + ", channel id: " + channel.getId());
                             continue;
                         }
                     }
 
-                    boolean isEmpty = channel.isEmpty();
-                    System.out.println("add data: " + data + ", channel empty: " + isEmpty);
+                    boolean readyToAdd = channel.readyToAdd();
+                    System.out.println("add data: " + data + ", waiting receivers: " + channel.getNumWakers() + " channel id: " + channel.getId());
                     channel.addData(data);
 
-                    channel.unlock();
+                    // channel.unlock();
 
                     // If data queue was empty before pushing new data, wake up the receivers
-                    if (isEmpty) {
+                    if (readyToAdd) {
                         channel.getChannelGate().decrementEmptyChannelNumber();
-                        channel.wakeReceivers();
+                        channel.wakeReceivers(false);
                     }
                     return true;
                 }
