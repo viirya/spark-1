@@ -49,17 +49,17 @@ public class SenderFuture<T> {
 
                         if (channel.getChannelGate().addSenderWaker(waker, channel.getId())) {
                             int emptyChannelNumber = channel.getChannelGate().getEmptyChannelNumber();
-                            System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
+                            // System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
 
                             // channel.unlock();
                             waker.await();
-                            System.out.println("sender woke up..." + ", channel id: " + channel.getId());
+                            // System.out.println("sender woke up..." + ", channel id: " + channel.getId());
                             continue;
                         }
                     }
 
                     boolean readyToAdd = channel.readyToAdd();
-                    System.out.println("add data: " + data + ", waiting receivers: " + channel.getNumWakers() + " channel id: " + channel.getId());
+                    // System.out.println("add data: " + data + ", waiting receivers: " + channel.getNumWakers() + " channel id: " + channel.getId());
                     channel.addData(data);
 
                     // channel.unlock();

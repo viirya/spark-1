@@ -231,12 +231,12 @@ object LocalRepartition {
       outputChannels: Map[Int, Sender[Any]]): CompletableFuture[Unit] = {
     if (!inputIterator.hasNext) {
       // scalastyle:off println
-      println(s"input task completed: input partition $inputPartNum")
+      // println(s"input task completed: input partition $inputPartNum")
 
       // Close the senders of the input partition for all output partitions
       for (i <- 0 until part.numPartitions) {
-        println(s"closing sender for rdd: $rddId, input partition: $inputPartNum, " +
-          s"output partition: $i")
+        // println(s"closing sender for rdd: $rddId, input partition: $inputPartNum, " +
+        //  s"output partition: $i")
         LocalRepartition.channelMap(rddId)(i)._1(inputPartNum).close()
 
         // Wake the receivers of the output partitions

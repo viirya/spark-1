@@ -33,7 +33,7 @@ public class Sender<T> {
             channel.lock();
             if (!channel.isClosed()) {
                 if (channel.reduceNumSenders() == 0) {
-                    System.out.println("last sender closed. channel: " + channel.getId());
+                    // System.out.println("last sender closed. channel: " + channel.getId());
                 }
                 if (channel.isEmpty()) {
                     channel.getChannelGate().decrementEmptyChannelNumber();

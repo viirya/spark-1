@@ -93,10 +93,10 @@ public class Channel<T> {
         synchronized(receiverWakers) {
             if (receiverWakers != null) {
                 receiverWakers.add(waker);
-                System.out.println("receiver waker added. Waiting wakers: " + receiverWakers.size() + ", channel id: " + id);
+                // System.out.println("receiver waker added. Waiting wakers: " + receiverWakers.size() + ", channel id: " + id);
                 return true;
             } else {
-                System.out.println("Cannot add waker to null. " + ", channel id: " + id);
+                // System.out.println("Cannot add waker to null. " + ", channel id: " + id);
                 return false;
             }
         }
@@ -129,7 +129,7 @@ public class Channel<T> {
     }
 
     boolean readyToAdd() {
-        return queue.size() < 10000;
+        return queue.size() < 100000;
     }
 
     boolean isEmpty() {

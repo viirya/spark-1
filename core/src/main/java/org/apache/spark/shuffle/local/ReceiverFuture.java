@@ -42,7 +42,7 @@ public class ReceiverFuture<T> {
                     if (!channel.isEmpty()) {
                         T data = channel.getData();
 
-                        System.out.println("get data: " + data  + ", channel id: " + channel.getId());
+                        // System.out.println("get data: " + data  + ", channel id: " + channel.getId());
 
                         boolean readyToAdd = channel.readyToAdd();
                         if (readyToAdd && channel.getNumSenders() > 0) {
@@ -63,7 +63,7 @@ public class ReceiverFuture<T> {
                             // Hold this receiver to wait for the sender to wake up the receiver
                             Waker waker = getWaker();
                             if (channel.addReceiverWaker(waker)) {
-                                System.out.println("receiver wait..." + " channel senders: " + channel.getNumSenders() + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
+                                // System.out.println("receiver wait..." + " channel senders: " + channel.getNumSenders() + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
                                 channel.unlock();
 
                                 waker.await();
@@ -72,9 +72,9 @@ public class ReceiverFuture<T> {
                             }
                         }
 
-                        System.out.println("receiver woke!" + ", channel id: " + channel.getId());
+                        // System.out.println("receiver woke!" + ", channel id: " + channel.getId());
                     } else {
-                        System.out.println("Receiver exit. No senders. " + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
+                        // System.out.println("Receiver exit. No senders. " + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
                         // channel.unlock();
                         return Optional.empty();
                     }
