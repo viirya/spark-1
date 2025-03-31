@@ -39,6 +39,7 @@ public class SenderFuture<T> {
             try {
                 while (!Thread.currentThread().isInterrupted() && !channel.isClosed() && !sender.isClosed()) {
                     // System.out.println("sender try to lock..." + ", channel id: " + channel.getId());
+                    // System.out.println("sender: " + "channel id: " + channel.getId());
                     // channel.lock();
                     // System.out.println("sender got lock..." + ", channel id: " + channel.getId());
 

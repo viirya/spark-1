@@ -19,6 +19,7 @@ package org.apache.spark.shuffle.local;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -27,6 +28,7 @@ public class Channel<T> {
     private boolean closed = false;
     private AtomicInteger numSenders = new AtomicInteger(0);
     private final ConcurrentLinkedQueue<T> queue;
+    private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
     private ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
     private final ReentrantLock lock = new ReentrantLock();
@@ -90,8 +92,8 @@ public class Channel<T> {
     }
 
     boolean addReceiverWaker(Waker waker) {
-        synchronized(receiverWakers) {
-            if (receiverWakers != null) {
+        synchronized(canAddReceiverWaker) {
+            if (canAddReceiverWaker.get()) {
                 receiverWakers.add(waker);
                 // System.out.println("receiver waker added. Waiting wakers: " + receiverWakers.size() + ", channel id: " + id);
                 return true;
@@ -104,14 +106,14 @@ public class Channel<T> {
 
     public void wakeReceivers(boolean last) {
         // System.out.println("wakeReceivers. num: " + receiverWakers.size());
-        synchronized(receiverWakers) {
+        synchronized(canAddReceiverWaker) {
             for (Waker waker : receiverWakers) {
                 // System.out.println("wake Waker. Channel id: " + id);
                 waker.wake();
                 receiverWakers.remove(waker);
             }
             if (last) {
-                receiverWakers = null;
+                canAddReceiverWaker.set(false);
             }
         }
     }
@@ -129,7 +131,7 @@ public class Channel<T> {
     }
 
     boolean readyToAdd() {
-        return queue.size() < 100000;
+        return queue.size() < 10000000;
     }
 
     boolean isEmpty() {

@@ -36,6 +36,7 @@ public class ReceiverFuture<T> {
             try {
                 while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
                     // System.out.println("receiver try to lock..." + ", channel id: " + channel.getId());
+                    // System.out.println("receiver: " + "channel id: " + channel.getId());
                     // channel.lock();
                     // System.out.println("receiver got lock..." + ", channel id: " + channel.getId());
 
@@ -45,7 +46,7 @@ public class ReceiverFuture<T> {
                         // System.out.println("get data: " + data  + ", channel id: " + channel.getId());
 
                         boolean readyToAdd = channel.readyToAdd();
-                        if (readyToAdd && channel.getNumSenders() > 0) {
+                        if (readyToAdd) {
                             // Check if all channels are filled with data before pulling data,
                             // if so, wake up the waiting senders.
                             int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();

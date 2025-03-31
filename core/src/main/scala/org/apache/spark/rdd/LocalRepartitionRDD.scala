@@ -155,7 +155,10 @@ object LocalRepartition {
           }
 
           // Launch one async task per *input* partition
+          // scalastyle:off println
+          // println(s"launch input tasks for rdd: ${rdd.id}, ")
           launchInputTasks(rdd, split, rdd.part, context)
+          // println(s"launched input tasks for rdd: ${rdd.id}, ")
         } else {
           // scalastyle:off println
           // println(s"already has channel map for rdd: ${rdd.id}")
