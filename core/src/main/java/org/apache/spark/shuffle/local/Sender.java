@@ -30,7 +30,6 @@ public class Sender<T> {
 
     public void close() {
         if (!closed) {
-            channel.lock();
             if (!channel.isClosed()) {
                 if (channel.reduceNumSenders() == 0) {
                     // System.out.println("last sender closed. channel: " + channel.getId());
@@ -41,7 +40,6 @@ public class Sender<T> {
             }
 
             channel.wakeReceivers(true);
-            channel.unlock();
             closed = true;
         }
     }

@@ -59,17 +59,11 @@ public class ReceiverFuture<T> {
                         return Optional.of(data);
                     } else if (channel.getNumSenders() > 0) {
                         if (channel.getNumSenders() > 0) {
-                            channel.lock();
-
                             // Hold this receiver to wait for the sender to wake up the receiver
                             Waker waker = getWaker();
                             if (channel.addReceiverWaker(waker)) {
                                 // System.out.println("receiver wait..." + " channel senders: " + channel.getNumSenders() + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
-                                channel.unlock();
-
                                 waker.await();
-                            } else {
-                                channel.unlock();
                             }
                         }
 

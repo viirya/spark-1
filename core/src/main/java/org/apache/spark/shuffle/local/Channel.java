@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class Channel<T> {
     private final int id;
@@ -31,7 +30,6 @@ public class Channel<T> {
     private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
     private ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
-    private final ReentrantLock lock = new ReentrantLock();
 
     public static <T> List<Channel<T>> createChannels(int numChannels) {
         List<Channel<T>> channels = new LinkedList<>();
@@ -49,14 +47,6 @@ public class Channel<T> {
         this.queue = new ConcurrentLinkedQueue<>();
         this.receiverWakers = new ConcurrentLinkedQueue<>();
         this.channelGate = channelGate;
-    }
-
-    void lock() {
-        lock.lock();
-    }
-
-    void unlock() {
-        lock.unlock();
     }
 
     public synchronized boolean isClosed() {
