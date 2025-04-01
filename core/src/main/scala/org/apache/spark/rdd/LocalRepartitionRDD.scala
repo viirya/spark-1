@@ -53,14 +53,12 @@ class LocalRepartitionRDD[T: ClassTag](
 
     new Iterator[T] {
       private val receiver = LocalRepartition.getReceiver(id, split.index)
-      private val recvFuture = receiver.recv()
-
-      private var task = recvFuture.getFuture(LocalRepartition.threadExecutor)
+      private var recvFuture = receiver.recv()
       private var item: Optional[T] = Optional.empty()
 
       override def hasNext: Boolean = {
         if (!receiver.isClosed) {
-          item = task.get().asInstanceOf[Optional[T]]
+          item = recvFuture.getFuture().asInstanceOf[Optional[T]]
           item.isPresent
         } else {
           receiver.close()
@@ -69,11 +67,10 @@ class LocalRepartitionRDD[T: ClassTag](
       }
 
       override def next(): T = {
-        val item = this.item.get()
+        recvFuture = receiver.recv()
         // scalastyle:off println
         // println(s"got item: $item")
-        task = recvFuture.getFuture(LocalRepartition.threadExecutor)
-        item
+        this.item.get()
       }
     }
   }
@@ -97,15 +94,15 @@ class LocalRepartitionRDD[T: ClassTag](
 }
 
 object LocalRepartition {
-  val threadExecutor = Executors.newFixedThreadPool(10)
+  val senderThreadExecutor = Executors.newFixedThreadPool(10)
+  val receiverThreadExecutor = Executors.newFixedThreadPool(10)
 
   /**
    * A map to store the channels for each LocalRepartitionRDD.
    * The key is the RDD ID, and the value is a map from output partition index to a pair of
    * (senders, receiver).
    */
-  private val channelMap = new mutable.HashMap[Int,
-    mutable.HashMap[Int, (mutable.ArrayBuffer[Sender[Any]], Receiver[Any])]]()
+  private val channelMap = new mutable.HashMap[Int, mutable.HashMap[Int, Receiver[Any]]]()
 
   /**
    * A map to store the async tasks for each LocalRepartitionRDD.
@@ -134,30 +131,31 @@ object LocalRepartition {
           // println(s"no channel map for ${rdd.id}")
 
           channelMap(rdd.id) =
-            new mutable.HashMap[Int, (mutable.ArrayBuffer[Sender[Any]], Receiver[Any])]()
+            new mutable.HashMap[Int, Receiver[Any]]()
 
           // Create a channel for each output partition
           val channels = Channel.createChannels[T](rdd.part.numPartitions).asScala
+
+          // Create a sender for each input partition
+          val senders = mutable.ArrayBuffer[Sender[Any]]()
+          for (i <- 0 until split.inputPartitions.length) {
+            senders += new Sender(channels.toArray).asInstanceOf[Sender[Any]]
+          }
 
           // Create sender per input partitions for each output partition
           for (i <- 0 until rdd.part.numPartitions) {
             // println(s"rdd: ${rdd.id}, output partition: $i")
 
-            val senders = mutable.ArrayBuffer[Sender[Any]]()
-            for (j <- 0 until split.inputPartitions.length) {
-              senders += channels(i).createSender().asInstanceOf[Sender[Any]]
-            }
             // scalastyle:off println
             // println(s"rdd: ${rdd.id}, partition: $i, senders: ${senders.size}")
 
-            channelMap(rdd.id).put(i,
-              (senders, channels(i).createReceiver().asInstanceOf[Receiver[Any]]))
+            channelMap(rdd.id).put(i, channels(i).createReceiver().asInstanceOf[Receiver[Any]])
           }
 
           // Launch one async task per *input* partition
           // scalastyle:off println
           // println(s"launch input tasks for rdd: ${rdd.id}, ")
-          launchInputTasks(rdd, split, rdd.part, context)
+          launchInputTasks(senders.toSeq, rdd, split, rdd.part, context)
           // println(s"launched input tasks for rdd: ${rdd.id}, ")
         } else {
           // scalastyle:off println
@@ -178,7 +176,7 @@ object LocalRepartition {
     }
 
   def getReceiver(rddId: Int, partitionIndex: Int): Receiver[Any] = {
-    channelMap(rddId)(partitionIndex)._2
+    channelMap(rddId)(partitionIndex)
   }
 
   /**
@@ -190,22 +188,18 @@ object LocalRepartition {
    * @tparam T
    */
   def launchInputTasks[T](
+      senders: Seq[Sender[Any]],
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
       part: Partitioner,
       context: TaskContext): Unit = {
-    val tasks = new mutable.ArrayBuffer[CompletableFuture[Unit]]()
+    val tasks = new mutable.ArrayBuffer[CompletableFuture[Void]]()
     for (i <- 0 until split.inputPartitions.length) {
-      val senders = mutable.HashMap[Int, Sender[Any]]()
-
-      for (j <- 0 until rdd.part.numPartitions) {
-        val sender = LocalRepartition.channelMap(rdd.id)(j)._1(i)
-        senders(j) = sender
-      }
-
       // Launch the task
       val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), context)
-      tasks += createInputTask(rdd.id, i, inputIterator, part, senders.toMap)
+
+      // TODO: error handling
+      tasks += senders(i).send(inputIterator, part).getFuture(senderThreadExecutor)
     }
 
     // All sender tasks are completed. Close the senders.
@@ -215,48 +209,5 @@ object LocalRepartition {
     })
 
     sawnedTasks(rdd.id) = task
-  }
-
-  /**
-   * Create an async input task for the given input partition.
-   * @param i
-   * @param inputIterator
-   * @param part
-   * @param outputChannels
-   * @tparam T
-   * @return
-   */
-  def createInputTask[T](
-      rddId: Int,
-      inputPartNum: Int,
-      inputIterator: Iterator[T],
-      part: Partitioner,
-      outputChannels: Map[Int, Sender[Any]]): CompletableFuture[Unit] = {
-    if (!inputIterator.hasNext) {
-      // scalastyle:off println
-      // println(s"input task completed: input partition $inputPartNum")
-
-      // Close the senders of the input partition for all output partitions
-      for (i <- 0 until part.numPartitions) {
-        // println(s"closing sender for rdd: $rddId, input partition: $inputPartNum, " +
-        //  s"output partition: $i")
-        LocalRepartition.channelMap(rddId)(i)._1(inputPartNum).close()
-
-        // Wake the receivers of the output partitions
-        // LocalRepartition.channelMap(rddId)(i)._2.getChannel.wakeReceivers(false)
-      }
-
-      CompletableFuture.completedFuture(null)
-    }
-
-    val item = inputIterator.next()
-    // scalastyle:off println
-    // println(s"item: $item")
-    val key = part.getPartition(item)
-    val future = outputChannels(key).send(item).getFuture(threadExecutor)
-    // TODO: error handling
-    future.thenCompose(_ => {
-      createInputTask(rddId, inputPartNum, inputIterator, part, outputChannels)
-    })
   }
 }

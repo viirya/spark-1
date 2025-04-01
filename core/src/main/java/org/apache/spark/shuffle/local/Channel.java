@@ -20,12 +20,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class Channel<T> {
     private final int id;
     private boolean closed = false;
-    private AtomicInteger numSenders = new AtomicInteger(0);
     private final ConcurrentLinkedQueue<T> queue;
     private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
     private ConcurrentLinkedQueue<Waker> receiverWakers;
@@ -62,19 +60,6 @@ public class Channel<T> {
 
     int getId() {
         return id;
-    }
-
-    public int getNumSenders() {
-        return numSenders.get();
-    }
-
-    int reduceNumSenders() {
-        return numSenders.decrementAndGet();
-    }
-
-    public Sender<T> createSender() {
-        numSenders.incrementAndGet();
-        return new Sender<>(this);
     }
 
     public Receiver<T> createReceiver() {

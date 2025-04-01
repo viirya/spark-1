@@ -18,30 +18,40 @@ package org.apache.spark.shuffle.local;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import scala.collection.Iterator;
+import org.apache.spark.Partitioner;
 
 public class SenderFuture<T> {
-    private final T data;
+    private final Iterator<T> iterator;
     private final Sender<T> sender;
-    private final Channel<T> channel;
+    private final Channel<T>[] channels;
+    private final Partitioner partitioner;
 
-    SenderFuture(T data, Sender<T> sender, Channel<T> channel) {
-        this.data = data;
+    SenderFuture(Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner) {
+        this.iterator = iterator;
         this.sender = sender;
-        this.channel = channel;
+        this.channels = channels;
+        this.partitioner = partitioner;
     }
 
     Waker getWaker() {
         return new SimpleWaker();
     }
 
-    public CompletableFuture<Boolean> getFuture(Executor executor) {
+    public CompletableFuture<Void> getFuture(Executor executor) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                while (!Thread.currentThread().isInterrupted() && !channel.isClosed() && !sender.isClosed()) {
+                while (!Thread.currentThread().isInterrupted() && iterator.hasNext() && !sender.isClosed()) {
                     // System.out.println("sender try to lock..." + ", channel id: " + channel.getId());
                     // System.out.println("sender: " + "channel id: " + channel.getId());
                     // channel.lock();
                     // System.out.println("sender got lock..." + ", channel id: " + channel.getId());
+
+                    T data = iterator.next();
+                    int key = partitioner.getPartition(data);
+                    Channel<T> channel = channels[key];
+
+                    System.out.println("sender for data: " + data + " channel id: " + channel.getId());
 
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
@@ -50,14 +60,15 @@ public class SenderFuture<T> {
 
                         if (channel.getChannelGate().addSenderWaker(waker, channel.getId())) {
                             int emptyChannelNumber = channel.getChannelGate().getEmptyChannelNumber();
-                            // System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
+                            System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
 
                             // channel.unlock();
                             waker.await();
-                            // System.out.println("sender woke up..." + ", channel id: " + channel.getId());
+                            System.out.println("sender woke up..." + ", channel id: " + channel.getId());
                             continue;
                         }
                     }
+
 
                     boolean readyToAdd = channel.readyToAdd();
                     // System.out.println("add data: " + data + ", waiting receivers: " + channel.getNumWakers() + " channel id: " + channel.getId());
@@ -70,11 +81,16 @@ public class SenderFuture<T> {
                         channel.getChannelGate().decrementEmptyChannelNumber();
                         channel.wakeReceivers(false);
                     }
-                    return true;
                 }
-                return false;
+
+                if (!iterator.hasNext()) {
+                    // System.out.println("sender run out of data");
+                    sender.close();
+                }
+
+                return null;
             } catch (InterruptedException e) {
-                return false;
+                return null;
             }
         }, executor);
     }

@@ -16,20 +16,20 @@
  */
 package org.apache.spark.shuffle.local;
 
+import scala.collection.Iterator;
+import org.apache.spark.Partitioner;
+
 public class Sender<T> {
-    private final Channel<T> channel;
+    private final Channel<T>[] channels;
     private boolean closed = false;
 
-    Sender(Channel<T> channel) {
-          this.channel  = channel;
-    }
-
-    public Channel<T> getChannel() {
-        return channel;
+    public Sender(Channel<T>[] channels) {
+          this.channels  = channels;
     }
 
     public void close() {
         if (!closed) {
+            /*
             if (!channel.isClosed()) {
                 if (channel.reduceNumSenders() == 0) {
                     // System.out.println("last sender closed. channel: " + channel.getId());
@@ -38,8 +38,15 @@ public class Sender<T> {
                     channel.getChannelGate().decrementEmptyChannelNumber();
                 }
             }
+             */
 
-            channel.wakeReceivers(true);
+            for (Channel<T> channel : channels) {
+                if (channel.readyToAdd()) {
+                    channel.getChannelGate().decrementEmptyChannelNumber();
+                }
+                channel.wakeReceivers(true);
+            }
+
             closed = true;
         }
     }
@@ -48,7 +55,7 @@ public class Sender<T> {
         return closed;
     }
 
-    public SenderFuture<T> send(T data) {
-        return new SenderFuture<>(data, this, channel);
+    public SenderFuture<T> send(Iterator<T> iterator, Partitioner partitioner) {
+        return new SenderFuture<>(iterator, this,channels, partitioner);
     }
 }
