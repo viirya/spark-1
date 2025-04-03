@@ -42,7 +42,7 @@ public class ReceiverFuture<T> {
                 if (!channel.isEmpty()) {
                     T data = channel.getData();
 
-                    System.out.println("get data: " + data  + ", channel id: " + channel.getId());
+                    // System.out.println("get data: " + data  + ", channel id: " + channel.getId());
 
                     boolean readyToAdd = channel.readyToAdd();
                     if (readyToAdd) {
@@ -60,12 +60,18 @@ public class ReceiverFuture<T> {
                     // Hold this receiver to wait for the sender to wake up the receiver
                     Waker waker = getWaker();
                     if (channel.addReceiverWaker(waker)) {
-                        System.out.println("receiver wait..." + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
+                        // System.out.println("receiver wait..." + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
                         waker.await();
+                        // System.out.println("receiver woke!" + ", channel id: " + channel.getId());
                     } else {
-                        return Optional.empty();
+                        if (channel.isEmpty()) {
+                            // channel.unlock();
+                            // System.out.println("receiver cannot wait!" + ", channel id: " + channel.getId());
+                            // return Optional.empty();
+                            // System.out.println("receiver cannot wait!" + ", channel id: " + channel.getId());
+                            return Optional.empty();
+                        }
                     }
-                    System.out.println("receiver woke!" + ", channel id: " + channel.getId());
                 }
             }
             return Optional.empty();

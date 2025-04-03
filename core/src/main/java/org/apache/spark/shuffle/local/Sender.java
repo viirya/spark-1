@@ -25,6 +25,9 @@ public class Sender<T> {
 
     public Sender(Channel<T>[] channels) {
           this.channels  = channels;
+          for (Channel<T> channel : channels) {
+              channel.addSender();
+          }
     }
 
     public void close() {
@@ -44,7 +47,10 @@ public class Sender<T> {
                 if (channel.readyToAdd()) {
                     channel.getChannelGate().decrementEmptyChannelNumber();
                 }
-                channel.wakeReceivers(true);
+                if (channel.reduceNumSenders() == 0) {
+                    // System.out.println("last sender closed. channel: " + channel.getId());
+                    channel.wakeReceivers(true);
+                }
             }
 
             closed = true;

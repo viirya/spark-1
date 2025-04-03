@@ -20,6 +20,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Channel<T> {
     private final int id;
@@ -28,6 +29,7 @@ public class Channel<T> {
     private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
     private ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
+    private final AtomicInteger numSenders = new AtomicInteger(0);
 
     public static <T> List<Channel<T>> createChannels(int numChannels) {
         List<Channel<T>> channels = new LinkedList<>();
@@ -52,6 +54,7 @@ public class Channel<T> {
     }
 
     public synchronized void close() {
+        System.out.println("Channel " + id + " is closed");
         closed = true;
 
         channelGate.wakeSenders();
@@ -60,6 +63,18 @@ public class Channel<T> {
 
     int getId() {
         return id;
+    }
+
+    public void addSender() {
+        numSenders.incrementAndGet();
+    }
+
+    public int reduceNumSenders() {
+        return numSenders.decrementAndGet();
+    }
+
+    public int getNumSenders() {
+        return numSenders.get();
     }
 
     public Receiver<T> createReceiver() {
@@ -88,6 +103,7 @@ public class Channel<T> {
                 receiverWakers.remove(waker);
             }
             if (last) {
+                // System.out.println("Close canAddReceiverWaker. channel id: " + id);
                 canAddReceiverWaker.set(false);
             }
         }
@@ -106,7 +122,7 @@ public class Channel<T> {
     }
 
     boolean readyToAdd() {
-        return queue.size() < 10000000;
+        return queue.size() < 1000000;
     }
 
     boolean isEmpty() {

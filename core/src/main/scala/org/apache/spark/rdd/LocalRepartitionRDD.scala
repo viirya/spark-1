@@ -199,7 +199,7 @@ object LocalRepartition {
       val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), context)
 
       // TODO: error handling
-      tasks += senders(i).send(inputIterator, part).getFuture(senderThreadExecutor)
+      tasks += senders(i).send(inputIterator, part).getFuture(i, senderThreadExecutor)
     }
 
     // All sender tasks are completed. Close the senders.

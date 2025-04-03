@@ -38,7 +38,7 @@ public class SenderFuture<T> {
         return new SimpleWaker();
     }
 
-    public CompletableFuture<Void> getFuture(Executor executor) {
+    public CompletableFuture<Void> getFuture(int partId, Executor executor) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted() && iterator.hasNext() && !sender.isClosed()) {
@@ -51,7 +51,7 @@ public class SenderFuture<T> {
                     int key = partitioner.getPartition(data);
                     Channel<T> channel = channels[key];
 
-                    System.out.println("sender for data: " + data + " channel id: " + channel.getId());
+                    // System.out.println("sender for data: " + data + " channel id: " + channel.getId());
 
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
@@ -60,12 +60,11 @@ public class SenderFuture<T> {
 
                         if (channel.getChannelGate().addSenderWaker(waker, channel.getId())) {
                             int emptyChannelNumber = channel.getChannelGate().getEmptyChannelNumber();
-                            System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
+                            // System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
 
                             // channel.unlock();
                             waker.await();
-                            System.out.println("sender woke up..." + ", channel id: " + channel.getId());
-                            continue;
+                            // System.out.println("sender woke up..." + ", channel id: " + channel.getId());
                         }
                     }
 
@@ -84,7 +83,7 @@ public class SenderFuture<T> {
                 }
 
                 if (!iterator.hasNext()) {
-                    // System.out.println("sender run out of data");
+                    // System.out.println("sender run out of data. " + ", partId id: " + partId);
                     sender.close();
                 }
 
