@@ -54,7 +54,6 @@ public class Channel<T> {
     }
 
     public synchronized void close() {
-        System.out.println("Channel " + id + " is closed");
         closed = true;
 
         channelGate.wakeSenders();
@@ -85,10 +84,8 @@ public class Channel<T> {
         synchronized(canAddReceiverWaker) {
             if (canAddReceiverWaker.get()) {
                 receiverWakers.add(waker);
-                // System.out.println("receiver waker added. Waiting wakers: " + receiverWakers.size() + ", channel id: " + id);
                 return true;
             } else {
-                // System.out.println("Cannot add waker to null. " + ", channel id: " + id);
                 return false;
             }
         }
@@ -98,12 +95,10 @@ public class Channel<T> {
         // System.out.println("wakeReceivers. num: " + receiverWakers.size());
         synchronized(canAddReceiverWaker) {
             for (Waker waker : receiverWakers) {
-                // System.out.println("wake Waker. Channel id: " + id);
                 waker.wake();
                 receiverWakers.remove(waker);
             }
             if (last) {
-                // System.out.println("Close canAddReceiverWaker. channel id: " + id);
                 canAddReceiverWaker.set(false);
             }
         }

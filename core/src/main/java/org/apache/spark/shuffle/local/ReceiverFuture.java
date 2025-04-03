@@ -16,8 +16,6 @@
  */
 package org.apache.spark.shuffle.local;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
 import java.util.Optional;
 
 public class ReceiverFuture<T> {
@@ -34,15 +32,8 @@ public class ReceiverFuture<T> {
     public Optional<T> getFuture() {
         try {
             while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
-                // System.out.println("receiver try to lock..." + ", channel id: " + channel.getId());
-                // System.out.println("receiver: " + "channel id: " + channel.getId());
-                // channel.lock();
-                // System.out.println("receiver got lock..." + ", channel id: " + channel.getId());
-
                 if (!channel.isEmpty()) {
                     T data = channel.getData();
-
-                    // System.out.println("get data: " + data  + ", channel id: " + channel.getId());
 
                     boolean readyToAdd = channel.readyToAdd();
                     if (readyToAdd) {
@@ -54,21 +45,14 @@ public class ReceiverFuture<T> {
                         }
                     }
 
-                    // channel.unlock();
                     return Optional.of(data);
                 } else {
                     // Hold this receiver to wait for the sender to wake up the receiver
                     Waker waker = getWaker();
                     if (channel.addReceiverWaker(waker)) {
-                        // System.out.println("receiver wait..." + " channel empty: " + channel.isEmpty() + ", channel id: " + channel.getId());
                         waker.await();
-                        // System.out.println("receiver woke!" + ", channel id: " + channel.getId());
                     } else {
                         if (channel.isEmpty()) {
-                            // channel.unlock();
-                            // System.out.println("receiver cannot wait!" + ", channel id: " + channel.getId());
-                            // return Optional.empty();
-                            // System.out.println("receiver cannot wait!" + ", channel id: " + channel.getId());
                             return Optional.empty();
                         }
                     }

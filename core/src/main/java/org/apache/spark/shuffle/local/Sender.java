@@ -32,23 +32,11 @@ public class Sender<T> {
 
     public void close() {
         if (!closed) {
-            /*
-            if (!channel.isClosed()) {
-                if (channel.reduceNumSenders() == 0) {
-                    // System.out.println("last sender closed. channel: " + channel.getId());
-                }
-                if (channel.isEmpty()) {
-                    channel.getChannelGate().decrementEmptyChannelNumber();
-                }
-            }
-             */
-
             for (Channel<T> channel : channels) {
                 if (channel.readyToAdd()) {
                     channel.getChannelGate().decrementEmptyChannelNumber();
                 }
                 if (channel.reduceNumSenders() == 0) {
-                    // System.out.println("last sender closed. channel: " + channel.getId());
                     channel.wakeReceivers(true);
                 }
             }

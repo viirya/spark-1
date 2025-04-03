@@ -68,8 +68,6 @@ class LocalRepartitionRDD[T: ClassTag](
 
       override def next(): T = {
         recvFuture = receiver.recv()
-        // scalastyle:off println
-        // println(s"got item: $item")
         this.item.get()
       }
     }
@@ -121,15 +119,8 @@ object LocalRepartition {
       split: LocalRepartitionPartition,
       context: TaskContext): Unit =
     LocalRepartition.synchronized {
-      // scalastyle:off println
-      // println(s"initiate channel map for rdd: ${rdd.id}, " +
-      //  s"input partition size: ${split.inputPartitions.size}")
-
       channelMap.synchronized {
         if (!channelMap.contains(rdd.id)) {
-          // scalastyle:off println
-          // println(s"no channel map for ${rdd.id}")
-
           channelMap(rdd.id) =
             new mutable.HashMap[Int, Receiver[Any]]()
 
@@ -144,28 +135,17 @@ object LocalRepartition {
 
           // Create sender per input partitions for each output partition
           for (i <- 0 until rdd.part.numPartitions) {
-            // println(s"rdd: ${rdd.id}, output partition: $i")
-
-            // scalastyle:off println
-            // println(s"rdd: ${rdd.id}, partition: $i, senders: ${senders.size}")
-
             channelMap(rdd.id).put(i, channels(i).createReceiver().asInstanceOf[Receiver[Any]])
           }
 
           // Launch one async task per *input* partition
-          // scalastyle:off println
-          // println(s"launch input tasks for rdd: ${rdd.id}, ")
           launchInputTasks(senders.toSeq, rdd, split, rdd.part, context)
-          // println(s"launched input tasks for rdd: ${rdd.id}, ")
         } else {
-          // scalastyle:off println
-          // println(s"already has channel map for rdd: ${rdd.id}")
+          // no-op
         }
       }
 
       context.addTaskCompletionListener((_) => {
-        // scala:off println
-        // println(s"task completed for rdd: ${rdd.id}, split: ${split.index}")
         channelMap.synchronized {
           LocalRepartition.channelMap(rdd.id).remove(split.index)
           if (LocalRepartition.channelMap(rdd.id).isEmpty) {
@@ -204,8 +184,6 @@ object LocalRepartition {
 
     // All sender tasks are completed. Close the senders.
     val task = CompletableFuture.allOf(tasks.toArray: _*).whenComplete((_, _) => {
-      // scalastyle:off println
-      // println(s"all input tasks completed for rdd: ${rdd.id}")
     })
 
     sawnedTasks(rdd.id) = task

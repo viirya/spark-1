@@ -42,16 +42,9 @@ public class SenderFuture<T> {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted() && iterator.hasNext() && !sender.isClosed()) {
-                    // System.out.println("sender try to lock..." + ", channel id: " + channel.getId());
-                    // System.out.println("sender: " + "channel id: " + channel.getId());
-                    // channel.lock();
-                    // System.out.println("sender got lock..." + ", channel id: " + channel.getId());
-
                     T data = iterator.next();
                     int key = partitioner.getPartition(data);
                     Channel<T> channel = channels[key];
-
-                    // System.out.println("sender for data: " + data + " channel id: " + channel.getId());
 
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
@@ -59,21 +52,13 @@ public class SenderFuture<T> {
                         Waker waker = getWaker();
 
                         if (channel.getChannelGate().addSenderWaker(waker, channel.getId())) {
-                            int emptyChannelNumber = channel.getChannelGate().getEmptyChannelNumber();
-                            // System.out.println("sender wait..." + " channel empty: " + channel.isEmpty() + " empty channel number: " + emptyChannelNumber + ", channel id: " + channel.getId());
-
-                            // channel.unlock();
                             waker.await();
-                            // System.out.println("sender woke up..." + ", channel id: " + channel.getId());
                         }
                     }
 
 
                     boolean readyToAdd = channel.readyToAdd();
-                    // System.out.println("add data: " + data + ", waiting receivers: " + channel.getNumWakers() + " channel id: " + channel.getId());
                     channel.addData(data);
-
-                    // channel.unlock();
 
                     // If data queue was empty before pushing new data, wake up the receivers
                     if (readyToAdd) {
@@ -83,7 +68,6 @@ public class SenderFuture<T> {
                 }
 
                 if (!iterator.hasNext()) {
-                    // System.out.println("sender run out of data. " + ", partId id: " + partId);
                     sender.close();
                 }
 
