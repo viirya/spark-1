@@ -30,23 +30,25 @@ public class Channel<T> {
     private ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
     private final AtomicInteger numSenders = new AtomicInteger(0);
+    private final int queueSize;
 
-    public static <T> List<Channel<T>> createChannels(int numChannels) {
+    public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize) {
         List<Channel<T>> channels = new LinkedList<>();
         ChannelGate channelGate = new ChannelGate(numChannels);
 
         for (int i = 0; i < numChannels; i++) {
-            channels.add(new Channel<>(i, channelGate));
+            channels.add(new Channel<>(i, channelGate, queueSize));
         }
 
         return channels;
     }
 
-    Channel(int id, ChannelGate channelGate) {
+    Channel(int id, ChannelGate channelGate, int queueSize) {
         this.id = id;
         this.queue = new ConcurrentLinkedQueue<>();
         this.receiverWakers = new ConcurrentLinkedQueue<>();
         this.channelGate = channelGate;
+        this.queueSize = queueSize;
     }
 
     public synchronized boolean isClosed() {
@@ -117,7 +119,7 @@ public class Channel<T> {
     }
 
     boolean readyToAdd() {
-        return queue.size() < 1000000;
+        return queue.size() < queueSize;
     }
 
     boolean isEmpty() {

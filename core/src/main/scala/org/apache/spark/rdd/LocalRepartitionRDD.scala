@@ -25,6 +25,7 @@ import scala.reflect.ClassTag
 
 import org.apache.spark.{Dependency, LocalRepartitionDependency, Partition, Partitioner, SparkContext, TaskContext}
 import org.apache.spark.annotation.DeveloperApi
+import org.apache.spark.internal.config
 import org.apache.spark.shuffle.local._
 
 class LocalRepartitionPartition(
@@ -44,12 +45,15 @@ class LocalRepartitionRDD[T: ClassTag](
     Seq(new LocalRepartitionDependency(rdd))
   }
 
+  val queueSize = conf.get(config.LOCAL_REPARTITION_BUFFER_SIZE)
+
   /**
    * :: DeveloperApi ::
    * Implemented by subclasses to compute a given partition.
    */
   override def compute(split: Partition, context: TaskContext): Iterator[T] = {
-    LocalRepartition.initiate(this, split.asInstanceOf[LocalRepartitionPartition], context)
+    LocalRepartition.initiate(this, split.asInstanceOf[LocalRepartitionPartition], context,
+      queueSize)
 
     new Iterator[T] {
       private val receiver = LocalRepartition.getReceiver(id, split.index)
@@ -117,7 +121,8 @@ object LocalRepartition {
   def initiate[T](
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
-      context: TaskContext): Unit =
+      context: TaskContext,
+      queueSize: Int): Unit =
     LocalRepartition.synchronized {
       channelMap.synchronized {
         if (!channelMap.contains(rdd.id)) {
@@ -125,7 +130,7 @@ object LocalRepartition {
             new mutable.HashMap[Int, Receiver[Any]]()
 
           // Create a channel for each output partition
-          val channels = Channel.createChannels[T](rdd.part.numPartitions).asScala
+          val channels = Channel.createChannels[T](rdd.part.numPartitions, queueSize).asScala
 
           // Create a sender for each input partition
           val senders = mutable.ArrayBuffer[Sender[Any]]()
