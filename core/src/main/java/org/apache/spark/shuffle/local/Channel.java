@@ -74,10 +74,6 @@ public class Channel<T> {
         return numSenders.decrementAndGet();
     }
 
-    public int getNumSenders() {
-        return numSenders.get();
-    }
-
     public Receiver<T> createReceiver() {
         return new Receiver<>(this);
     }
@@ -94,7 +90,6 @@ public class Channel<T> {
     }
 
     public void wakeReceivers(boolean last) {
-        // System.out.println("wakeReceivers. num: " + receiverWakers.size());
         synchronized(canAddReceiverWaker) {
             for (Waker waker : receiverWakers) {
                 waker.wake();
@@ -104,10 +99,6 @@ public class Channel<T> {
                 canAddReceiverWaker.set(false);
             }
         }
-    }
-
-    int getNumWakers() {
-        return receiverWakers != null ? receiverWakers.size() : 0;
     }
 
     void addData(T data) {

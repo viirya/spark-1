@@ -44,6 +44,6 @@ public class Receiver<T> {
     }
 
     public boolean isClosed() {
-        return channel.isClosed();
+        return closed;
     }
 }

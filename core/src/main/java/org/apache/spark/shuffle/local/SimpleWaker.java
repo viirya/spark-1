@@ -25,10 +25,6 @@ public class SimpleWaker implements Waker {
         this.latch = new CountDownLatch(1);
     }
 
-    public SimpleWaker(int count) {
-        this.latch = new CountDownLatch(count);
-    }
-
     @Override
     public void wake() {
         latch.countDown();

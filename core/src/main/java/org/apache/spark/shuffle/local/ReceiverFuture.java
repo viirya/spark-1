@@ -29,7 +29,7 @@ public class ReceiverFuture<T> {
         return new SimpleWaker();
     }
 
-    public Optional<T> getFuture() {
+    public Optional<T> get() {
         try {
             while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
                 if (!channel.isEmpty()) {
@@ -60,7 +60,6 @@ public class ReceiverFuture<T> {
             }
             return Optional.empty();
         } catch (Exception e) {
-            // return Optional.empty();
             throw new RuntimeException(e);
         }
     }

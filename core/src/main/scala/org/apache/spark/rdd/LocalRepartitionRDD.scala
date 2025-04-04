@@ -62,7 +62,7 @@ class LocalRepartitionRDD[T: ClassTag](
 
       override def hasNext: Boolean = {
         if (!receiver.isClosed) {
-          item = recvFuture.getFuture().asInstanceOf[Optional[T]]
+          item = recvFuture.get().asInstanceOf[Optional[T]]
           item.isPresent
         } else {
           receiver.close()
@@ -96,27 +96,23 @@ class LocalRepartitionRDD[T: ClassTag](
 }
 
 object LocalRepartition {
+  /**
+   * A thread pool for sending data to the LocalRepartitionRDD.
+   * This is a fixed thread pool with a maximum of 10 threads.
+   * TODO: make the number of thread configurable?
+   */
   val senderThreadExecutor = Executors.newFixedThreadPool(10)
-  val receiverThreadExecutor = Executors.newFixedThreadPool(10)
 
   /**
    * A map to store the channels for each LocalRepartitionRDD.
-   * The key is the RDD ID, and the value is a map from output partition index to a pair of
-   * (senders, receiver).
+   * The key is the RDD ID, and the value is a map from output partition index to the receiver.
    */
   private val channelMap = new mutable.HashMap[Int, mutable.HashMap[Int, Receiver[Any]]]()
 
   /**
-   * A map to store the async tasks for each LocalRepartitionRDD.
-   * The key is the RDD ID, and the value is a sequence of async tasks, one per input partition.
-   */
-  private val sawnedTasks = mutable.HashMap[Int, CompletableFuture[Void]]()
-
-  /**
    * Initialize the channel map for the given LocalRepartitionRDD.
+   * Launch async tasks for each input partition.
    * This method is thread-safe.
-   * @param rdd
-   * @tparam T
    */
   def initiate[T](
       rdd: LocalRepartitionRDD[T],
@@ -125,6 +121,7 @@ object LocalRepartition {
       queueSize: Int): Unit =
     LocalRepartition.synchronized {
       channelMap.synchronized {
+        // Initiate the channel map for the local repartition rdd if it doesn't exist.
         if (!channelMap.contains(rdd.id)) {
           channelMap(rdd.id) =
             new mutable.HashMap[Int, Receiver[Any]]()
@@ -134,11 +131,11 @@ object LocalRepartition {
 
           // Create a sender for each input partition
           val senders = mutable.ArrayBuffer[Sender[Any]]()
-          for (i <- 0 until split.inputPartitions.length) {
+          for (_ <- 0 until split.inputPartitions.length) {
             senders += new Sender(channels.toArray).asInstanceOf[Sender[Any]]
           }
 
-          // Create sender per input partitions for each output partition
+          // Create a receiver for each output partition
           for (i <- 0 until rdd.part.numPartitions) {
             channelMap(rdd.id).put(i, channels(i).createReceiver().asInstanceOf[Receiver[Any]])
           }
@@ -166,11 +163,6 @@ object LocalRepartition {
 
   /**
    * Launch the input tasks for the given LocalRepartitionRDD.
-   *
-   * @param rdd
-   * @param part
-   * @param context
-   * @tparam T
    */
   def launchInputTasks[T](
       senders: Seq[Sender[Any]],
@@ -180,17 +172,16 @@ object LocalRepartition {
       context: TaskContext): Unit = {
     val tasks = new mutable.ArrayBuffer[CompletableFuture[Void]]()
     for (i <- 0 until split.inputPartitions.length) {
-      // Launch the task
       val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), context)
 
       // TODO: error handling
       tasks += senders(i).send(inputIterator, part).getFuture(i, senderThreadExecutor)
     }
 
-    // All sender tasks are completed. Close the senders.
-    val task = CompletableFuture.allOf(tasks.toArray: _*).whenComplete((_, _) => {
+    // All sender tasks are completed.
+    CompletableFuture.allOf(tasks.toArray: _*).whenComplete((_, _) => {
+      // error handling?
     })
 
-    sawnedTasks(rdd.id) = task
   }
 }
