@@ -56,13 +56,15 @@ public class SenderFuture<T> {
                         }
                     }
 
-
-                    boolean readyToAdd = channel.readyToAdd();
                     channel.addData(data);
 
-                    // If data queue was empty before pushing new data, wake up the receivers
-                    if (readyToAdd) {
+                    // If data queue was filled after adding new data, decrease the empty channel number
+                    if (!channel.readyToAdd()) {
                         channel.getChannelGate().decrementEmptyChannelNumber();
+                    }
+
+                    // If data queue was empty before pushing new data, wake up the receivers
+                    if (!channel.isEmpty()) {
                         channel.wakeReceivers(false);
                     }
                 }
