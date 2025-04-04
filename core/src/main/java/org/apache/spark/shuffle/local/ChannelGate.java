@@ -64,6 +64,12 @@ public class ChannelGate {
 
     void wakeSenders(int channelId) {
         lock.lock();
+
+        if (senderWakers == null) {
+            lock.unlock();
+            return;
+        }
+
         for (Map.Entry<Waker, Integer> waker : senderWakers) {
             if (waker.getValue() == channelId) {
                 waker.getKey().wake();

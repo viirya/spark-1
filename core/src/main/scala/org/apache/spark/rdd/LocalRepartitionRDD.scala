@@ -63,9 +63,12 @@ class LocalRepartitionRDD[T: ClassTag](
       override def hasNext: Boolean = {
         if (!receiver.isClosed) {
           item = recvFuture.get().asInstanceOf[Optional[T]]
-          item.isPresent
+          val hasData = item.isPresent
+          if (!hasData) {
+            receiver.close()
+          }
+          hasData
         } else {
-          receiver.close()
           false
         }
       }
@@ -175,7 +178,7 @@ object LocalRepartition {
       val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), context)
 
       // TODO: error handling
-      tasks += senders(i).send(inputIterator, part).getFuture(i, senderThreadExecutor)
+      tasks += senders(i).send(inputIterator, part).getFuture(senderThreadExecutor)
     }
 
     // All sender tasks are completed.

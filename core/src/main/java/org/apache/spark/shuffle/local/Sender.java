@@ -33,10 +33,10 @@ public class Sender<T> {
     public void close() {
         if (!closed) {
             for (Channel<T> channel : channels) {
-                if (channel.readyToAdd()) {
-                    channel.getChannelGate().decrementEmptyChannelNumber();
-                }
                 if (channel.reduceNumSenders() == 0) {
+                    if (channel.readyToAdd()) {
+                        channel.getChannelGate().decrementEmptyChannelNumber();
+                    }
                     channel.wakeReceivers(true);
                 }
             }

@@ -33,10 +33,10 @@ public class ReceiverFuture<T> {
         try {
             while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
                 if (!channel.isEmpty()) {
+                    boolean readyToAddBefore = channel.readyToAdd();
                     T data = channel.getData();
 
-                    boolean readyToAdd = channel.readyToAdd();
-                    if (readyToAdd) {
+                    if (readyToAddBefore != channel.readyToAdd()) {
                         // Check if all channels are filled with data before pulling data,
                         // if so, wake up the waiting senders.
                         int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();

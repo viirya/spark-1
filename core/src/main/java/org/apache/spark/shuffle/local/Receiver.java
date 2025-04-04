@@ -34,7 +34,7 @@ public class Receiver<T> {
 
     public void close() {
         if (!channel.isClosed()) {
-            if (channel.isEmpty()) {
+            if (channel.readyToAdd()) {
                 channel.getChannelGate().decrementEmptyChannelNumber();
             }
             channel.getChannelGate().wakeSenders(channel.getId());

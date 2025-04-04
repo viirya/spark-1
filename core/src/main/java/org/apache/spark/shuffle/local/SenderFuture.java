@@ -38,7 +38,7 @@ public class SenderFuture<T> {
         return new SimpleWaker();
     }
 
-    public CompletableFuture<Void> getFuture(int partId, Executor executor) {
+    public CompletableFuture<Void> getFuture(Executor executor) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted() && iterator.hasNext() && !sender.isClosed()) {
@@ -56,10 +56,11 @@ public class SenderFuture<T> {
                         }
                     }
 
+                    boolean readyToAddBefore = channel.readyToAdd();
                     channel.addData(data);
 
                     // If data queue was filled after adding new data, decrease the empty channel number
-                    if (!channel.readyToAdd()) {
+                    if (readyToAddBefore != channel.readyToAdd()) {
                         channel.getChannelGate().decrementEmptyChannelNumber();
                     }
 
