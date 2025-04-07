@@ -17,16 +17,26 @@
 
 package org.apache.spark.sql.execution.exchange
 
+import org.apache.spark.ShuffleDependency
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.util.MutablePair
 
 case class LocalRepartitionExec(
     override val outputPartitioning: Partitioning,
     child: SparkPlan,
+    shuffleDependency : ShuffleDependency[Int, InternalRow, InternalRow],
     shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS)
   extends Exchange {
+
+  override lazy val metrics = Map(
+    "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
+    "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows")
+  )
+
   /**
    * Produces the result of the query as an `RDD[InternalRow]`
    *
@@ -34,7 +44,27 @@ case class LocalRepartitionExec(
    */
   override protected def doExecute(): RDD[InternalRow] = {
     val childRDD = child.execute()
-    childRDD.localRepartition(outputPartitioning.numPartitions)
+
+    val part = ShuffleExchangeExec.getPartitioner(
+      childRDD,
+      child.output,
+      outputPartitioning)
+
+    val inputRDD: RDD[Product2[Int, InternalRow]] =
+      childRDD.mapPartitionsWithIndexInternal((_, iter) => {
+        val getPartitionKey =
+          ShuffleExchangeExec.getPartitionKeyExtractor(
+            child.output, outputPartitioning)
+        val mutablePair = new MutablePair[Int, InternalRow]()
+        iter.map { row => // we need to copy the row because local repartition buffers the rows
+          metrics("numInputRows") += 1
+          mutablePair.update(part.getPartition(getPartitionKey(row)), row.copy()) }
+      })
+
+    inputRDD.localRepartition(shuffleDependency.partitioner.numPartitions).map { pair =>
+      metrics("numOutputRows") += 1
+      pair._2
+    }
   }
 
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan = {

@@ -326,19 +326,11 @@ object ShuffleExchangeExec {
     }
   }
 
-  /**
-   * Returns a [[ShuffleDependency]] that will partition rows of its child based on
-   * the partitioning scheme defined in `newPartitioning`. Those partitions of
-   * the returned ShuffleDependency will be the input of shuffle.
-   */
-  def prepareShuffleDependency(
+  def getPartitioner(
       rdd: RDD[InternalRow],
       outputAttributes: Seq[Attribute],
-      newPartitioning: Partitioning,
-      serializer: Serializer,
-      writeMetrics: Map[String, SQLMetric])
-    : ShuffleDependency[Int, InternalRow, InternalRow] = {
-    val part: Partitioner = newPartitioning match {
+      newPartitioning: Partitioning): Partitioner = {
+    newPartitioning match {
       case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
       case HashPartitioning(_, n) =>
         // For HashPartitioning, the partitioning key is already a valid partition ID, as we use
@@ -374,34 +366,51 @@ object ShuffleExchangeExec {
       case _ => throw SparkException.internalError(s"Exchange not implemented for $newPartitioning")
       // TODO: Handle BroadcastPartitioning.
     }
-    def getPartitionKeyExtractor(): InternalRow => Any = newPartitioning match {
-      case RoundRobinPartitioning(numPartitions) =>
-        // Distributes elements evenly across output partitions, starting from a random partition.
-        // nextInt(numPartitions) implementation has a special case when bound is a power of 2,
-        // which is basically taking several highest bits from the initial seed, with only a
-        // minimal scrambling. Due to deterministic seed, using the generator only once,
-        // and lack of scrambling, the position values for power-of-two numPartitions always
-        // end up being almost the same regardless of the index. substantially scrambling the
-        // seed by hashing will help. Refer to SPARK-21782 for more details.
-        val partitionId = TaskContext.get().partitionId()
-        var position = new XORShiftRandom(partitionId).nextInt(numPartitions)
-        (row: InternalRow) => {
-          // The HashPartitioner will handle the `mod` by the number of partitions
-          position += 1
-          position
-        }
-      case h: HashPartitioning =>
-        val projection = UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
-        row => projection(row).getInt(0)
-      case RangePartitioning(sortingExpressions, _) =>
-        val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-        row => projection(row)
-      case SinglePartition => identity
-      case KeyGroupedPartitioning(expressions, _, _, _) =>
-        row => bindReferences(expressions, outputAttributes).map(_.eval(row))
-      case _ => throw SparkException.internalError(s"Exchange not implemented for $newPartitioning")
-    }
+  }
 
+  def getPartitionKeyExtractor(
+      outputAttributes: Seq[Attribute],
+      newPartitioning: Partitioning): InternalRow => Any = newPartitioning match {
+    case RoundRobinPartitioning(numPartitions) =>
+      // Distributes elements evenly across output partitions, starting from a random partition.
+      // nextInt(numPartitions) implementation has a special case when bound is a power of 2,
+      // which is basically taking several highest bits from the initial seed, with only a
+      // minimal scrambling. Due to deterministic seed, using the generator only once,
+      // and lack of scrambling, the position values for power-of-two numPartitions always
+      // end up being almost the same regardless of the index. substantially scrambling the
+      // seed by hashing will help. Refer to SPARK-21782 for more details.
+      val partitionId = TaskContext.get().partitionId()
+      var position = new XORShiftRandom(partitionId).nextInt(numPartitions)
+      (row: InternalRow) => {
+        // The HashPartitioner will handle the `mod` by the number of partitions
+        position += 1
+        position
+      }
+    case h: HashPartitioning =>
+      val projection = UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
+      row => projection(row).getInt(0)
+    case RangePartitioning(sortingExpressions, _) =>
+      val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
+      row => projection(row)
+    case SinglePartition => identity
+    case KeyGroupedPartitioning(expressions, _, _, _) =>
+      row => bindReferences(expressions, outputAttributes).map(_.eval(row))
+    case _ => throw SparkException.internalError(s"Exchange not implemented for $newPartitioning")
+  }
+
+  /**
+   * Returns a [[ShuffleDependency]] that will partition rows of its child based on
+   * the partitioning scheme defined in `newPartitioning`. Those partitions of
+   * the returned ShuffleDependency will be the input of shuffle.
+   */
+  def prepareShuffleDependency(
+      rdd: RDD[InternalRow],
+      outputAttributes: Seq[Attribute],
+      newPartitioning: Partitioning,
+      serializer: Serializer,
+      writeMetrics: Map[String, SQLMetric])
+    : ShuffleDependency[Int, InternalRow, InternalRow] = {
+    val part: Partitioner = getPartitioner(rdd, outputAttributes, newPartitioning)
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
 
@@ -456,12 +465,12 @@ object ShuffleExchangeExec {
       val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
       if (needToCopyObjectsBeforeShuffle(part)) {
         newRdd.mapPartitionsWithIndexInternal((_, iter) => {
-          val getPartitionKey = getPartitionKeyExtractor()
+          val getPartitionKey = getPartitionKeyExtractor(outputAttributes, newPartitioning)
           iter.map { row => (part.getPartition(getPartitionKey(row)), row.copy()) }
         }, isOrderSensitive = isOrderSensitive)
       } else {
         newRdd.mapPartitionsWithIndexInternal((_, iter) => {
-          val getPartitionKey = getPartitionKeyExtractor()
+          val getPartitionKey = getPartitionKeyExtractor(outputAttributes, newPartitioning)
           val mutablePair = new MutablePair[Int, InternalRow]()
           iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
         }, isOrderSensitive = isOrderSensitive)

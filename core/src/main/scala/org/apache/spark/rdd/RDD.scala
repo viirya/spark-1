@@ -486,8 +486,26 @@ abstract class RDD[T: ClassTag](
     coalesce(numPartitions, shuffle = true)
   }
 
+  /**
+   * Return a new RDD that has exactly numPartitions partitions.
+   *
+   * Different from `repartition`, this method does not require a shuffle. Instead, it
+   * uses a local repartitioning strategy to create the new partitions. Thus, it is only
+   * suitable for local deployment mode.
+   */
   def localRepartition(numPartitions: Int): RDD[T] = {
     new LocalRepartitionRDD(sc, this, new HashPartitioner(numPartitions))
+  }
+
+  /**
+   * Return a new RDD that has exactly distribution as the given partitioner.
+   *
+   * Different from `repartition`, this method does not require a shuffle. Instead, it
+   * uses a local repartitioning strategy to create the new partitions. Thus, it is only
+   * suitable for local deployment mode.
+   */
+  def localRepartition(part: Partitioner): RDD[T] = {
+    new LocalRepartitionRDD(sc, this, part)
   }
 
   /**
