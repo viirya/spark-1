@@ -40,11 +40,16 @@ public class SenderFuture<T> {
 
     public CompletableFuture<Void> getFuture(Executor executor) {
         return CompletableFuture.supplyAsync(() -> {
+            Channel<T> channel = null;
             try {
                 while (!Thread.currentThread().isInterrupted() && iterator.hasNext() && !sender.isClosed()) {
                     T data = iterator.next();
                     int key = partitioner.getPartition(data);
-                    Channel<T> channel = channels[key];
+                    channel = channels[key];
+
+                    if (channel.isClosed()) {
+                        throw new IllegalStateException("Channel is closed");
+                    }
 
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
@@ -75,7 +80,11 @@ public class SenderFuture<T> {
                 }
 
                 return null;
-            } catch (InterruptedException e) {
+            } catch (Throwable e) {
+                if (channel != null) {
+                    channel.setError(e);
+                }
+                sender.close();
                 return null;
             }
         }, executor);

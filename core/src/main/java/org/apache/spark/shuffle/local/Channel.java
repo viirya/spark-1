@@ -18,19 +18,22 @@ package org.apache.spark.shuffle.local;
 
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Channel<T> {
     private final int id;
-    private boolean closed = false;
+    private AtomicBoolean closed = new AtomicBoolean(false);;
     private final ConcurrentLinkedQueue<T> queue;
     private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
     private ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
     private final AtomicInteger numSenders = new AtomicInteger(0);
     private final int queueSize;
+
+    private Optional<Throwable> error = Optional.empty();
 
     public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize) {
         List<Channel<T>> channels = new LinkedList<>();
@@ -51,12 +54,12 @@ public class Channel<T> {
         this.queueSize = queueSize;
     }
 
-    public synchronized boolean isClosed() {
-        return closed;
+    public boolean isClosed() {
+        return closed.get();
     }
 
-    public synchronized void close() {
-        closed = true;
+    public void close() {
+        closed.set(true);
 
         channelGate.wakeSenders();
         wakeReceivers(true);
@@ -64,6 +67,21 @@ public class Channel<T> {
 
     int getId() {
         return id;
+    }
+
+    public boolean isError() {
+        return error.isPresent();
+    }
+
+    public Optional<Throwable> getError() {
+        return error;
+    }
+
+    void setError(Throwable error) {
+        this.error = Optional.of(error);
+        closed.set(true);
+        channelGate.wakeSenders();
+        wakeReceivers(true);
     }
 
     public void addSender() {

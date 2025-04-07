@@ -32,6 +32,10 @@ public class ReceiverFuture<T> {
     public Optional<T> get() {
         try {
             while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
+                if (channel.isError()) {
+                    throw new IllegalStateException("Error in channel", channel.getError().get());
+                }
+
                 if (!channel.isEmpty()) {
                     boolean readyToAddBefore = channel.readyToAdd();
                     T data = channel.getData();

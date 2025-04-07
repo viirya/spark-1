@@ -177,13 +177,12 @@ object LocalRepartition {
     for (i <- 0 until split.inputPartitions.length) {
       val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), context)
 
-      // TODO: error handling
       tasks += senders(i).send(inputIterator, part).getFuture(senderThreadExecutor)
     }
 
     // All sender tasks are completed.
     CompletableFuture.allOf(tasks.toArray: _*).whenComplete((_, _) => {
-      // error handling?
+      // no-op
     })
 
   }
