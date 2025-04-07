@@ -5527,6 +5527,15 @@ object SQLConf {
     .booleanConf
     .createWithDefault(true)
 
+  val LOCAL_REPARTITION_ENABLED = buildConf("spark.sql.localRepartition.enabled")
+    .internal()
+    .doc("When set to true, the local repartitioning will be enabled. " +
+      "This is a performance optimization for replacing disk-based shuffle operations with " +
+      "in-memory repartition. This is only effective under local deployment mode.")
+    .version("4.1.0")
+    .booleanConf
+    .createWithDefault(true)
+
   val LAZY_SET_OPERATOR_OUTPUT = buildConf("spark.sql.lazySetOperatorOutput.enabled")
     .internal()
     .doc(
@@ -6566,6 +6575,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
     getConf(SQLConf.STACK_TRACES_IN_DATAFRAME_CONTEXT)
 
   def dataFrameQueryContextEnabled: Boolean = getConf(SQLConf.DATA_FRAME_QUERY_CONTEXT_ENABLED)
+
+  def localRepartitionEnabled: Boolean = getConf(SQLConf.LOCAL_REPARTITION_ENABLED)
 
   override def legacyAllowUntypedScalaUDFs: Boolean =
     getConf(SQLConf.LEGACY_ALLOW_UNTYPED_SCALA_UDF)
