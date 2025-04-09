@@ -290,6 +290,8 @@ private[spark] class TaskContextImpl(
 
   override def getLocalProperty(key: String): String = localProperties.getProperty(key)
 
+  override def getMetricsSystem(): MetricsSystem = metricsSystem
+
   override def getMetricsSources(sourceName: String): Seq[Source] =
     metricsSystem.getSourcesByName(sourceName)
 

@@ -18,16 +18,19 @@ package org.apache.spark.shuffle.local;
 
 import scala.collection.Iterator;
 import org.apache.spark.Partitioner;
+import org.apache.spark.TaskContext;
 
 public class Sender<T> {
     private final Channel<T>[] channels;
     private boolean closed = false;
+    private final TaskContext taskContext;
 
-    public Sender(Channel<T>[] channels) {
+    public Sender(Channel<T>[] channels, TaskContext taskContext) {
           this.channels  = channels;
           for (Channel<T> channel : channels) {
               channel.addSender();
           }
+          this.taskContext = taskContext;
     }
 
     public void close() {
@@ -50,6 +53,6 @@ public class Sender<T> {
     }
 
     public SenderFuture<T> send(Iterator<T> iterator, Partitioner partitioner) {
-        return new SenderFuture<>(iterator, this,channels, partitioner);
+        return new SenderFuture<>(iterator, this,channels, partitioner, taskContext);
     }
 }

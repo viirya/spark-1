@@ -530,7 +530,6 @@ object QueryExecution {
       PlanSubqueries(sparkSession),
       RemoveRedundantProjects,
       EnsureRequirements(),
-      LocalRepartition(),
       // This rule must be run after `EnsureRequirements`.
       InsertSortForLimitAndOffset,
       // `ReplaceHashWithSortAgg` needs to be added after `EnsureRequirements` to guarantee the
@@ -544,6 +543,7 @@ object QueryExecution {
       DisableUnnecessaryBucketedScan,
       ApplyColumnarRulesAndInsertTransitions(
         sparkSession.sessionState.columnarRules, outputsColumnar = false),
+      LocalRepartition(),
       CollapseCodegenStages()) ++
       (if (subquery) {
         Nil

@@ -23,6 +23,7 @@ import java.util.Properties
 import org.apache.spark.annotation.{DeveloperApi, Evolving, Since}
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.memory.TaskMemoryManager
+import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.metrics.source.Source
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.scheduler.Task
@@ -230,6 +231,8 @@ abstract class TaskContext extends Serializable {
    * `org.apache.spark.SparkContext.setLocalProperty`.
    */
   def getLocalProperty(key: String): String
+
+  def getMetricsSystem(): MetricsSystem
 
   /**
    * CPUs allocated to the task.

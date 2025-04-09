@@ -30,6 +30,7 @@ import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.{Logging, MDC, MessageWithContext}
 import org.apache.spark.internal.LogKeys._
 import org.apache.spark.memory.TaskMemoryManager
+import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.metrics.source.Source
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.rpc.{RpcEndpointRef, RpcTimeout}
@@ -226,6 +227,8 @@ class BarrierTaskContext private[spark] (
   override def taskAttemptId(): Long = taskContext.taskAttemptId()
 
   override def getLocalProperty(key: String): String = taskContext.getLocalProperty(key)
+
+  override def getMetricsSystem(): MetricsSystem = taskContext.getMetricsSystem()
 
   override def taskMetrics(): TaskMetrics = taskContext.taskMetrics()
 

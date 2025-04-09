@@ -16,30 +16,40 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+
 import scala.collection.Iterator;
+
 import org.apache.spark.Partitioner;
+import org.apache.spark.TaskContext;
+import org.apache.spark.TaskContext$;
 
 public class SenderFuture<T> {
     private final Iterator<T> iterator;
     private final Sender<T> sender;
     private final Channel<T>[] channels;
     private final Partitioner partitioner;
+    private final TaskContext taskContext;
 
-    SenderFuture(Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner) {
+    SenderFuture(Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, TaskContext taskContext) {
         this.iterator = iterator;
         this.sender = sender;
         this.channels = channels;
         this.partitioner = partitioner;
+        this.taskContext = taskContext;
     }
 
     Waker getWaker() {
         return new SimpleWaker();
     }
 
-    public CompletableFuture<Void> getFuture(Executor executor) {
+    public CompletableFuture<Optional<Throwable>> getFuture(Executor executor) {
         return CompletableFuture.supplyAsync(() -> {
+            // Set the task context for the current thread
+            TaskContext$.MODULE$.setTaskContext(taskContext);
+
             Channel<T> channel = null;
             try {
                 while (!Thread.currentThread().isInterrupted() && iterator.hasNext() && !sender.isClosed()) {
@@ -75,17 +85,15 @@ public class SenderFuture<T> {
                     }
                 }
 
-                if (!iterator.hasNext()) {
-                    sender.close();
-                }
+                sender.close();
 
-                return null;
+                return Optional.empty();
             } catch (Throwable e) {
                 if (channel != null) {
                     channel.setError(e);
                 }
                 sender.close();
-                return null;
+                return Optional.of(e);
             }
         }, executor);
     }

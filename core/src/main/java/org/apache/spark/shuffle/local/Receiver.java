@@ -33,6 +33,9 @@ public class Receiver<T> {
     }
 
     public void close() {
+        if (closed) {
+            return;
+        }
         if (!channel.isClosed()) {
             if (channel.readyToAdd()) {
                 channel.getChannelGate().decrementEmptyChannelNumber();

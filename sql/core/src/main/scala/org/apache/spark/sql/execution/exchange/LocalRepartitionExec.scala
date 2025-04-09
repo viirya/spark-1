@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.execution.exchange
 
-import org.apache.spark.ShuffleDependency
+import org.apache.spark.{Partitioner, ShuffleDependency}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -32,7 +32,9 @@ case class LocalRepartitionExec(
     shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS)
   extends Exchange {
 
-  override lazy val metrics = Map(
+  override def supportsColumnar: Boolean = false
+
+  override val metrics = Map(
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows")
   )
@@ -61,7 +63,9 @@ case class LocalRepartitionExec(
           mutablePair.update(part.getPartition(getPartitionKey(row)), row.copy()) }
       })
 
-    inputRDD.localRepartition(shuffleDependency.partitioner.numPartitions).map { pair =>
+    val partitioner = new SQLMutablePairPartitioner(part.numPartitions)
+
+    inputRDD.localRepartition(partitioner).map { pair =>
       metrics("numOutputRows") += 1
       pair._2
     }
@@ -70,4 +74,8 @@ case class LocalRepartitionExec(
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan = {
     copy(child = newChild)
   }
+}
+
+class SQLMutablePairPartitioner(override val numPartitions: Int) extends Partitioner {
+  override def getPartition(key: Any): Int = key.asInstanceOf[Product2[Int, InternalRow]]._1
 }
