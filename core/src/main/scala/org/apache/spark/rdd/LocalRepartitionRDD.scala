@@ -17,6 +17,7 @@
 package org.apache.spark.rdd
 
 import java.util.Optional
+import java.util.Properties
 import java.util.concurrent.{CompletableFuture, Executors}
 import java.util.concurrent.atomic.AtomicLong
 
@@ -24,9 +25,10 @@ import scala.collection.mutable
 import scala.jdk.CollectionConverters.ListHasAsScala
 import scala.reflect.ClassTag
 
-import org.apache.spark.{Dependency, LocalRepartitionDependency, Partition, Partitioner, SparkContext, TaskContext, TaskContextImpl}
+import org.apache.spark.{Dependency, LocalRepartitionDependency, Partition, Partitioner, SparkContext, SparkEnv, TaskContext, TaskContextImpl}
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.internal.config
+import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.shuffle.local._
 
 class LocalRepartitionPartition(
@@ -115,7 +117,7 @@ object LocalRepartition {
 
   private val tasksMap = new mutable.HashMap[Int, Seq[CompletableFuture[Optional[Throwable]]]]()
 
-  val nextTaskId = new AtomicLong(0)
+  val nextTaskId = new AtomicLong(-100000L)
 
   def newTaskId(): Long = nextTaskId.decrementAndGet()
 
@@ -213,15 +215,20 @@ object LocalRepartition {
     for (i <- 0 until split.inputPartitions.length) {
 
       // Create separate task context for each input partition
+      val taskAttemptId = newTaskId()
+      val blockManager = SparkEnv.get.blockManager
+      blockManager.registerTask(taskAttemptId)
+
+      val taskMemoryManager = new TaskMemoryManager(SparkEnv.get.memoryManager, taskAttemptId)
       val taskContext = new TaskContextImpl(
         context.stageId(),
         context.stageAttemptNumber(),
         i,
-        newTaskId(),
+        taskAttemptId,
         0,
         split.inputPartitions.length,
-        context.taskMemoryManager(),
-        context.getLocalProperties,
+        taskMemoryManager,
+        new Properties,
         context.getMetricsSystem(),
         context.taskMetrics(),
         context.cpus(),

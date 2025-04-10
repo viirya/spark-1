@@ -89,6 +89,8 @@ private[spark] class UnifiedMemoryManager(
       memoryMode: MemoryMode): Long = synchronized {
     assertInvariants()
     assert(numBytes >= 0)
+    // scalastyle:off println
+    println(s"maxHeapMemory: $maxHeapMemory, maxOffHeapMemory: $maxOffHeapMemory")
     val (executionPool, storagePool, storageRegionSize, maxMemory) = memoryMode match {
       case MemoryMode.ON_HEAP => (
         onHeapExecutionMemoryPool,
@@ -142,6 +144,8 @@ private[spark] class UnifiedMemoryManager(
      * the portion of storage memory that cannot be evicted.
      */
     def computeMaxExecutionPoolSize(): Long = {
+      // scalastyle:off println
+      println(s"maxMemory: $maxMemory")
       maxMemory - math.min(storagePool.memoryUsed, storageRegionSize)
     }
 
@@ -201,6 +205,8 @@ object UnifiedMemoryManager {
 
   def apply(conf: SparkConf, numCores: Int): UnifiedMemoryManager = {
     val maxMemory = getMaxMemory(conf)
+    // scalastyle:off println
+    println(s"UnifiedMemoryManager.apply: maxMemory = $maxMemory")
     new UnifiedMemoryManager(
       conf,
       maxHeapMemory = maxMemory,

@@ -58,7 +58,7 @@ public class SenderFuture<T> {
                     channel = channels[key];
 
                     if (channel.isClosed()) {
-                        throw new IllegalStateException("Channel is closed");
+                       break;
                     }
 
                     // Check if empty channel number is 0, i.e., no receiver need data,
