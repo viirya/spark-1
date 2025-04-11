@@ -139,9 +139,6 @@ private[spark] class TaskSchedulerImpl(
   private val starvationTimer = ThreadUtils.newDaemonSingleThreadScheduledExecutor(
     "task-starvation-timer")
 
-  // Incrementing task IDs
-  val nextTaskId = new AtomicLong(0)
-
   // IDs of the tasks running on each executor
   private val executorIdToRunningTaskIds = new HashMap[String, HashSet[Long]]
 
@@ -1204,6 +1201,9 @@ private[spark] class TaskSchedulerImpl(
 private[spark] object TaskSchedulerImpl {
 
   val SCHEDULER_MODE_PROPERTY = SCHEDULER_MODE.key
+
+  // Incrementing task IDs
+  val nextTaskId = new AtomicLong(0)
 
   /**
    * Calculate the max available task slots given the `availableCpus` and `availableResources`

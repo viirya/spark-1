@@ -19,7 +19,6 @@ package org.apache.spark.rdd
 import java.util.Optional
 import java.util.Properties
 import java.util.concurrent.{CompletableFuture, Executors}
-import java.util.concurrent.atomic.AtomicLong
 
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.ListHasAsScala
@@ -29,6 +28,7 @@ import org.apache.spark.{Dependency, LocalRepartitionDependency, Partition, Part
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.internal.config
 import org.apache.spark.memory.TaskMemoryManager
+import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.shuffle.local._
 
 class LocalRepartitionPartition(
@@ -116,10 +116,6 @@ object LocalRepartition {
   private val channelMap = new mutable.HashMap[Int, mutable.HashMap[Int, Receiver[Any]]]()
 
   private val tasksMap = new mutable.HashMap[Int, Seq[CompletableFuture[Optional[Throwable]]]]()
-
-  val nextTaskId = new AtomicLong(-100000L)
-
-  def newTaskId(): Long = nextTaskId.decrementAndGet()
 
   /**
    * Initialize the channel map for the given LocalRepartitionRDD.
@@ -215,7 +211,7 @@ object LocalRepartition {
     for (i <- 0 until split.inputPartitions.length) {
 
       // Create separate task context for each input partition
-      val taskAttemptId = newTaskId()
+      val taskAttemptId = TaskSchedulerImpl.nextTaskId.getAndIncrement()
       val blockManager = SparkEnv.get.blockManager
       blockManager.registerTask(taskAttemptId)
 
