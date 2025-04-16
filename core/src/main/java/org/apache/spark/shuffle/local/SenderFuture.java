@@ -82,7 +82,7 @@ public class SenderFuture<T> {
 
                     // If data queue was filled after adding new data, decrease the empty channel number
                     if (readyToAddBefore != channel.readyToAdd()) {
-                        channel.getChannelGate().decrementEmptyChannelNumber();
+                        channel.getChannelGate().decrementEmptyChannelNumber(channel.getId());
                     }
 
                     // If data queue was empty before pushing new data, wake up the receivers

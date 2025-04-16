@@ -42,7 +42,7 @@ public class Sender<T> {
             for (Channel<T> channel : channels) {
                 if (channel.reduceNumSenders() == 0) {
                     if (channel.readyToAdd()) {
-                        channel.getChannelGate().decrementEmptyChannelNumber();
+                        channel.getChannelGate().decrementEmptyChannelNumber(channel.getId());
                     }
                     channel.wakeReceivers(true);
                 }

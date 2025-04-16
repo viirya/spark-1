@@ -20,6 +20,7 @@ package org.apache.spark.shuffle.local;
 import java.util.AbstractMap;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -27,10 +28,16 @@ public class ChannelGate {
     private AtomicInteger emptyChannelCounter = new AtomicInteger(0);
     private LinkedList<Map.Entry<Waker, Integer>> senderWakers;
     private final ReentrantLock lock = new ReentrantLock();
+    private final LinkedList<AtomicBoolean> channelEmptiness;
 
-    ChannelGate(int emptyChannelNumber) {
+    ChannelGate(int numChannel) {
         this.senderWakers = new LinkedList<>();
-        this.emptyChannelCounter = new AtomicInteger(emptyChannelNumber);
+        this.emptyChannelCounter = new AtomicInteger(numChannel);
+
+        this.channelEmptiness = new LinkedList<>();
+        for (int i = 0; i < numChannel; i++) {
+            this.channelEmptiness.add(new AtomicBoolean(true));
+        }
     }
 
     boolean addSenderWaker(Waker waker, int channelId) {
@@ -80,21 +87,42 @@ public class ChannelGate {
         lock.unlock();
     }
 
-    int incrementEmptyChannelNumber() {
-        return emptyChannelCounter.getAndAdd(1);
+    int incrementEmptyChannelNumber(int id) {
+        if (id >= channelEmptiness.size()) {
+            throw new IllegalArgumentException("Channel ID out of bounds");
+        }
+        AtomicBoolean channelEmpty = channelEmptiness.get(id);
+        synchronized (channelEmpty) {
+            if (!channelEmpty.get()) {
+                channelEmpty.set(true);
+                return emptyChannelCounter.getAndAdd(1);
+            } else {
+                return emptyChannelCounter.get();
+            }
+        }
     }
 
-    void decrementEmptyChannelNumber() {
-        int oldCount = emptyChannelCounter.getAndAdd(-1);
+    void decrementEmptyChannelNumber(int id) {
+        if (id >= channelEmptiness.size()) {
+            throw new IllegalArgumentException("Channel ID out of bounds");
+        }
 
-        if (oldCount == 1) {
-            lock.lock();
+        AtomicBoolean channelEmpty = channelEmptiness.get(id);
+        synchronized (channelEmpty) {
+            if (channelEmpty.get()) {
+                channelEmpty.set(false);
+                int oldCount = emptyChannelCounter.getAndAdd(-1);
 
-            if (emptyChannelCounter.get() == 0 && senderWakers != null) {
-                senderWakers = new LinkedList<>();
+                if (oldCount == 1) {
+                    lock.lock();
+
+                    if (emptyChannelCounter.get() == 0 && senderWakers != null) {
+                        senderWakers = new LinkedList<>();
+                    }
+
+                    lock.unlock();
+                }
             }
-
-            lock.unlock();
         }
     }
 

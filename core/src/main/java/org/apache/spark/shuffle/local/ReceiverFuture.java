@@ -43,7 +43,7 @@ public class ReceiverFuture<T> {
                     if (readyToAddBefore != channel.readyToAdd()) {
                         // Check if all channels are filled with data before pulling data,
                         // if so, wake up the waiting senders.
-                        int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();
+                        int oldCount = channel.getChannelGate().incrementEmptyChannelNumber(channel.getId());
                         if (oldCount == 0) {
                             channel.getChannelGate().wakeSenders();
                         }
