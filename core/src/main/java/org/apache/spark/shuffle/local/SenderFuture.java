@@ -20,11 +20,15 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+import scala.Option;
 import scala.collection.Iterator;
 
 import org.apache.spark.Partitioner;
+import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
+import org.apache.spark.memory.MemoryManager;
+import org.apache.spark.memory.MemoryMode;
 
 public class SenderFuture<T> {
     private final Iterator<T> iterator;
@@ -32,13 +36,15 @@ public class SenderFuture<T> {
     private final Channel<T>[] channels;
     private final Partitioner partitioner;
     private final TaskContext taskContext;
+    private final SparkEnv env;
 
-    SenderFuture(Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, TaskContext taskContext) {
+    SenderFuture(Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
         this.iterator = iterator;
         this.sender = sender;
         this.channels = channels;
         this.partitioner = partitioner;
         this.taskContext = taskContext;
+        this.env = env;
     }
 
     Waker getWaker() {
@@ -94,6 +100,23 @@ public class SenderFuture<T> {
                 }
                 sender.close();
                 return Optional.of(e);
+            } finally {
+                taskContext.markTaskCompleted(Option.empty());
+
+                // See `Task.scala` and `Executor.scala` for the details of the task lifecycle.
+                try {
+                    env.blockManager().memoryStore().releaseUnrollMemoryForThisTask(MemoryMode.ON_HEAP, Long.MAX_VALUE);
+                    env.blockManager().memoryStore().releaseUnrollMemoryForThisTask(MemoryMode.OFF_HEAP, Long.MAX_VALUE);
+                    MemoryManager memoryManager = env.blockManager().memoryManager();
+                    synchronized (memoryManager) {
+                        env.blockManager().memoryManager().notifyAll();
+                    }
+                } finally {
+                    TaskContext$.MODULE$.unset();
+
+                    env.blockManager().releaseAllLocksForTask(taskContext.taskAttemptId());
+                    taskContext.taskMemoryManager().cleanUpAllAllocatedMemory();
+                }
             }
         }, executor);
     }
