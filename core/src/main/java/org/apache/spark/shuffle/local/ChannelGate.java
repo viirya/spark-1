@@ -18,115 +18,87 @@
 package org.apache.spark.shuffle.local;
 
 import java.util.AbstractMap;
-import java.util.LinkedList;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ChannelGate {
-    private AtomicInteger emptyChannelCounter = new AtomicInteger(0);
-    private LinkedList<Map.Entry<Waker, Integer>> senderWakers;
+    private AtomicInteger emptyChannelCounter;
+    private ConcurrentLinkedQueue<Map.Entry<Waker, Integer>> senderWakers;
     private final ReentrantLock lock = new ReentrantLock();
-    private final LinkedList<AtomicBoolean> channelEmptiness;
 
-    ChannelGate(int numChannel) {
-        this.senderWakers = new LinkedList<>();
+    ChannelGate(int numChannel, int numSenders) {
+        this.senderWakers = new ConcurrentLinkedQueue<>();
         this.emptyChannelCounter = new AtomicInteger(numChannel);
-
-        this.channelEmptiness = new LinkedList<>();
-        for (int i = 0; i < numChannel; i++) {
-            this.channelEmptiness.add(new AtomicBoolean(true));
-        }
-    }
-
-    boolean addSenderWaker(Waker waker, int channelId) {
-        lock.lock();
-
-        if (senderWakers != null) {
-            senderWakers.add(new AbstractMap.SimpleEntry<>(waker, channelId));
-
-            lock.unlock();
-            return true;
-        }
-
-        lock.unlock();
-        return false;
     }
 
     void wakeSenders() {
-        lock.lock();
+        try {
+            lock.lock();
 
-        if (emptyChannelCounter.get() > 0) {
             if (senderWakers != null) {
                 for (Map.Entry<Waker, Integer> waker : senderWakers) {
                     waker.getKey().wake();
+                    senderWakers.remove(waker);
                 }
+                senderWakers = null;
             }
-            senderWakers = null;
-        }
-
-        lock.unlock();
-    }
-
-    void wakeSenders(int channelId) {
-        lock.lock();
-
-        if (senderWakers == null) {
+        } finally {
             lock.unlock();
-            return;
-        }
-
-        for (Map.Entry<Waker, Integer> waker : senderWakers) {
-            if (waker.getValue() == channelId) {
-                waker.getKey().wake();
-
-                senderWakers.remove(waker);
-            }
-        }
-        lock.unlock();
-    }
-
-    int incrementEmptyChannelNumber(int id) {
-        if (id >= channelEmptiness.size()) {
-            throw new IllegalArgumentException("Channel ID out of bounds");
-        }
-        AtomicBoolean channelEmpty = channelEmptiness.get(id);
-        synchronized (channelEmpty) {
-            if (!channelEmpty.get()) {
-                channelEmpty.set(true);
-                return emptyChannelCounter.getAndAdd(1);
-            } else {
-                return emptyChannelCounter.get();
-            }
         }
     }
 
-    void decrementEmptyChannelNumber(int id) {
-        if (id >= channelEmptiness.size()) {
-            throw new IllegalArgumentException("Channel ID out of bounds");
+    boolean incrementEmptyChannelNumber() {
+        try {
+            boolean woke = false;
+
+            System.out.println("incrementEmptyChannelNumber: trying to lock");
+            lock.lock();
+            System.out.println("incrementEmptyChannelNumber: locked");
+
+            int oldCount = emptyChannelCounter.getAndAdd(1);
+            System.out.println("incrementEmptyChannelNumber: " + oldCount);
+            if (oldCount == 0) {
+                wakeSenders();
+                woke = true;
+            }
+
+            return woke;
+        } finally {
+            lock.unlock();
         }
+    }
 
-        AtomicBoolean channelEmpty = channelEmptiness.get(id);
-        synchronized (channelEmpty) {
-            if (channelEmpty.get()) {
-                channelEmpty.set(false);
-                int oldCount = emptyChannelCounter.getAndAdd(-1);
+    void decrementEmptyChannelNumber() {
+        try {
+            lock.lock();
 
-                if (oldCount == 1) {
-                    lock.lock();
+            int oldCount = emptyChannelCounter.getAndAdd(-1);
+            System.out.println("decrementEmptyChannelNumber: " + oldCount);
+            if (oldCount == 1) {
+                senderWakers = new ConcurrentLinkedQueue<>();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
 
-                    if (emptyChannelCounter.get() == 0 && senderWakers != null) {
-                        senderWakers = new LinkedList<>();
-                    }
+    boolean checkAndAddSenderWaker(int senderId, Waker waker, int channelId) {
+        try {
+            lock.lock();
 
-                    lock.unlock();
+            if (emptyChannelCounter.get() == 0) {
+                if (senderWakers == null) {
+                    System.out.println("checkAndAddSenderWaker: senderId: " + senderId + ", channelId: " + channelId);
                 }
+                senderWakers.add(new AbstractMap.SimpleEntry<>(waker, channelId));
+                return true;
+            } else {
+                return false;
             }
+        } finally {
+            lock.unlock();
         }
-    }
-
-    int getEmptyChannelNumber() {
-        return emptyChannelCounter.get();
     }
 }

@@ -16,16 +16,25 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class Receiver<T> {
     private final Channel<T> channel;
     private boolean closed = false;
+    private final int rddId;
+    private int receiverId;
+    private final AtomicInteger received = new AtomicInteger(0);
 
-    Receiver(Channel<T> channel) {
+    private static AtomicInteger nextReceiverId = new AtomicInteger(0);
+
+    Receiver(Channel<T> channel, int rddId) {
         this.channel  = channel;
+        this.rddId = rddId;
+        this.receiverId = nextReceiverId.getAndIncrement();
     }
 
     public ReceiverFuture<T> recv() {
-        return new ReceiverFuture<>(channel);
+        return new ReceiverFuture<>(receiverId, channel, rddId, received);
     }
 
     public Channel<T> getChannel() {
@@ -37,11 +46,9 @@ public class Receiver<T> {
             return;
         }
         if (!channel.isClosed()) {
-            if (channel.readyToAdd()) {
-                channel.getChannelGate().decrementEmptyChannelNumber(channel.getId());
-            }
-            channel.getChannelGate().wakeSenders(channel.getId());
+            System.out.println("Receiver " + receiverId + " (rdd: " + rddId + ") close channel " + channel.getId() + ", queue size:" + channel.getQueueSize() + ", wake senders: " + channel.getNumSenders() + ", received: " + received.get());
             channel.close();
+            System.out.println("Receiver " + receiverId + " (rdd: " + rddId + ") closed channel " + channel.getId() + ", queue size:" + channel.getQueueSize() + ", wake senders: " + channel.getNumSenders() + ", received: " + received.get());
         }
         closed = true;
     }

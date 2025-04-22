@@ -38,13 +38,23 @@ public class SenderFuture<T> {
     private final TaskContext taskContext;
     private final SparkEnv env;
 
-    SenderFuture(Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
+    private final int senderId;
+    private final int rddId;
+
+    private int sentDataCount = 0;
+
+    private Waker currentWaker;
+
+    SenderFuture(int senderId, int rddId, Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
+        this.senderId = senderId;
+        this.rddId = rddId;
         this.iterator = iterator;
         this.sender = sender;
         this.channels = channels;
         this.partitioner = partitioner;
         this.taskContext = taskContext;
         this.env = env;
+        this.currentWaker = getWaker();
     }
 
     Waker getWaker() {
@@ -69,28 +79,28 @@ public class SenderFuture<T> {
 
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
-                    if (channel.getChannelGate().getEmptyChannelNumber() == 0) {
-                        Waker waker = getWaker();
+                    if (channel.getChannelGate().checkAndAddSenderWaker(senderId, currentWaker, channel.getId())) {
 
-                        if (channel.getChannelGate().addSenderWaker(waker, channel.getId())) {
-                            waker.await();
-                        }
+                        System.out.println("Sender " + senderId + " (rdd: " + rddId + ") is waiting for receiver to wake up, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", sent data count: " + sentDataCount);
+                        currentWaker.await();
+                        System.out.println("Sender " + senderId + " (rdd: " + rddId + ") woke up, channel: " + channel.getId());
+
+                        // Update the current waker after being woken up
+                        currentWaker = getWaker();
                     }
 
-                    boolean readyToAddBefore = channel.readyToAdd();
-                    channel.addData(data);
+                    channel.addDataAndUpdateEmptyFlag(data);
 
-                    // If data queue was filled after adding new data, decrease the empty channel number
-                    if (readyToAddBefore != channel.readyToAdd()) {
-                        channel.getChannelGate().decrementEmptyChannelNumber(channel.getId());
-                    }
+                    sentDataCount += 1;
 
                     // If data queue was empty before pushing new data, wake up the receivers
                     if (!channel.isEmpty()) {
+                        System.out.println("Sender " + senderId + " (rdd: " + rddId + ") wake up receivers, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", sent data count: " + sentDataCount);
                         channel.wakeReceivers(false);
                     }
                 }
 
+                System.out.println("Sender " + senderId + " (rdd: " + rddId + ") closed, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", sent data count: " + sentDataCount);
                 sender.close();
 
                 return Optional.empty();

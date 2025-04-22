@@ -66,14 +66,20 @@ class LocalRepartitionRDD[T: ClassTag](
       private var item: Optional[T] = Optional.empty()
 
       override def hasNext: Boolean = {
+        // scalastyle:off println
+        println(s"hasNext (rdd: $id), partition: ${split.index}")
         if (!receiver.isClosed) {
           item = recvFuture.get().asInstanceOf[Optional[T]]
           val hasData = item.isPresent
           if (!hasData) {
+            // scalastyle:off println
+            println(s"No data anymore")
             receiver.close()
           }
           hasData
         } else {
+          // scalastyle:off println
+          println(s"Call hasNext on empty iterator")
           false
         }
       }
@@ -111,6 +117,15 @@ object LocalRepartition {
    */
   val senderThreadExecutor = Executors.newCachedThreadPool()
 
+  val executor = Executors.newVirtualThreadPerTaskExecutor()
+
+  executor.submit(new Runnable {
+    override def run(): Unit = {
+      // This is a placeholder for the executor thread.
+      // It will be used to execute tasks asynchronously.
+    }
+  })
+
   /**
    * A map to store the channels for each LocalRepartitionRDD.
    * The key is the RDD ID, and the value is a map from output partition index to the receiver.
@@ -142,7 +157,8 @@ object LocalRepartition {
           // println("Creating channel map for RDD " + rdd.id)
 
           // Create a channel for each output partition
-          val channels = Channel.createChannels[T](rdd.part.numPartitions, queueSize)
+          val channels = Channel.createChannels[T](rdd.part.numPartitions, queueSize,
+              split.inputPartitions.length)
             .asScala.toArray
 
           // Create a sender for each input partition
@@ -151,7 +167,9 @@ object LocalRepartition {
           for (i <- 0 until split.inputPartitions.length) {
             val senderContext = createSenderTaskContext(context, i, split.inputPartitions.length)
             taskContextImpls += senderContext
-            senders += new Sender(channels, SparkEnv.get, senderContext)
+            // scalastyle:off println
+            println("Creating sender for RDD " + rdd.rdd.id + " and partition " + i)
+            senders += new Sender(rdd.rdd.id, channels, SparkEnv.get, senderContext)
               .asInstanceOf[Sender[Any]]
 
             // numSenders.getAndIncrement()
@@ -165,7 +183,8 @@ object LocalRepartition {
           for (i <- 0 until rdd.part.numPartitions) {
             // scalastyle:off println
             // println("Creating receiver for RDD " + rdd.id + " and partition " + i)
-            channelMap(rdd.id) += Some(channels(i).createReceiver().asInstanceOf[Receiver[Any]])
+            channelMap(rdd.id) +=
+              Some(channels(i).createReceiver(rdd.id).asInstanceOf[Receiver[Any]])
           }
 
           // Launch one async task per *input* partition
@@ -192,11 +211,14 @@ object LocalRepartition {
           // println("Remove receiver for RDD " + rdd.id + " and partition " + split.index)
           val receiver = channelMap(rdd.id)(split.index)
           if (receiver.isDefined) {
+            println("Task complete: Closing receiver for RDD " + rdd.id +
+              " and partition " + split.index)
             receiver.get.close()
             channelMap(rdd.id)(split.index) = None
           }
 
           if (channelMap(rdd.id).forall(_.isEmpty)) {
+            println("All receiver tasks complete for RDD " + rdd.id)
             channelMap.remove(rdd.id)
           }
         }

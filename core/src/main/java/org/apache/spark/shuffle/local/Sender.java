@@ -16,6 +16,8 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import scala.collection.Iterator;
 
 import org.apache.spark.Partitioner;
@@ -27,27 +29,32 @@ public class Sender<T> {
     private boolean closed = false;
     private final TaskContext taskContext;
     private final SparkEnv env;
+    private final int rddId;
+    private int senderId;
 
-    public Sender(Channel<T>[] channels, SparkEnv env, TaskContext taskContext) {
+    private static AtomicInteger nextSenderId = new AtomicInteger(0);
+
+    public Sender(int rddId, Channel<T>[] channels, SparkEnv env, TaskContext taskContext) {
+          this.rddId = rddId;
           this.channels  = channels;
           for (Channel<T> channel : channels) {
               channel.addSender();
           }
           this.taskContext = taskContext;
           this.env = env;
+          this.senderId = nextSenderId.getAndIncrement();
     }
 
     public void close() {
         if (!closed) {
             for (Channel<T> channel : channels) {
                 if (channel.reduceNumSenders() == 0) {
-                    if (channel.readyToAdd()) {
-                        channel.getChannelGate().decrementEmptyChannelNumber(channel.getId());
-                    }
-                    channel.wakeReceivers(true);
+                    System.out.println("Sender " + senderId + " (rdd: " + rddId + ") is last one for channel " + channel.getId() + ", queue size:" + channel.getQueueSize());
+                    channel.close();
                 }
             }
 
+            System.out.println("Sender " + senderId + " (rdd: " + rddId + ") close channels: " + channels.length);
             closed = true;
         }
     }
@@ -57,6 +64,6 @@ public class Sender<T> {
     }
 
     public SenderFuture<T> send(Iterator<T> iterator, Partitioner partitioner) {
-        return new SenderFuture<>(iterator, this, channels, partitioner, env, taskContext);
+        return new SenderFuture<>(senderId, rddId, iterator, this, channels, partitioner, env, taskContext);
     }
 }

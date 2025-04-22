@@ -22,22 +22,26 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class Channel<T> {
     private final int id;
     private AtomicBoolean closed = new AtomicBoolean(false);;
-    private final ConcurrentLinkedQueue<T> queue;
+    private final LinkedList<T> queue;
     private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
-    private ConcurrentLinkedQueue<Waker> receiverWakers;
     private final ChannelGate channelGate ;
     private final AtomicInteger numSenders = new AtomicInteger(0);
     private final int queueSize;
 
+    private final ReentrantLock lock = new ReentrantLock();
+
+    private Waker currentWaker;
+
     private Optional<Throwable> error = Optional.empty();
 
-    public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize) {
+    public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize, int numSenders) {
         List<Channel<T>> channels = new LinkedList<>();
-        ChannelGate channelGate = new ChannelGate(numChannels);
+        ChannelGate channelGate = new ChannelGate(numChannels, numSenders);
 
         for (int i = 0; i < numChannels; i++) {
             channels.add(new Channel<>(i, channelGate, queueSize));
@@ -48,8 +52,7 @@ public class Channel<T> {
 
     Channel(int id, ChannelGate channelGate, int queueSize) {
         this.id = id;
-        this.queue = new ConcurrentLinkedQueue<>();
-        this.receiverWakers = new ConcurrentLinkedQueue<>();
+        this.queue = new LinkedList<>();
         this.channelGate = channelGate;
         this.queueSize = queueSize;
     }
@@ -59,10 +62,20 @@ public class Channel<T> {
     }
 
     public void close() {
-        closed.set(true);
+        try {
+            lock.lock();
 
-        channelGate.wakeSenders();
-        wakeReceivers(true);
+            closed.set(true);
+
+            if (queue.size() < queueSize) {
+                channelGate.decrementEmptyChannelNumber();
+            }
+
+            channelGate.wakeSenders();
+            wakeReceivers(true);
+        } finally {
+            lock.unlock();
+        }
     }
 
     int getId() {
@@ -92,43 +105,63 @@ public class Channel<T> {
         return numSenders.decrementAndGet();
     }
 
-    public Receiver<T> createReceiver() {
-        return new Receiver<>(this);
+    public int getNumSenders() {
+        return numSenders.get();
     }
 
-    boolean addReceiverWaker(Waker waker) {
-        synchronized(canAddReceiverWaker) {
-            if (canAddReceiverWaker.get()) {
-                receiverWakers.add(waker);
-                return true;
-            } else {
-                return false;
-            }
-        }
+    public Receiver<T> createReceiver(int rddId) {
+        return new Receiver<>(this, rddId);
     }
 
     public void wakeReceivers(boolean last) {
-        synchronized(canAddReceiverWaker) {
-            for (Waker waker : receiverWakers) {
-                waker.wake();
-                receiverWakers.remove(waker);
+        if (last) {
+            canAddReceiverWaker.set(false);
+        }
+
+        if (currentWaker == null) {
+            return;
+        }
+        currentWaker.wake();
+    }
+
+    void addDataAndUpdateEmptyFlag(T data) {
+        try {
+            lock.lock();
+
+            boolean status = queue.size() == queueSize - 1;
+            queue.add(data);
+
+            if (status) {
+                // If data queue was filled after adding new data, decrease the empty channel number
+                channelGate.decrementEmptyChannelNumber();
             }
-            if (last) {
-                canAddReceiverWaker.set(false);
-            }
+        } finally {
+            lock.unlock();
         }
     }
 
-    void addData(T data) {
-        queue.add(data);
+    T getDataAndUpdateEmptyFlag() {
+        try {
+            lock.lock();
+
+            if (queue.size() == queueSize) {
+                System.out.println("Gotta increase empty channel number, channel: " + id + ", queue size: " + getQueueSize() + ", senders: " + getNumSenders());
+                if (channelGate.incrementEmptyChannelNumber()) {
+                    System.out.println("Receiver wake up senders, channel: " + id + ", queue size: " + getQueueSize() + ", senders: " + getNumSenders());
+                }
+            }
+
+            T data = queue.poll();
+
+            return data;
+        } finally {
+            lock.unlock();
+        }
     }
 
-    T getData() {
-        return queue.poll();
-    }
 
-    boolean readyToAdd() {
-        return queue.size() < queueSize;
+    int getQueueSize() {
+        return queue.size();
     }
 
     boolean isEmpty() {
@@ -137,6 +170,24 @@ public class Channel<T> {
 
     public ChannelGate getChannelGate() {
         return channelGate;
+    }
+
+    void setCurrentWaker(Waker waker) {
+        if (canAddReceiverWaker.get()) {
+            currentWaker = waker;
+        } else {
+            currentWaker = null;
+        }
+    }
+
+    boolean receiverWait() throws InterruptedException {
+        if (currentWaker != null) {
+            currentWaker.await();
+            currentWaker = null;
+            return true;
+        } else {
+            return false;
+        }
     }
 }
 

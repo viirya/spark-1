@@ -17,12 +17,19 @@
 package org.apache.spark.shuffle.local;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ReceiverFuture<T> {
     private final Channel<T> channel;
+    private final int rddId;
+    private final int receiverId;
+    private final AtomicInteger received;
 
-    ReceiverFuture(Channel<T> channel) {
+    ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received) {
+        this.receiverId = receiverId;
         this.channel = channel;
+        this.rddId = rddId;
+        this.received = received;
     }
 
     Waker getWaker() {
@@ -31,32 +38,37 @@ public class ReceiverFuture<T> {
 
     public Optional<T> get() {
         try {
-            while (!Thread.currentThread().isInterrupted() && !channel.isClosed()) {
+            channel.setCurrentWaker(getWaker());
+
+            while (!Thread.currentThread().isInterrupted() && (!channel.isClosed() || !channel.isEmpty())) {
                 if (channel.isError()) {
                     throw new IllegalStateException("Error in channel", channel.getError().get());
                 }
 
                 if (!channel.isEmpty()) {
-                    boolean readyToAddBefore = channel.readyToAdd();
-                    T data = channel.getData();
+                    System.out.println("Receiver: " + receiverId + " (rdd: " + rddId + ") gotta get data from channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", received: " + received.get());
 
-                    if (readyToAddBefore != channel.readyToAdd()) {
-                        // Check if all channels are filled with data before pulling data,
-                        // if so, wake up the waiting senders.
-                        int oldCount = channel.getChannelGate().incrementEmptyChannelNumber(channel.getId());
-                        if (oldCount == 0) {
-                            channel.getChannelGate().wakeSenders();
-                        }
+                    T data = channel.getDataAndUpdateEmptyFlag();
+                    if (data == null) {
+                        System.out.println("Receiver: " + receiverId + " (rdd: " + rddId + ") get null data from channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", received: " + received.get());
+                        return Optional.empty();
+                    } else {
+                        System.out.println("Receiver: " + receiverId + " (rdd: " + rddId + ") get non-null data from channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", received: " + received.get());
                     }
+                    received.incrementAndGet();
 
                     return Optional.of(data);
                 } else {
                     // Hold this receiver to wait for the sender to wake up the receiver
-                    Waker waker = getWaker();
-                    if (channel.addReceiverWaker(waker)) {
-                        waker.await();
+                    System.out.println("Receiver: " + receiverId + " (rdd: " + rddId + ") trying to waiting for sender to wake up, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", received: " + received.get());
+
+                    if (channel.receiverWait()) {
+                        System.out.println("Receiver: " + receiverId + " (rdd: " + rddId + ") is woken up, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize());
                     } else {
-                        if (channel.isEmpty()) {
+                        // System.out.println("Receiver: " + receiverId + " (rdd: " + rddId + ") decided not to waiting for sender to wake up, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", received: " + received.get());
+
+                        if (false && channel.isEmpty()) {
+                            System.out.println("Receiver: " + receiverId + " (rdd: " + rddId + ") cannot waiting for sender to wake up, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", received: " + received.get() + ", no data");
                             return Optional.empty();
                         }
                     }
