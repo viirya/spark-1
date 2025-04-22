@@ -145,10 +145,7 @@ public class Channel<T> {
             lock.lock();
 
             if (queue.size() == queueSize) {
-                System.out.println("Gotta increase empty channel number, channel: " + id + ", queue size: " + getQueueSize() + ", senders: " + getNumSenders());
-                if (channelGate.incrementEmptyChannelNumber()) {
-                    System.out.println("Receiver wake up senders, channel: " + id + ", queue size: " + getQueueSize() + ", senders: " + getNumSenders());
-                }
+                channelGate.incrementEmptyChannelNumber();
             }
 
             T data = queue.poll();

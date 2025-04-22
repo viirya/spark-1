@@ -49,12 +49,10 @@ public class Sender<T> {
         if (!closed) {
             for (Channel<T> channel : channels) {
                 if (channel.reduceNumSenders() == 0) {
-                    System.out.println("Sender " + senderId + " (rdd: " + rddId + ") is last one for channel " + channel.getId() + ", queue size:" + channel.getQueueSize());
                     channel.close();
                 }
             }
 
-            System.out.println("Sender " + senderId + " (rdd: " + rddId + ") close channels: " + channels.length);
             closed = true;
         }
     }

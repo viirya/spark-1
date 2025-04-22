@@ -80,10 +80,7 @@ public class SenderFuture<T> {
                     // Check if empty channel number is 0, i.e., no receiver need data,
                     // then wait for the receiver to wake up the sender
                     if (channel.getChannelGate().checkAndAddSenderWaker(senderId, currentWaker, channel.getId())) {
-
-                        System.out.println("Sender " + senderId + " (rdd: " + rddId + ") is waiting for receiver to wake up, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", sent data count: " + sentDataCount);
                         currentWaker.await();
-                        System.out.println("Sender " + senderId + " (rdd: " + rddId + ") woke up, channel: " + channel.getId());
 
                         // Update the current waker after being woken up
                         currentWaker = getWaker();
@@ -95,12 +92,10 @@ public class SenderFuture<T> {
 
                     // If data queue was empty before pushing new data, wake up the receivers
                     if (!channel.isEmpty()) {
-                        System.out.println("Sender " + senderId + " (rdd: " + rddId + ") wake up receivers, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", senders: " + channel.getNumSenders() + ", sent data count: " + sentDataCount);
                         channel.wakeReceivers(false);
                     }
                 }
 
-                System.out.println("Sender " + senderId + " (rdd: " + rddId + ") closed, channel: " + channel.getId() + ", queue size: " + channel.getQueueSize() + ", sent data count: " + sentDataCount);
                 sender.close();
 
                 return Optional.empty();

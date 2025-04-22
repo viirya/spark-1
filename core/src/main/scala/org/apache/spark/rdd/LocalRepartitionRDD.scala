@@ -66,20 +66,14 @@ class LocalRepartitionRDD[T: ClassTag](
       private var item: Optional[T] = Optional.empty()
 
       override def hasNext: Boolean = {
-        // scalastyle:off println
-        println(s"hasNext (rdd: $id), partition: ${split.index}")
         if (!receiver.isClosed) {
           item = recvFuture.get().asInstanceOf[Optional[T]]
           val hasData = item.isPresent
           if (!hasData) {
-            // scalastyle:off println
-            println(s"No data anymore")
             receiver.close()
           }
           hasData
         } else {
-          // scalastyle:off println
-          println(s"Call hasNext on empty iterator")
           false
         }
       }
@@ -167,8 +161,6 @@ object LocalRepartition {
           for (i <- 0 until split.inputPartitions.length) {
             val senderContext = createSenderTaskContext(context, i, split.inputPartitions.length)
             taskContextImpls += senderContext
-            // scalastyle:off println
-            println("Creating sender for RDD " + rdd.rdd.id + " and partition " + i)
             senders += new Sender(rdd.rdd.id, channels, SparkEnv.get, senderContext)
               .asInstanceOf[Sender[Any]]
 
@@ -207,18 +199,13 @@ object LocalRepartition {
 
       context.addTaskCompletionListener[Unit](_ => {
         channelMap.synchronized {
-          // scalastyle:off println
-          // println("Remove receiver for RDD " + rdd.id + " and partition " + split.index)
           val receiver = channelMap(rdd.id)(split.index)
           if (receiver.isDefined) {
-            println("Task complete: Closing receiver for RDD " + rdd.id +
-              " and partition " + split.index)
             receiver.get.close()
             channelMap(rdd.id)(split.index) = None
           }
 
           if (channelMap(rdd.id).forall(_.isEmpty)) {
-            println("All receiver tasks complete for RDD " + rdd.id)
             channelMap.remove(rdd.id)
           }
         }

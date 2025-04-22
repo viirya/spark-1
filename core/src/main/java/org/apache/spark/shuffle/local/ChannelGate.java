@@ -53,12 +53,9 @@ public class ChannelGate {
         try {
             boolean woke = false;
 
-            System.out.println("incrementEmptyChannelNumber: trying to lock");
             lock.lock();
-            System.out.println("incrementEmptyChannelNumber: locked");
 
             int oldCount = emptyChannelCounter.getAndAdd(1);
-            System.out.println("incrementEmptyChannelNumber: " + oldCount);
             if (oldCount == 0) {
                 wakeSenders();
                 woke = true;
@@ -75,7 +72,6 @@ public class ChannelGate {
             lock.lock();
 
             int oldCount = emptyChannelCounter.getAndAdd(-1);
-            System.out.println("decrementEmptyChannelNumber: " + oldCount);
             if (oldCount == 1) {
                 senderWakers = new ConcurrentLinkedQueue<>();
             }
@@ -89,9 +85,6 @@ public class ChannelGate {
             lock.lock();
 
             if (emptyChannelCounter.get() == 0) {
-                if (senderWakers == null) {
-                    System.out.println("checkAndAddSenderWaker: senderId: " + senderId + ", channelId: " + channelId);
-                }
                 senderWakers.add(new AbstractMap.SimpleEntry<>(waker, channelId));
                 return true;
             } else {
