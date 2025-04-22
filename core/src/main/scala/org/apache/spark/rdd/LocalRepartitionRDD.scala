@@ -18,7 +18,7 @@ package org.apache.spark.rdd
 
 import java.util.Optional
 import java.util.Properties
-import java.util.concurrent.{CompletableFuture, Executors}
+import java.util.concurrent.{Executors, Future}
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.collection.mutable
@@ -111,14 +111,7 @@ object LocalRepartition {
    */
   val senderThreadExecutor = Executors.newCachedThreadPool()
 
-  val executor = Executors.newVirtualThreadPerTaskExecutor()
-
-  executor.submit(new Runnable {
-    override def run(): Unit = {
-      // This is a placeholder for the executor thread.
-      // It will be used to execute tasks asynchronously.
-    }
-  })
+  val virtualThreadexecutor = Executors.newVirtualThreadPerTaskExecutor()
 
   /**
    * A map to store the channels for each LocalRepartitionRDD.
@@ -126,7 +119,7 @@ object LocalRepartition {
    */
   private val channelMap = new mutable.HashMap[Int, mutable.ArrayBuffer[Option[Receiver[Any]]]]()
 
-  private val tasksMap = new mutable.HashMap[Int, Seq[CompletableFuture[Optional[Throwable]]]]()
+  private val tasksMap = new mutable.HashMap[Int, Seq[Future[Optional[Throwable]]]]()
 
   private val numSenders = new AtomicLong(0)
 
@@ -249,11 +242,11 @@ object LocalRepartition {
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
       part: Partitioner,
-      contexts: Seq[TaskContext]): Seq[CompletableFuture[Optional[Throwable]]] = {
-    val tasks = new mutable.ArrayBuffer[CompletableFuture[Optional[Throwable]]]()
+      contexts: Seq[TaskContext]): Seq[Future[Optional[Throwable]]] = {
+    val tasks = new mutable.ArrayBuffer[Future[Optional[Throwable]]]()
     for (i <- 0 until split.inputPartitions.length) {
       val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), contexts(i))
-      tasks += senders(i).send(inputIterator, part).getFuture(senderThreadExecutor)
+      tasks += senders(i).send(inputIterator, part).getFuture(virtualThreadexecutor)
     }
 
     tasks.toSeq

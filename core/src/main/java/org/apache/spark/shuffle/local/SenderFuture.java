@@ -17,8 +17,8 @@
 package org.apache.spark.shuffle.local;
 
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 
 import scala.Option;
 import scala.collection.Iterator;
@@ -61,8 +61,8 @@ public class SenderFuture<T> {
         return new SimpleWaker();
     }
 
-    public CompletableFuture<Optional<Throwable>> getFuture(Executor executor) {
-        return CompletableFuture.supplyAsync(() -> {
+    public Future<Optional<Throwable>> getFuture(ExecutorService executor) {
+        return executor.submit(() -> {
             // Set the task context for the current thread
             TaskContext$.MODULE$.setTaskContext(taskContext);
 
@@ -123,6 +123,6 @@ public class SenderFuture<T> {
                     taskContext.taskMemoryManager().cleanUpAllAllocatedMemory();
                 }
             }
-        }, executor);
+        });
     }
 }
