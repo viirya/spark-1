@@ -82,7 +82,7 @@ public class SenderFuture<T> {
                             break;
                         }
 
-                        if (channel.getChannelGate().getEmptyChannelNumber() == 0) {
+                        if (channel.getChannelGate().getEmptyChannelNumber() == 0 && channel.isReachedMaxQueueSize()) {
                             boolean toWait;
                             try {
                                 channel.getChannelGate().lockGate();

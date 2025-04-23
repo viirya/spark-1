@@ -129,6 +129,10 @@ public class Channel<T> {
         return queue.isEmpty();
     }
 
+    boolean isReachedMaxQueueSize() {
+        return queue.size() > queueSize;
+    }
+
     public ChannelGate getChannelGate() {
         return channelGate;
     }

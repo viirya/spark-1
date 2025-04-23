@@ -106,12 +106,9 @@ class LocalRepartitionRDD[T: ClassTag](
 object LocalRepartition {
   /**
    * A thread pool for sending data to the LocalRepartitionRDD.
-   * This is a fixed thread pool with a maximum of 10 threads.
-   * TODO: make the number of thread configurable?
    */
-  val senderThreadExecutor = Executors.newCachedThreadPool()
-
-  val virtualThreadexecutor = Executors.newVirtualThreadPerTaskExecutor()
+  val factory = Thread.ofVirtual.name("local-repartition-sender-virtual-thread-", 0).factory
+  val virtualThreadexecutor = Executors.newThreadPerTaskExecutor(factory)
 
   /**
    * A map to store the channels for each LocalRepartitionRDD.
