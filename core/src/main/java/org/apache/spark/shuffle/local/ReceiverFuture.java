@@ -16,6 +16,8 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.LinkedList;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -38,21 +40,55 @@ public class ReceiverFuture<T> {
 
     public Optional<T> get() {
         try {
-            channel.setCurrentWaker(getWaker());
-
-            while (!Thread.currentThread().isInterrupted() && (!channel.isClosed() || !channel.isEmpty())) {
+            while (!Thread.currentThread().isInterrupted()) {
                 if (channel.isError()) {
                     throw new IllegalStateException("Error in channel", channel.getError().get());
                 }
 
-                if (!channel.isEmpty()) {
-                    T data = channel.getDataAndUpdateEmptyFlag();
-                    received.incrementAndGet();
+                boolean channelLocked = false;
+                try {
+                    channel.lockChannel();
+                    channelLocked = true;
+                    if (!channel.isEmpty()) {
+                        T data = channel.getData();
 
-                    return Optional.of(data);
-                } else {
-                    // Hold this receiver to wait for the sender to wake up the receiver
-                    channel.receiverWait();
+                        if (channel.isEmpty() && channel.isReceiverWakerEnabled()) {
+                            int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();
+                            if (oldCount == 0) {
+                                LinkedList<Map.Entry<Waker, Integer>> wakers = new LinkedList<>();
+                                try {
+                                    channel.getChannelGate().lockGate();
+                                    if (channel.getChannelGate().getEmptyChannelNumber() > 0) {
+                                        channel.getChannelGate().getSenderWakers(wakers);
+                                    }
+                                } finally {
+                                    channel.getChannelGate().unlockGate();
+                                    channel.unlockChannel();
+                                    channelLocked = false;
+                                }
+
+                                for (Map.Entry<Waker, Integer> waker : wakers) {
+                                    waker.getKey().wake();
+                                }
+                            }
+                        }
+
+                        return Optional.of(data);
+                    } else {
+                        if (channel.isReceiverWakerEnabled()) {
+                            Waker receiverWaker = getWaker();
+                            channel.setCurrentWaker(receiverWaker);
+                            channel.unlockChannel();
+                            channelLocked = false;
+                            receiverWaker.await();
+                        } else {
+                            return Optional.empty();
+                        }
+                    }
+                } finally {
+                    if (channelLocked) {
+                        channel.unlockChannel();
+                    }
                 }
             }
             return Optional.empty();

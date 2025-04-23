@@ -68,31 +68,52 @@ public class SenderFuture<T> {
 
             Channel<T> channel = null;
             try {
-                while (!Thread.currentThread().isInterrupted() && iterator.hasNext() && !sender.isClosed()) {
+                while (!Thread.currentThread().isInterrupted() && iterator.hasNext()) {
                     T data = iterator.next();
                     int key = partitioner.getPartition(data);
                     channel = channels[key];
 
-                    if (channel.isClosed()) {
-                       break;
-                    }
+                    boolean channelLocked = false;
+                    try {
+                        channel.lockChannel();
+                        channelLocked = true;
 
-                    // Check if empty channel number is 0, i.e., no receiver need data,
-                    // then wait for the receiver to wake up the sender
-                    if (channel.getChannelGate().checkAndAddSenderWaker(senderId, currentWaker, channel.getId())) {
-                        currentWaker.await();
+                        if (channel.isClosed()) {
+                            break;
+                        }
 
-                        // Update the current waker after being woken up
-                        currentWaker = getWaker();
-                    }
+                        if (channel.getChannelGate().getEmptyChannelNumber() == 0) {
+                            boolean toWait;
+                            try {
+                                channel.getChannelGate().lockGate();
+                                toWait = channel.getChannelGate().addSenderWaker(currentWaker, channel.getId());
+                            } finally {
+                                channel.getChannelGate().unlockGate();
+                            }
 
-                    channel.addDataAndUpdateEmptyFlag(data);
+                            if (toWait) {
+                                channel.unlockChannel();
+                                channelLocked = false;
+                                currentWaker.await();
+                                // Update the current waker after being woken up
+                                currentWaker = getWaker();
 
-                    sentDataCount += 1;
+                                channel.lockChannel();
+                                channelLocked = true;
+                            }
+                        }
 
-                    // If data queue was empty before pushing new data, wake up the receivers
-                    if (!channel.isEmpty()) {
-                        channel.wakeReceivers(false);
+                        boolean wasEmpty = channel.isEmpty();
+                        channel.addData(data);
+
+                        if (wasEmpty) {
+                            channel.getChannelGate().decrementEmptyChannelNumber();
+                            channel.wakeReceivers();
+                        }
+                    } finally {
+                        if (channelLocked) {
+                            channel.unlockChannel();
+                        }
                     }
                 }
 

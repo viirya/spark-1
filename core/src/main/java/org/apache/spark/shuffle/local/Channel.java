@@ -19,7 +19,6 @@ package org.apache.spark.shuffle.local;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -57,25 +56,21 @@ public class Channel<T> {
         this.queueSize = queueSize;
     }
 
+    void lockChannel() {
+        lock.lock();
+    }
+
+    void unlockChannel() {
+        lock.unlock();
+    }
+
     public boolean isClosed() {
         return closed.get();
     }
 
-    public void close() {
-        try {
-            lock.lock();
-
-            closed.set(true);
-
-            if (queue.size() < queueSize) {
-                channelGate.decrementEmptyChannelNumber();
-            }
-
-            channelGate.wakeSenders();
-            wakeReceivers(true);
-        } finally {
-            lock.unlock();
-        }
+    void setClosed() {
+        canAddReceiverWaker.set(false);
+        this.closed.set(true);
     }
 
     int getId() {
@@ -91,10 +86,11 @@ public class Channel<T> {
     }
 
     void setError(Throwable error) {
+        setClosed();
+
         this.error = Optional.of(error);
-        closed.set(true);
-        channelGate.wakeSenders();
-        wakeReceivers(true);
+        channelGate.wakeSenders(id);
+        wakeReceivers();
     }
 
     public void addSender() {
@@ -113,52 +109,20 @@ public class Channel<T> {
         return new Receiver<>(this, rddId);
     }
 
-    public void wakeReceivers(boolean last) {
-        if (last) {
-            canAddReceiverWaker.set(false);
-        }
-
+    public void wakeReceivers() {
         if (currentWaker == null) {
             return;
         }
         currentWaker.wake();
+        currentWaker = null;
     }
 
-    void addDataAndUpdateEmptyFlag(T data) {
-        try {
-            lock.lock();
-
-            boolean status = queue.size() == queueSize - 1;
-            queue.add(data);
-
-            if (status) {
-                // If data queue was filled after adding new data, decrease the empty channel number
-                channelGate.decrementEmptyChannelNumber();
-            }
-        } finally {
-            lock.unlock();
-        }
+    void addData(T data) {
+        queue.add(data);
     }
 
-    T getDataAndUpdateEmptyFlag() {
-        try {
-            lock.lock();
-
-            if (queue.size() == queueSize) {
-                channelGate.incrementEmptyChannelNumber();
-            }
-
-            T data = queue.poll();
-
-            return data;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-
-    int getQueueSize() {
-        return queue.size();
+    T getData() {
+        return queue.poll();
     }
 
     boolean isEmpty() {
@@ -169,22 +133,25 @@ public class Channel<T> {
         return channelGate;
     }
 
-    void setCurrentWaker(Waker waker) {
-        if (canAddReceiverWaker.get()) {
-            currentWaker = waker;
-        } else {
-            currentWaker = null;
-        }
+    void cleanUp() {
+        queue.clear();
     }
 
-    boolean receiverWait() throws InterruptedException {
-        if (currentWaker != null) {
-            currentWaker.await();
-            currentWaker = null;
-            return true;
-        } else {
-            return false;
-        }
+    void disableReceiverWaker() {
+        canAddReceiverWaker.set(false);
+        currentWaker = null;
+    }
+
+    boolean isReceiverWakerEnabled() {
+        return canAddReceiverWaker.get();
+    }
+
+    Waker getReceiverWaker() {
+        return currentWaker;
+    }
+
+    void setCurrentWaker(Waker currentWaker) {
+        this.currentWaker = currentWaker;
     }
 }
 

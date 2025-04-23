@@ -49,7 +49,24 @@ public class Sender<T> {
         if (!closed) {
             for (Channel<T> channel : channels) {
                 if (channel.reduceNumSenders() == 0) {
-                    channel.close();
+                    Waker receiverWaker;
+                    try {
+                        channel.lockChannel();
+
+                        if (!channel.isClosed() && channel.isEmpty()) {
+                            channel.getChannelGate().decrementEmptyChannelNumber();
+                        }
+                        receiverWaker = channel.getReceiverWaker();
+
+                        // The channel cannot add a new receiver waker
+                        channel.disableReceiverWaker();
+                    } finally {
+                        channel.unlockChannel();
+                    }
+
+                    if (receiverWaker != null) {
+                        receiverWaker.wake();
+                    }
                 }
             }
 

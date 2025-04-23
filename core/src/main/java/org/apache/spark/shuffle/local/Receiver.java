@@ -45,10 +45,19 @@ public class Receiver<T> {
         if (closed) {
             return;
         }
-        if (!channel.isClosed()) {
-            System.out.println("Receiver " + receiverId + " (rdd: " + rddId + ") close channel " + channel.getId() + ", queue size:" + channel.getQueueSize() + ", wake senders: " + channel.getNumSenders() + ", received: " + received.get());
-            channel.close();
-            System.out.println("Receiver " + receiverId + " (rdd: " + rddId + ") closed channel " + channel.getId() + ", queue size:" + channel.getQueueSize() + ", wake senders: " + channel.getNumSenders() + ", received: " + received.get());
+        try {
+            channel.lockChannel();
+            if (!channel.isClosed()) {
+                channel.setClosed();
+
+                if (channel.isEmpty() && channel.getNumSenders() > 0) {
+                    channel.getChannelGate().decrementEmptyChannelNumber();
+                }
+                channel.cleanUp();
+                channel.getChannelGate().wakeSenders(channel.getId());
+            }
+        } finally {
+            channel.unlockChannel();
         }
         closed = true;
     }
