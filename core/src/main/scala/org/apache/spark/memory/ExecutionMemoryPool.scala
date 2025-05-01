@@ -129,8 +129,8 @@ private[memory] class ExecutionMemoryPool(
       val minMemoryPerTask = poolSize / (2 * numActiveTasks)
 
       // scalastyle:off println
-      println(s"maxPoolSize: $maxPoolSize, numActiveTasks: $numActiveTasks, " +
-        s"maxMemoryPerTask: $maxMemoryPerTask, minMemoryPerTask: $minMemoryPerTask")
+      // println(s"maxPoolSize: $maxPoolSize, numActiveTasks: $numActiveTasks, " +
+      //  s"maxMemoryPerTask: $maxMemoryPerTask, minMemoryPerTask: $minMemoryPerTask")
 
       // How much we can grant this task; keep its share within 0 <= X <= 1 / numActiveTasks
       val maxToGrant = math.min(numBytes, math.max(0, maxMemoryPerTask - curMem))

@@ -16,7 +16,6 @@
  */
 package org.apache.spark.rdd
 
-import java.nio.ByteBuffer
 import java.util.Optional
 import java.util.Properties
 import java.util.concurrent.{Executors, Future}
@@ -112,7 +111,7 @@ object LocalRepartition {
   val factory = Thread.ofVirtual.name("local-repartition-sender-virtual-thread-", 0).factory
   val nonVirtualFactory =
     Thread.ofPlatform.name("local-repartition-sender-platform-thread-", 0).factory
-  val virtualThreadexecutor = Executors.newThreadPerTaskExecutor(nonVirtualFactory)
+  val virtualThreadexecutor = Executors.newThreadPerTaskExecutor(factory)
 
   /**
    * A map to store the channels for each LocalRepartitionRDD.
@@ -129,7 +128,7 @@ object LocalRepartition {
    * Launch async tasks for each input partition.
    * This method is thread-safe.
    */
-  def initiate[T](
+  def initiate[T: ClassTag](
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
       context: TaskContext,
@@ -238,20 +237,18 @@ object LocalRepartition {
   /**
    * Launch the input tasks for the given LocalRepartitionRDD.
    */
-  def launchInputTasks[T](
+  def launchInputTasks[T: ClassTag](
       senders: Seq[Sender[Any]],
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
       part: Partitioner,
       contexts: Seq[TaskContext]): Seq[Future[Optional[Throwable]]] = {
-    val ser = SparkEnv.get.closureSerializer.newInstance()
+    val clazz = implicitly[ClassTag[RDD[T]]].runtimeClass.asInstanceOf[Class[RDD[Any]]]
 
     val tasks = new mutable.ArrayBuffer[Future[Optional[Throwable]]]()
     for (i <- 0 until split.inputPartitions.length) {
-      val childRDD = ser.deserialize[RDD[T]](
-        ByteBuffer.wrap(rdd.serializedRDD), Thread.currentThread.getContextClassLoader)
-      val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), contexts(i))
-      tasks += senders(i).send(inputIterator, part).getFuture(virtualThreadexecutor)
+      tasks += senders(i).send(rdd.serializedRDD, split.inputPartitions(i), clazz, part)
+        .getFuture(virtualThreadexecutor)
     }
 
     tasks.toSeq

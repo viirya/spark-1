@@ -20,9 +20,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import scala.collection.Iterator;
 
+import org.apache.spark.Partition;
 import org.apache.spark.Partitioner;
 import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
+import org.apache.spark.rdd.RDD;
 
 public class Sender<T> {
     private final Channel<T>[] channels;
@@ -78,7 +80,7 @@ public class Sender<T> {
         return closed;
     }
 
-    public SenderFuture<T> send(Iterator<T> iterator, Partitioner partitioner) {
-        return new SenderFuture<>(senderId, rddId, iterator, this, channels, partitioner, env, taskContext);
+    public SenderFuture<T> send(byte[] task, Partition partition, Class<RDD<T>> clazz, Partitioner partitioner) {
+        return new SenderFuture<>(senderId, rddId, task, partition, clazz,  this, channels, partitioner, env, taskContext);
     }
 }

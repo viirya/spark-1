@@ -58,9 +58,9 @@ case class LocalRepartitionExec(
         val getPartitionKey =
           ShuffleExchangeExec.getPartitionKeyExtractor(
             child.output, outputPartitioning)
-        val mutablePair = new MutablePair[Int, InternalRow]()
         iter.map { row => // we need to copy the row because local repartition buffers the rows
           metrics("numInputRows") += 1
+          val mutablePair = new MutablePair[Int, InternalRow]()
           mutablePair.update(part.getPartition(getPartitionKey(row)), row.copy()) }
       })
 

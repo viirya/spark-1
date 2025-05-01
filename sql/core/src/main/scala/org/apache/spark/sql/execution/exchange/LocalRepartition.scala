@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.execution.exchange
 
+import org.apache.spark.sql.catalyst.plans.physical.HashPartitioningLike
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.SparkPlan
 
@@ -26,14 +27,24 @@ case class LocalRepartition() extends Rule[SparkPlan] {
       return plan
     }
 
+    var hasSortExchange = false
     val newPlan = plan.transformUp {
-      case shuffle @ ShuffleExchangeExec(upper, child, shuffleOrigin, _) =>
+      case shuffle @ ShuffleExchangeExec(upper, child, shuffleOrigin, _)
+        if upper.isInstanceOf[HashPartitioningLike] =>
         LocalRepartitionExec(
           outputPartitioning = upper,
           child = child,
           shuffleDependency = shuffle.shuffleDependency,
           shuffleOrigin = shuffleOrigin)
+      case s: ShuffleExchangeExec =>
+        // hasSortExchange = true
+        s
     }
-    newPlan
+
+    if (hasSortExchange) {
+      plan
+    } else {
+      newPlan
+    }
   }
 }

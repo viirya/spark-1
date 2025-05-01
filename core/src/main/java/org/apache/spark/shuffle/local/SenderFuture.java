@@ -19,19 +19,24 @@ package org.apache.spark.shuffle.local;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.nio.ByteBuffer;
 
 import scala.Option;
 import scala.collection.Iterator;
+import scala.reflect.ClassTag;
+import scala.reflect.ClassTag$;
 
+import org.apache.spark.Partition;
 import org.apache.spark.Partitioner;
+import org.apache.spark.rdd.RDD;
 import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.TaskContext$;
 import org.apache.spark.memory.MemoryManager;
 import org.apache.spark.memory.MemoryMode;
+import org.apache.spark.serializer.SerializerInstance;
 
 public class SenderFuture<T> {
-    private final Iterator<T> iterator;
     private final Sender<T> sender;
     private final Channel<T>[] channels;
     private final Partitioner partitioner;
@@ -45,15 +50,21 @@ public class SenderFuture<T> {
 
     private Waker currentWaker;
 
-    SenderFuture(int senderId, int rddId, Iterator<T> iterator, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
+    private byte[] task;
+    private Partition partition;
+    private Class<RDD<T>> clazz;
+
+    SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
         this.senderId = senderId;
         this.rddId = rddId;
-        this.iterator = iterator;
         this.sender = sender;
         this.channels = channels;
         this.partitioner = partitioner;
         this.taskContext = taskContext;
         this.env = env;
+        this.task = task;
+        this.partition = partition;
+        this.clazz = clazz;
         this.currentWaker = getWaker();
     }
 
@@ -62,6 +73,12 @@ public class SenderFuture<T> {
     }
 
     public Future<Optional<Throwable>> getFuture(ExecutorService executor) {
+        // Deserialize the task binary
+        SerializerInstance ser = env.closureSerializer().newInstance();
+        ClassTag<RDD<T>> tag = ClassTag$.MODULE$.apply(clazz);
+        RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task), Thread.currentThread().getContextClassLoader(), tag);
+        Iterator<T> iterator = rdd.iterator(partition, taskContext);
+
         return executor.submit(() -> {
             // Set the task context for the current thread
             TaskContext$.MODULE$.setTaskContext(taskContext);
