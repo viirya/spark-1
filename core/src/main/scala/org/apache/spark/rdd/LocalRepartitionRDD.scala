@@ -109,8 +109,6 @@ object LocalRepartition {
    * A thread pool for sending data to the LocalRepartitionRDD.
    */
   val factory = Thread.ofVirtual.name("local-repartition-sender-virtual-thread-", 0).factory
-  val nonVirtualFactory =
-    Thread.ofPlatform.name("local-repartition-sender-platform-thread-", 0).factory
   val virtualThreadexecutor = Executors.newThreadPerTaskExecutor(factory)
 
   /**
