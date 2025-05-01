@@ -16,6 +16,7 @@
  */
 package org.apache.spark.rdd
 
+import java.nio.ByteBuffer
 import java.util.Optional
 import java.util.Properties
 import java.util.concurrent.{Executors, Future}
@@ -43,7 +44,8 @@ class LocalRepartitionPartition(
 class LocalRepartitionRDD[T: ClassTag](
     sc: SparkContext,
     var rdd: RDD[T],
-    val part: Partitioner)
+    val part: Partitioner,
+    val serializedRDD: Array[Byte])
   extends RDD[T](sc, Nil) {
 
   override def getDependencies: Seq[Dependency[_]] = {
@@ -240,8 +242,12 @@ object LocalRepartition {
       split: LocalRepartitionPartition,
       part: Partitioner,
       contexts: Seq[TaskContext]): Seq[Future[Optional[Throwable]]] = {
+    val ser = SparkEnv.get.closureSerializer.newInstance()
+
     val tasks = new mutable.ArrayBuffer[Future[Optional[Throwable]]]()
     for (i <- 0 until split.inputPartitions.length) {
+      val childRDD = ser.deserialize[RDD[T]](
+        ByteBuffer.wrap(rdd.serializedRDD), Thread.currentThread.getContextClassLoader)
       val inputIterator = rdd.rdd.iterator(split.inputPartitions(i), contexts(i))
       tasks += senders(i).send(inputIterator, part).getFuture(virtualThreadexecutor)
     }

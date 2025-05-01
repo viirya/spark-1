@@ -17,7 +17,8 @@
 
 package org.apache.spark.sql.execution.exchange
 
-import org.apache.spark.{Partitioner, ShuffleDependency}
+import org.apache.spark.{Partitioner, ShuffleDependency, SparkEnv}
+import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -65,7 +66,14 @@ case class LocalRepartitionExec(
 
     val partitioner = new SQLMutablePairPartitioner(part.numPartitions)
 
-    inputRDD.localRepartition(partitioner).map { pair =>
+    // Serialize the tasks
+    // HACK
+    inputRDD.isBarrier()
+    val closureSerializer = SparkEnv.get.closureSerializer.newInstance()
+    val serializedRDD = JavaUtils.bufferToArray(
+      closureSerializer.serialize(inputRDD: AnyRef))
+
+    inputRDD.localRepartition(partitioner, serializedRDD).map { pair =>
       metrics("numOutputRows") += 1
       pair._2
     }
