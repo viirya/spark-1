@@ -73,21 +73,23 @@ public class SenderFuture<T> {
     }
 
     public Future<Optional<Throwable>> getFuture(ExecutorService executor) {
-        // Deserialize the task binary
-        SerializerInstance ser = env.closureSerializer().newInstance();
-        ClassTag<RDD<T>> tag = ClassTag$.MODULE$.apply(clazz);
-        RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task), Thread.currentThread().getContextClassLoader(), tag);
-        Iterator<T> iterator = rdd.iterator(partition, taskContext);
 
         return executor.submit(() -> {
             // Set the task context for the current thread
             TaskContext$.MODULE$.setTaskContext(taskContext);
+
+            // Deserialize the task binary
+            SerializerInstance ser = env.closureSerializer().newInstance();
+            ClassTag<RDD<T>> tag = ClassTag$.MODULE$.apply(clazz);
+            RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task), Thread.currentThread().getContextClassLoader(), tag);
+            Iterator<T> iterator = rdd.iterator(partition, taskContext);
 
             Channel<T> channel = null;
             try {
                 while (!Thread.currentThread().isInterrupted() && iterator.hasNext()) {
                     T data = iterator.next();
                     int key = partitioner.getPartition(data);
+                    System.out.println("sender " + senderId + " rdd " + rddId + "sending data to channel " + key);
                     channel = channels[key];
 
                     boolean channelLocked = false;
@@ -95,6 +97,7 @@ public class SenderFuture<T> {
                         channel.lockChannel();
                         channelLocked = true;
 
+                        // todo: better stop condition
                         if (channel.isClosed()) {
                             break;
                         }
@@ -111,6 +114,7 @@ public class SenderFuture<T> {
                             if (toWait) {
                                 channel.unlockChannel();
                                 channelLocked = false;
+                                System.out.println("sender " + senderId + " rdd " + rddId + " waiting on channel " + channel.getId());
                                 currentWaker.await();
                                 // Update the current waker after being woken up
                                 currentWaker = getWaker();
@@ -122,6 +126,7 @@ public class SenderFuture<T> {
 
                         boolean wasEmpty = channel.isEmpty();
                         channel.addData(data);
+                        sentDataCount += 1;
 
                         if (wasEmpty) {
                             channel.getChannelGate().decrementEmptyChannelNumber();
@@ -144,6 +149,7 @@ public class SenderFuture<T> {
                 sender.close();
                 return Optional.of(e);
             } finally {
+                System.out.println("sender " + senderId + " finished rdd " + rddId + " sent data count: " + sentDataCount);
                 taskContext.markTaskCompleted(Option.empty());
 
                 // See `Task.scala` and `Executor.scala` for the details of the task lifecycle.
@@ -155,10 +161,9 @@ public class SenderFuture<T> {
                         env.blockManager().memoryManager().notifyAll();
                     }
                 } finally {
-                    TaskContext$.MODULE$.unset();
-
                     env.blockManager().releaseAllLocksForTask(taskContext.taskAttemptId());
                     taskContext.taskMemoryManager().cleanUpAllAllocatedMemory();
+                    TaskContext$.MODULE$.unset();
                 }
             }
         });

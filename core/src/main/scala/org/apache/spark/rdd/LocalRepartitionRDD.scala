@@ -159,6 +159,12 @@ object LocalRepartition {
           }
 
           // scalastyle:off println
+          println(s"rdd ${rdd.rdd.id} with ${split.inputPartitions} partitions repartitioned to " +
+            s"rdd ${rdd.id} with ${rdd.part.numPartitions} partitions")
+          for (channel <- channels) {
+            println(s"$rdd ${rdd.rdd.id}, senders num: ${channel.getNumSenders}")
+          }
+
           // println(s"num input partitions: ${split.inputPartitions.length}")
           // println(s"num senders: ${numSenders.get()}")
 

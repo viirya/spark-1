@@ -170,6 +170,7 @@ public class TaskMemoryManager {
       // Try to release memory from other consumers first, then we can reduce the frequency of
       // spilling, avoid to have too many spilled files.
       if (got < required) {
+        System.out.println("got: " + got + ", required: " + required + ", trying to spill");
         if (logger.isDebugEnabled()) {
           logger.debug("Task {} need to spill {} for {}", taskAttemptId,
             Utils.bytesToString(required - got), requestingConsumer);
@@ -213,6 +214,8 @@ public class TaskMemoryManager {
             sortedConsumers.remove(currentEntry.getKey());
           }
         }
+
+        System.out.println("after spilling got: " + got + ", required: " + required);
       }
 
       consumers.add(requestingConsumer);
@@ -370,6 +373,7 @@ public class TaskMemoryManager {
 
     long acquired = acquireExecutionMemory(size, consumer);
     if (acquired <= 0) {
+      System.out.println("acquired: " + acquired);
       return null;
     }
 
