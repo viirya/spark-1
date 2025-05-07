@@ -5536,6 +5536,17 @@ object SQLConf {
     .booleanConf
     .createWithDefault(true)
 
+  val LOCAL_REPARTITION_MAX_INPUT_PARTITION_NUM =
+    buildConf("spark.sql.localRepartition.maxInputPartitionNum")
+      .internal()
+      .doc("The maximum number of input partitions for local repartitioning. " +
+        "This performance optimization only kicks in when the number of input partitions " +
+        "is less than this configuration value.")
+      .version("4.1.0")
+      .intConf
+      .checkValue(_ > 0, "The number of partitions must be positive.")
+      .createWithDefault(Int.MaxValue)
+
   val LAZY_SET_OPERATOR_OUTPUT = buildConf("spark.sql.lazySetOperatorOutput.enabled")
     .internal()
     .doc(
@@ -6577,6 +6588,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def dataFrameQueryContextEnabled: Boolean = getConf(SQLConf.DATA_FRAME_QUERY_CONTEXT_ENABLED)
 
   def localRepartitionEnabled: Boolean = getConf(SQLConf.LOCAL_REPARTITION_ENABLED)
+
+  def localRepartitionMaxInputPartitions: Int =
+    getConf(SQLConf.LOCAL_REPARTITION_MAX_INPUT_PARTITION_NUM)
 
   override def legacyAllowUntypedScalaUDFs: Boolean =
     getConf(SQLConf.LEGACY_ALLOW_UNTYPED_SCALA_UDF)
