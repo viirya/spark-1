@@ -50,7 +50,6 @@ public class Sender<T> {
     public void close() {
         if (!closed) {
             for (Channel<T> channel : channels) {
-                System.out.println("sender " + senderId + " close fron channel " + channel.getId() + " senders " + channel.getNumSenders());
                 if (channel.reduceNumSenders() == 0) {
                     Waker receiverWaker;
                     try {

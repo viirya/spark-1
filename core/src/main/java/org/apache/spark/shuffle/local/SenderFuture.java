@@ -89,7 +89,6 @@ public class SenderFuture<T> {
                 while (!Thread.currentThread().isInterrupted() && iterator.hasNext()) {
                     T data = iterator.next();
                     int key = partitioner.getPartition(data);
-                    System.out.println("sender " + senderId + " rdd " + rddId + "sending data to channel " + key);
                     channel = channels[key];
 
                     boolean channelLocked = false;
@@ -114,7 +113,6 @@ public class SenderFuture<T> {
                             if (toWait) {
                                 channel.unlockChannel();
                                 channelLocked = false;
-                                System.out.println("sender " + senderId + " rdd " + rddId + " waiting on channel " + channel.getId());
                                 currentWaker.await();
                                 // Update the current waker after being woken up
                                 currentWaker = getWaker();
@@ -149,7 +147,6 @@ public class SenderFuture<T> {
                 sender.close();
                 return Optional.of(e);
             } finally {
-                System.out.println("sender " + senderId + " finished rdd " + rddId + " sent data count: " + sentDataCount);
                 taskContext.markTaskCompleted(Option.empty());
 
                 // See `Task.scala` and `Executor.scala` for the details of the task lifecycle.

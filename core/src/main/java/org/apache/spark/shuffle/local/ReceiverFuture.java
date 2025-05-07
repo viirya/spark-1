@@ -78,7 +78,6 @@ public class ReceiverFuture<T> {
                         if (channel.isReceiverWakerEnabled()) {
                             Waker receiverWaker = getWaker();
                             channel.setCurrentWaker(receiverWaker);
-                            System.out.println("Receiver " + receiverId + " rdd " + rddId + " waiting for data. " + " senders: " + channel.getNumSenders() + " channel: " + channel.getId() + "empty: " + channel.isEmpty() + " sender wakers: " + channel.getChannelGate().getNumSenderWakers());
                             channel.unlockChannel();
                             channelLocked = false;
                             receiverWaker.await();

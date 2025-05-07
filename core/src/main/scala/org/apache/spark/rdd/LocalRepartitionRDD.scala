@@ -19,7 +19,6 @@ package org.apache.spark.rdd
 import java.util.Optional
 import java.util.Properties
 import java.util.concurrent.{Executors, Future}
-import java.util.concurrent.atomic.AtomicLong
 
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.ListHasAsScala
@@ -119,8 +118,6 @@ object LocalRepartition {
 
   private val tasksMap = new mutable.HashMap[Int, Seq[Future[Optional[Throwable]]]]()
 
-  private val numSenders = new AtomicLong(0)
-
   /**
    * Initialize the channel map for the given LocalRepartitionRDD.
    * Launch async tasks for each input partition.
@@ -138,9 +135,6 @@ object LocalRepartition {
           channelMap(rdd.id) =
             new mutable.ArrayBuffer[Option[Receiver[Any]]]
 
-          // scalastyle:off println
-          // println("Creating channel map for RDD " + rdd.id)
-
           // Create a channel for each output partition
           val channels = Channel.createChannels[T](rdd.part.numPartitions, queueSize,
               split.inputPartitions.length)
@@ -154,24 +148,10 @@ object LocalRepartition {
             taskContextImpls += senderContext
             senders += new Sender(rdd.rdd.id, channels, SparkEnv.get, senderContext)
               .asInstanceOf[Sender[Any]]
-
-            // numSenders.getAndIncrement()
           }
-
-          // scalastyle:off println
-          println(s"rdd ${rdd.rdd.id} with ${split.inputPartitions} partitions repartitioned to " +
-            s"rdd ${rdd.id} with ${rdd.part.numPartitions} partitions")
-          for (channel <- channels) {
-            println(s"$rdd ${rdd.rdd.id}, senders num: ${channel.getNumSenders}")
-          }
-
-          // println(s"num input partitions: ${split.inputPartitions.length}")
-          // println(s"num senders: ${numSenders.get()}")
 
           // Create a receiver for each output partition
           for (i <- 0 until rdd.part.numPartitions) {
-            // scalastyle:off println
-            // println("Creating receiver for RDD " + rdd.id + " and partition " + i)
             channelMap(rdd.id) +=
               Some(channels(i).createReceiver(rdd.id).asInstanceOf[Receiver[Any]])
           }
@@ -180,15 +160,6 @@ object LocalRepartition {
           val tasks = launchInputTasks(senders.toSeq, rdd, split, rdd.part, taskContextImpls.toSeq)
 
           tasksMap.put(rdd.id, tasks)
-
-          // Manually mark the tasks as completed to invoke the task completion listeners
-          /*
-          context.addTaskCompletionListener[Unit](_ => {
-            taskContextImpls.foreach { taskContext =>
-              taskContext.markTaskCompleted(None)
-            }
-          })
-           */
         } else {
           // no-op
         }
