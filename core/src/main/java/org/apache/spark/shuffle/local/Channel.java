@@ -109,6 +109,12 @@ public class Channel<T> {
         return new Receiver<>(this, rddId);
     }
 
+    Waker getCurrentWake() {
+        Waker waker = currentWaker;
+        currentWaker = null;
+        return waker;
+    }
+
     public void wakeReceivers() {
         if (currentWaker == null) {
             return;

@@ -128,7 +128,13 @@ public class SenderFuture<T> {
 
                         if (wasEmpty) {
                             channel.getChannelGate().decrementEmptyChannelNumber();
-                            channel.wakeReceivers();
+                            Waker waker = channel.getCurrentWake();
+                            channel.unlockChannel();
+                            channelLocked = false;
+
+                            if (waker != null) {
+                                waker.wake();
+                            }
                         }
                     } finally {
                         if (channelLocked) {
