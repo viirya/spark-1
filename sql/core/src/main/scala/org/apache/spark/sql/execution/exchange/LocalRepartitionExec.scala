@@ -22,7 +22,7 @@ import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.{SparkPlan, SQLExecution}
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.MutablePair
 
@@ -35,10 +35,21 @@ case class LocalRepartitionExec(
 
   override def supportsColumnar: Boolean = false
 
+  val driverMetrics = Map(
+    "numInputPartitions" -> SQLMetrics.createMetric(sparkContext, "number of input partitions"),
+    "numOutputPartitions" -> SQLMetrics.createMetric(sparkContext, "number of output partitions")
+  )
+
+
   override val metrics = Map(
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows")
-  )
+  ) ++ driverMetrics
+
+  protected def sendDriverMetrics(): Unit = {
+    val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    SQLMetrics.postDriverMetricUpdates(sparkContext, executionId, driverMetrics.values.toSeq)
+  }
 
   /**
    * Produces the result of the query as an `RDD[InternalRow]`
@@ -65,6 +76,11 @@ case class LocalRepartitionExec(
       })
 
     val partitioner = new SQLMutablePairPartitioner(part.numPartitions)
+
+    metrics("numInputPartitions") += inputRDD.partitions.length
+    metrics("numOutputPartitions") += part.numPartitions
+
+    sendDriverMetrics()
 
     // Serialize the tasks
     // HACK
