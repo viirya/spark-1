@@ -52,13 +52,15 @@ class LocalRepartitionRDD[T: ClassTag](
 
   val queueSize = conf.get(config.LOCAL_REPARTITION_BUFFER_SIZE)
 
+  val senderQueueSize = conf.get(config.LOCAL_REPARTITION_SENDER_BUFFER_SIZE)
+
   /**
    * :: DeveloperApi ::
    * Implemented by subclasses to compute a given partition.
    */
   override def compute(split: Partition, context: TaskContext): Iterator[T] = {
     LocalRepartition.initiate(this, split.asInstanceOf[LocalRepartitionPartition], context,
-      queueSize)
+      queueSize, senderQueueSize)
 
     new Iterator[T] {
       private lazy val receiver = LocalRepartition.getReceiver(id, split.index)
@@ -107,6 +109,7 @@ object LocalRepartition {
   /**
    * A thread pool for sending data to the LocalRepartitionRDD.
    */
+  val nonVirtualfactory = Thread.ofPlatform().name("local-repartition-sender-thread-", 0).factory
   val factory = Thread.ofVirtual.name("local-repartition-sender-virtual-thread-", 0).factory
   val virtualThreadexecutor = Executors.newThreadPerTaskExecutor(factory)
 
@@ -127,7 +130,8 @@ object LocalRepartition {
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
       context: TaskContext,
-      queueSize: Int): Unit =
+      queueSize: Int,
+      senderQueueSize: Int): Unit =
     LocalRepartition.synchronized {
       channelMap.synchronized {
         // Initiate the channel map for the local repartition rdd if it doesn't exist.
@@ -146,8 +150,8 @@ object LocalRepartition {
           for (i <- 0 until split.inputPartitions.length) {
             val senderContext = createSenderTaskContext(context, i, split.inputPartitions.length)
             taskContextImpls += senderContext
-            senders += new Sender(rdd.rdd.id, channels, SparkEnv.get, senderContext)
-              .asInstanceOf[Sender[Any]]
+            senders += new Sender(rdd.rdd.id, channels, senderQueueSize, SparkEnv.get,
+              senderContext).asInstanceOf[Sender[Any]]
           }
 
           // Create a receiver for each output partition

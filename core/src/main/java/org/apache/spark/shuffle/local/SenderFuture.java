@@ -16,6 +16,7 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.LinkedList;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -54,7 +55,10 @@ public class SenderFuture<T> {
     private Partition partition;
     private Class<RDD<T>> clazz;
 
-    SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz, Sender<T> sender, Channel<T>[] channels, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
+    private int senderQueueSize;
+    private LinkedList<T>[] queues;
+
+    SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz, Sender<T> sender, Channel<T>[] channels, int senderQueueSize, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
         this.senderId = senderId;
         this.rddId = rddId;
         this.sender = sender;
@@ -66,6 +70,14 @@ public class SenderFuture<T> {
         this.partition = partition;
         this.clazz = clazz;
         this.currentWaker = getWaker();
+
+        this.senderQueueSize = senderQueueSize;
+
+        // Initialize the queues for each channel
+        this.queues = new LinkedList[channels.length];
+        for (int i = 0; i < channels.length; i++) {
+            this.queues[i] = new LinkedList<>();
+        }
     }
 
     Waker getWaker() {
@@ -90,6 +102,13 @@ public class SenderFuture<T> {
                     T data = iterator.next();
                     int key = partitioner.getPartition(data);
                     channel = channels[key];
+
+                    LinkedList<T> queue = queues[key];
+
+                    if (queue.size() < senderQueueSize) {
+                        queue.add(data);
+                        continue;
+                    }
 
                     boolean channelLocked = false;
                     try {
@@ -123,8 +142,12 @@ public class SenderFuture<T> {
                         }
 
                         boolean wasEmpty = channel.isEmpty();
-                        channel.addData(data);
-                        sentDataCount += 1;
+
+                        for (T item : queue) {
+                            channel.addData(item);
+                        }
+                        sentDataCount += queue.size();
+                        queue.clear();
 
                         if (wasEmpty) {
                             channel.getChannelGate().decrementEmptyChannelNumber();

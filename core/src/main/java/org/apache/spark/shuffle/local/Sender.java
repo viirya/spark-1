@@ -33,10 +33,11 @@ public class Sender<T> {
     private final SparkEnv env;
     private final int rddId;
     private int senderId;
+    private int senderQueueSize;
 
     private static AtomicInteger nextSenderId = new AtomicInteger(0);
 
-    public Sender(int rddId, Channel<T>[] channels, SparkEnv env, TaskContext taskContext) {
+    public Sender(int rddId, Channel<T>[] channels, int senderQueueSize, SparkEnv env, TaskContext taskContext) {
           this.rddId = rddId;
           this.channels  = channels;
           for (Channel<T> channel : channels) {
@@ -45,6 +46,7 @@ public class Sender<T> {
           this.taskContext = taskContext;
           this.env = env;
           this.senderId = nextSenderId.getAndIncrement();
+          this.senderQueueSize = senderQueueSize;
     }
 
     public void close() {
@@ -81,6 +83,6 @@ public class Sender<T> {
     }
 
     public SenderFuture<T> send(byte[] task, Partition partition, Class<RDD<T>> clazz, Partitioner partitioner) {
-        return new SenderFuture<>(senderId, rddId, task, partition, clazz,  this, channels, partitioner, env, taskContext);
+        return new SenderFuture<>(senderId, rddId, task, partition, clazz,  this, channels, senderQueueSize, partitioner, env, taskContext);
     }
 }

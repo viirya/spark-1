@@ -26,6 +26,8 @@ public class ReceiverFuture<T> {
     private final int rddId;
     private final int receiverId;
     private final AtomicInteger received;
+    // todo: add queue size limit
+    private final LinkedList<T> queue = new LinkedList<>();
 
     ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received) {
         this.receiverId = receiverId;
@@ -45,12 +47,20 @@ public class ReceiverFuture<T> {
                     throw new IllegalStateException("Error in channel", channel.getError().get());
                 }
 
+                if (!queue.isEmpty()) {
+                    T data = queue.removeFirst();
+                    return Optional.of(data);
+                }
+
                 boolean channelLocked = false;
                 try {
                     channel.lockChannel();
                     channelLocked = true;
                     if (!channel.isEmpty()) {
-                        T data = channel.getData();
+                        while (!channel.isEmpty()) {
+                            T data = channel.getData();
+                            queue.add(data);
+                        }
 
                         if (channel.isEmpty() && channel.isReceiverWakerEnabled()) {
                             int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();
@@ -73,6 +83,7 @@ public class ReceiverFuture<T> {
                             }
                         }
 
+                        T data = queue.removeFirst();
                         return Optional.of(data);
                     } else {
                         if (channel.isReceiverWakerEnabled()) {
