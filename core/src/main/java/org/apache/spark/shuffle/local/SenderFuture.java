@@ -84,6 +84,17 @@ public class SenderFuture<T> {
         return new SimpleWaker();
     }
 
+    int nextQueue() {
+        for (int i = 0; i < queues.length; i++) {
+            LinkedList<T> queue = queues[i];
+            if (!queue.isEmpty()) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     public Future<Optional<Throwable>> getFuture(ExecutorService executor) {
 
         return executor.submit(() -> {
@@ -96,18 +107,33 @@ public class SenderFuture<T> {
             RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task), Thread.currentThread().getContextClassLoader(), tag);
             Iterator<T> iterator = rdd.iterator(partition, taskContext);
 
+
             Channel<T> channel = null;
             try {
-                while (!Thread.currentThread().isInterrupted() && iterator.hasNext()) {
-                    T data = iterator.next();
-                    int key = partitioner.getPartition(data);
-                    channel = channels[key];
+                while (!Thread.currentThread().isInterrupted()) {
+                    boolean iterHasNext = iterator.hasNext();
 
-                    LinkedList<T> queue = queues[key];
+                    LinkedList<T> queue;
 
-                    if (queue.size() < senderQueueSize) {
+                    if (iterHasNext) {
+                        T data = iterator.next();
+                        int key = partitioner.getPartition(data);
+                        channel = channels[key];
+
+                        queue = queues[key];
                         queue.add(data);
-                        continue;
+
+                        if (queue.size() < senderQueueSize) {
+                            continue;
+                        }
+                    } else {
+                        int queueId = nextQueue();
+                        if (queueId == -1) {
+                            // No more data to send
+                            break;
+                        }
+                        queue = queues[queueId];
+                        channel = channels[queueId];
                     }
 
                     boolean channelLocked = false;

@@ -16,6 +16,7 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.LinkedList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Receiver<T> {
@@ -27,6 +28,9 @@ public class Receiver<T> {
 
     private static AtomicInteger nextReceiverId = new AtomicInteger(0);
 
+    // todo: add queue size limit
+    private final LinkedList<T> queue = new LinkedList<>();
+
     Receiver(Channel<T> channel, int rddId) {
         this.channel  = channel;
         this.rddId = rddId;
@@ -34,7 +38,7 @@ public class Receiver<T> {
     }
 
     public ReceiverFuture<T> recv() {
-        return new ReceiverFuture<>(receiverId, channel, rddId, received);
+        return new ReceiverFuture<>(receiverId, channel, rddId, received, queue);
     }
 
     public Channel<T> getChannel() {

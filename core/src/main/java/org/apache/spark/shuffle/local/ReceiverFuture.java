@@ -27,13 +27,14 @@ public class ReceiverFuture<T> {
     private final int receiverId;
     private final AtomicInteger received;
     // todo: add queue size limit
-    private final LinkedList<T> queue = new LinkedList<>();
+    private final LinkedList<T> queue;
 
-    ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received) {
+    ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received, LinkedList<T> queue) {
         this.receiverId = receiverId;
         this.channel = channel;
         this.rddId = rddId;
         this.received = received;
+        this.queue = queue;
     }
 
     Waker getWaker() {
