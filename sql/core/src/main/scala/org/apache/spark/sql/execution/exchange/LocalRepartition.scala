@@ -28,11 +28,20 @@ case class LocalRepartition() extends Rule[SparkPlan] {
     }
 
     val maxInputPartitions = plan.conf.localRepartitionMaxInputPartitions
+    val maxLocalRepartitionNum = if (plan.conf.localRepartitionMaxNum > 0) {
+      plan.conf.localRepartitionMaxNum
+    } else {
+      Int.MaxValue
+    }
+
+    var numLocalRepartition = 0
 
     val newPlan = plan.transformUp {
       case shuffle @ ShuffleExchangeExec(upper, child, shuffleOrigin, _)
         if !upper.isInstanceOf[RangePartitioning] &&
+          numLocalRepartition < maxLocalRepartitionNum &&
           child.outputPartitioning.numPartitions <= maxInputPartitions =>
+        numLocalRepartition += 1
         LocalRepartitionExec(
           outputPartitioning = upper,
           child = child,
