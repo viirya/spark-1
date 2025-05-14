@@ -120,6 +120,11 @@ public class SenderFuture<T> {
                         int key = partitioner.getPartition(data);
                         channel = channels[key];
 
+                        // todo: better stop condition
+                        if (channel.isClosed()) {
+                            break;
+                        }
+
                         queue = queues[key];
                         queue.add(data);
 
