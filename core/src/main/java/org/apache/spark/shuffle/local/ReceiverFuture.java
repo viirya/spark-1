@@ -26,14 +26,15 @@ public class ReceiverFuture<T> {
     private final int rddId;
     private final int receiverId;
     private final AtomicInteger received;
-    // todo: add queue size limit
+    private final int maxQueueSize;
     private final LinkedList<T> queue;
 
-    ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received, LinkedList<T> queue) {
+    ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received, LinkedList<T> queue, int maxQueueSize) {
         this.receiverId = receiverId;
         this.channel = channel;
         this.rddId = rddId;
         this.received = received;
+        this.maxQueueSize = maxQueueSize;
         this.queue = queue;
     }
 
@@ -48,7 +49,11 @@ public class ReceiverFuture<T> {
                     throw new IllegalStateException("Error in channel", channel.getError().get());
                 }
 
-                if (!queue.isEmpty()) {
+                // Consume data from receiver queue if
+                // 1. The queue is not empty and the channel is empty, or
+                // 2. The queue is full.
+                int queueSize = queue.size();
+                if (queueSize >= maxQueueSize || (queueSize > 0 && channel.isEmpty())) {
                     T data = queue.removeFirst();
                     return Optional.of(data);
                 }

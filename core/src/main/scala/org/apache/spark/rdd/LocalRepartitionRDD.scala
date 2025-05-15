@@ -53,6 +53,7 @@ class LocalRepartitionRDD[T: ClassTag](
   val queueSize = conf.get(config.LOCAL_REPARTITION_BUFFER_SIZE)
 
   val senderQueueSize = conf.get(config.LOCAL_REPARTITION_SENDER_BUFFER_SIZE)
+  val receiverQueueSize = conf.get(config.LOCAL_REPARTITION_RECEIVER_BUFFER_SIZE)
 
   /**
    * :: DeveloperApi ::
@@ -60,7 +61,7 @@ class LocalRepartitionRDD[T: ClassTag](
    */
   override def compute(split: Partition, context: TaskContext): Iterator[T] = {
     LocalRepartition.initiate(this, split.asInstanceOf[LocalRepartitionPartition], context,
-      queueSize, senderQueueSize)
+      queueSize, senderQueueSize, receiverQueueSize)
 
     new Iterator[T] {
       private lazy val receiver = LocalRepartition.getReceiver(id, split.index)
@@ -131,7 +132,8 @@ object LocalRepartition {
       split: LocalRepartitionPartition,
       context: TaskContext,
       queueSize: Int,
-      senderQueueSize: Int): Unit =
+      senderQueueSize: Int,
+      receiverQueueSize: Int): Unit =
     LocalRepartition.synchronized {
       channelMap.synchronized {
         // Initiate the channel map for the local repartition rdd if it doesn't exist.
@@ -157,7 +159,8 @@ object LocalRepartition {
           // Create a receiver for each output partition
           for (i <- 0 until rdd.part.numPartitions) {
             channelMap(rdd.id) +=
-              Some(channels(i).createReceiver(rdd.id).asInstanceOf[Receiver[Any]])
+              Some(channels(i).createReceiver(rdd.id, receiverQueueSize)
+                .asInstanceOf[Receiver[Any]])
           }
 
           // Launch one async task per *input* partition

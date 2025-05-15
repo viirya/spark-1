@@ -105,8 +105,8 @@ public class Channel<T> {
         return numSenders.get();
     }
 
-    public Receiver<T> createReceiver(int rddId) {
-        return new Receiver<>(this, rddId);
+    public Receiver<T> createReceiver(int rddId, int queueSize) {
+        return new Receiver<>(this, rddId, queueSize);
     }
 
     Waker getCurrentWake() {

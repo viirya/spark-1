@@ -28,17 +28,18 @@ public class Receiver<T> {
 
     private static AtomicInteger nextReceiverId = new AtomicInteger(0);
 
-    // todo: add queue size limit
+    private final int maxQueueSize;
     private final LinkedList<T> queue = new LinkedList<>();
 
-    Receiver(Channel<T> channel, int rddId) {
+    Receiver(Channel<T> channel, int rddId, int maxQueueSize) {
         this.channel  = channel;
         this.rddId = rddId;
         this.receiverId = nextReceiverId.getAndIncrement();
+        this.maxQueueSize = maxQueueSize;
     }
 
     public ReceiverFuture<T> recv() {
-        return new ReceiverFuture<>(receiverId, channel, rddId, received, queue);
+        return new ReceiverFuture<>(receiverId, channel, rddId, received, queue, maxQueueSize);
     }
 
     public Channel<T> getChannel() {
