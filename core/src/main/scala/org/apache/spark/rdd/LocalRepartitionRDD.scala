@@ -148,10 +148,8 @@ object LocalRepartition {
 
           // Create a sender for each input partition
           val senders = mutable.ArrayBuffer[Sender[Any]]()
-          val taskContextImpls = mutable.ArrayBuffer[TaskContext]()
           for (i <- 0 until split.inputPartitions.length) {
             val senderContext = createSenderTaskContext(context, i, split.inputPartitions.length)
-            taskContextImpls += senderContext
             senders += new Sender(rdd.rdd.id, channels, senderQueueSize, SparkEnv.get,
               senderContext).asInstanceOf[Sender[Any]]
           }
@@ -164,7 +162,7 @@ object LocalRepartition {
           }
 
           // Launch one async task per *input* partition
-          val tasks = launchInputTasks(senders.toSeq, rdd, split, rdd.part, taskContextImpls.toSeq)
+          val tasks = launchInputTasks(senders.toSeq, rdd, split, rdd.part)
 
           tasksMap.put(rdd.id, tasks)
         } else {
@@ -223,8 +221,7 @@ object LocalRepartition {
       senders: Seq[Sender[Any]],
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
-      part: Partitioner,
-      contexts: Seq[TaskContext]): Seq[Future[Optional[Throwable]]] = {
+      part: Partitioner): Seq[Future[Optional[Throwable]]] = {
     val clazz = implicitly[ClassTag[RDD[T]]].runtimeClass.asInstanceOf[Class[RDD[Any]]]
 
     val tasks = new mutable.ArrayBuffer[Future[Optional[Throwable]]]()
