@@ -189,7 +189,7 @@ class TaskResultGetterSuite extends SparkFunSuite with BeforeAndAfter with Local
     assert(result === 1.to(maxRpcMessageSize).toArray)
 
     // Make sure two tasks were run (one failed one, and a second retried one).
-    assert(scheduler.nextTaskId.get() === 2)
+    assert(TaskSchedulerImpl.nextTaskId.get() === 2)
   }
 
   /**

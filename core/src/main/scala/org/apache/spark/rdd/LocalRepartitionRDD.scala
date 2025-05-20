@@ -142,8 +142,7 @@ object LocalRepartition {
             new mutable.ArrayBuffer[Option[Receiver[Any]]]
 
           // Create a channel for each output partition
-          val channels = Channel.createChannels[T](rdd.part.numPartitions, queueSize,
-              split.inputPartitions.length)
+          val channels = Channel.createChannels[T](rdd.part.numPartitions, queueSize)
             .asScala.toArray
 
           // Create a sender for each input partition

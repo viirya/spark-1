@@ -50,7 +50,7 @@ public class Channel<T> {
 
     private Optional<Throwable> error = Optional.empty();
 
-    public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize, int numSenders) {
+    public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize) {
         List<Channel<T>> channels = new LinkedList<>();
         ChannelGate channelGate = new ChannelGate(numChannels);
 
@@ -153,12 +153,21 @@ public class Channel<T> {
         return queue.poll();
     }
 
+    // Only for testing
+    public LinkedList<T> getAllData() {
+        return queue;
+    }
+
     boolean isEmpty() {
         return queue.isEmpty();
     }
 
+    public int getQueueSize() {
+        return queue.size();
+    }
+
     boolean isReachedMaxQueueSize() {
-        return queue.size() > queueSize;
+        return queue.size() >= queueSize;
     }
 
     public ChannelGate getChannelGate() {
