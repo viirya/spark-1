@@ -21,6 +21,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * A class that represents an operation for receiving data from a channel.
+ *
+ * @param <T> The type of the data to be received.
+ */
 public class ReceiverFuture<T> {
     private final Channel<T> channel;
     private final int rddId;

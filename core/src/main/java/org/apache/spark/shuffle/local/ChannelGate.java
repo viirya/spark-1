@@ -23,6 +23,12 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * A class that manages the channels and their states.
+ * It keeps track of the number of empty channels and manages the wakers for senders.
+ *
+ * The class is thread-safe and uses locks to protect shared resources.
+ */
 public class ChannelGate {
     private AtomicInteger emptyChannelCounter;
     // Null after waking all senders, initiated when all channels become full
@@ -30,11 +36,17 @@ public class ChannelGate {
     private LinkedList<Map.Entry<Waker, Integer>> senderWakers;
     private final ReentrantLock lock = new ReentrantLock();
 
-    ChannelGate(int numChannel, int numSenders) {
+    ChannelGate(int numChannel) {
         this.senderWakers = null;
         this.emptyChannelCounter = new AtomicInteger(numChannel);
     }
 
+
+    /**
+     * Wakes up all senders that are waiting for the specified channel.
+     *
+     * @param channelId the ID of the channel to wake up senders for.
+     */
     void wakeSenders(int channelId) {
         LinkedList<Map.Entry<Waker, Integer>> wakers = new LinkedList<>();
         try {
@@ -56,6 +68,11 @@ public class ChannelGate {
         }
     }
 
+    /**
+     * Adds all waiting sender wakers to the provided list. Cleans up stored wakers.
+     *
+     * @param wakers a list to store the wakers for the senders.
+     */
     void getSenderWakers(LinkedList<Map.Entry<Waker, Integer>> wakers) {
         if (senderWakers != null) {
             wakers.addAll(senderWakers);
@@ -63,18 +80,21 @@ public class ChannelGate {
         }
     }
 
-    int getNumSenderWakers() {
-        if (senderWakers != null) {
-            return senderWakers.size();
-        } else {
-            return 0;
-        }
-    }
-
+    /**
+     * Increments the number of empty channels.
+     *
+     * @return the new number of empty channels.
+     */
     int incrementEmptyChannelNumber() {
         return emptyChannelCounter.getAndAdd(1);
     }
 
+    /**
+     * Decrements the number of empty channels.
+     * If the number of empty channels reaches zero and there are no sender wakers,
+     * a new list for sender wakers is created. I.e., if all channels are full,
+     * the senders will be possibly added to the waker list.
+     */
     void decrementEmptyChannelNumber() {
         int oldCount = emptyChannelCounter.getAndAdd(-1);
         if (oldCount == 1) {
@@ -89,6 +109,11 @@ public class ChannelGate {
         }
     }
 
+    /**
+     * Returns the number of empty channels.
+     *
+     * @return the number of empty channels.
+     */
     int getEmptyChannelNumber() {
         return emptyChannelCounter.get();
     }
@@ -101,6 +126,13 @@ public class ChannelGate {
         lock.unlock();
     }
 
+    /**
+     * Adds a sender waker to the list of sender wakers.
+     *
+     * @param waker the waker to add.
+     * @param channelId the ID of the channel associated with the waker.
+     * @return true if the waker was added, false otherwise.
+     */
     boolean addSenderWaker(Waker waker, int channelId) {
         if (senderWakers != null) {
             senderWakers.add(new AbstractMap.SimpleEntry<>(waker, channelId));

@@ -37,6 +37,19 @@ import org.apache.spark.memory.MemoryManager;
 import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.serializer.SerializerInstance;
 
+/**
+ * A class that represents a future for a sender operation.
+ * It handles the sending of data to channels and manages the
+ * task context and memory management.
+ *
+ * The future after initialization pulls data by executing specified partition of the given RDD
+ * and sends it to the specified channels after partitioning it
+ *
+ * The future completes once all data are pulled from the RDD partition or channels are closed by
+ * finished receivers.
+ *
+ * @param <T> The type of data being sent.
+ */
 public class SenderFuture<T> {
     private final Sender<T> sender;
     private final Channel<T>[] channels;
@@ -151,6 +164,9 @@ public class SenderFuture<T> {
                             break;
                         }
 
+                        // Checks if this sender should be added into waiting list:
+                        // 1. All channels are full.
+                        // 2. The current channel reached the maximum queue size.
                         if (channel.getChannelGate().getEmptyChannelNumber() == 0 && channel.isReachedMaxQueueSize()) {
                             boolean toWait;
                             try {
@@ -161,6 +177,7 @@ public class SenderFuture<T> {
                             }
 
                             if (toWait) {
+                                // If the sender is added to the waiting list, let it await.
                                 channel.unlockChannel();
                                 channelLocked = false;
                                 currentWaker.await();
@@ -181,7 +198,9 @@ public class SenderFuture<T> {
                         queue.clear();
 
                         if (wasEmpty) {
+                            // If the channel was empty before, decrement the empty channel number.
                             channel.getChannelGate().decrementEmptyChannelNumber();
+                            // If the channel was empty before, wake up the receiver if there is one waiting.
                             Waker waker = channel.getCurrentWake();
                             channel.unlockChannel();
                             channelLocked = false;

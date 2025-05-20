@@ -26,6 +26,12 @@ import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.rdd.RDD;
 
+/**
+ * The sender is responsible for creating the SenderFuture and sending the data to the receiver.
+ * Data is sent to one of the channels depending on partitioning with the partitioner on data.
+ *
+ * @param <T> The type of the data to be sent.
+ */
 public class Sender<T> {
     private final Channel<T>[] channels;
     private boolean closed = false;
@@ -60,7 +66,7 @@ public class Sender<T> {
                         if (!channel.isClosed() && channel.isEmpty()) {
                             channel.getChannelGate().decrementEmptyChannelNumber();
                         }
-                        receiverWaker = channel.getReceiverWaker();
+                        receiverWaker = channel.getCurrentWake();
 
                         // The channel cannot add a new receiver waker
                         channel.disableReceiverWaker();

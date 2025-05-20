@@ -23,24 +23,36 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * A channel is a FIFO queue that holds data for a single RDD partition.
+ * It is used to transfer data between the senders and receivers.
+ *
+ * In local repartition, a channel is created for each RDD partition for each receiver.
+ *
+ * @param <T> The type of data that this channel will hold.
+ */
 public class Channel<T> {
     private final int id;
     private AtomicBoolean closed = new AtomicBoolean(false);;
     private final LinkedList<T> queue;
+    // A flag to indicate whether a receiver waker can be added.
+    // Once a channel has no more senders, the last sender will turn this flag to false.
     private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
     private final ChannelGate channelGate ;
     private final AtomicInteger numSenders = new AtomicInteger(0);
     private final int queueSize;
 
+    // A lock to protect the channel from concurrent access.
     private final ReentrantLock lock = new ReentrantLock();
 
+    // A waker to wake up the receiver when data is available.
     private Waker currentWaker;
 
     private Optional<Throwable> error = Optional.empty();
 
     public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize, int numSenders) {
         List<Channel<T>> channels = new LinkedList<>();
-        ChannelGate channelGate = new ChannelGate(numChannels, numSenders);
+        ChannelGate channelGate = new ChannelGate(numChannels);
 
         for (int i = 0; i < numChannels; i++) {
             channels.add(new Channel<>(i, channelGate, queueSize));
@@ -109,13 +121,23 @@ public class Channel<T> {
         return new Receiver<>(this, rddId, queueSize);
     }
 
+    /**
+     * Returns the current receiver waker and reset it to null.
+     * This is used to wake up the receiver when data is available.
+     *
+     * @return The current waker.
+     */
     Waker getCurrentWake() {
         Waker waker = currentWaker;
         currentWaker = null;
         return waker;
     }
 
-    public void wakeReceivers() {
+    /**
+     * Wake up the receiver if it is waiting for data.
+     * This is used to notify the receiver that data is available.
+     */
+    void wakeReceivers() {
         if (currentWaker == null) {
             return;
         }
@@ -147,19 +169,27 @@ public class Channel<T> {
         queue.clear();
     }
 
+    /**
+     * Disable the receiver waker. This is used to prevent the receiver from being into
+     * waiting status when there are no more senders.
+     */
     void disableReceiverWaker() {
         canAddReceiverWaker.set(false);
         currentWaker = null;
     }
 
+    /**
+     * Returns if it is possible to add a receiver waker into the channel.
+     */
     boolean isReceiverWakerEnabled() {
         return canAddReceiverWaker.get();
     }
 
-    Waker getReceiverWaker() {
-        return currentWaker;
-    }
-
+    /**
+     * Sets the current waker to the given waker.
+     *
+     * @param currentWaker The waker to set as the current waker.
+     */
     void setCurrentWaker(Waker currentWaker) {
         this.currentWaker = currentWaker;
     }

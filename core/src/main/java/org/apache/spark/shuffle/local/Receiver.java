@@ -19,6 +19,12 @@ package org.apache.spark.shuffle.local;
 import java.util.LinkedList;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * The receiver is responsible for receiving data from the given channel.
+ * It is also responsible for closing the channel when it is no longer needed.
+ *
+ * @param <T> The type of the data to be received.
+ */
 public class Receiver<T> {
     private final Channel<T> channel;
     private boolean closed = false;
@@ -53,6 +59,7 @@ public class Receiver<T> {
         try {
             channel.lockChannel();
             if (!channel.isClosed()) {
+                // Close the channel and decrement the empty channel number if needed.
                 channel.setClosed();
 
                 if (channel.isEmpty() && channel.getNumSenders() > 0) {
