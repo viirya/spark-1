@@ -18,6 +18,7 @@ package org.apache.spark.shuffle.local;
 
 import java.util.LinkedList;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.nio.ByteBuffer;
@@ -71,7 +72,9 @@ public class SenderFuture<T> {
     private int senderQueueSize;
     private LinkedList<T>[] queues;
 
-    SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz, Sender<T> sender, Channel<T>[] channels, int senderQueueSize, Partitioner partitioner, SparkEnv env, TaskContext taskContext) {
+    private Callable<Void> callback;
+
+    SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz, Sender<T> sender, Channel<T>[] channels, int senderQueueSize, Partitioner partitioner, SparkEnv env, TaskContext taskContext, Callable<Void> callback) {
         this.senderId = senderId;
         this.rddId = rddId;
         this.sender = sender;
@@ -91,6 +94,8 @@ public class SenderFuture<T> {
         for (int i = 0; i < channels.length; i++) {
             this.queues[i] = new LinkedList<>();
         }
+
+        this.callback = callback;
     }
 
     Waker getWaker() {
@@ -240,6 +245,16 @@ public class SenderFuture<T> {
                     env.blockManager().releaseAllLocksForTask(taskContext.taskAttemptId());
                     taskContext.taskMemoryManager().cleanUpAllAllocatedMemory();
                     TaskContext$.MODULE$.unset();
+
+                    // Call the callback if it is not null
+                    if (callback != null) {
+                        try {
+                            callback.call();
+                        } catch (Exception e) {
+                            // Handle the exception from the callback
+                            throw new RuntimeException("Error in callback", e);
+                        }
+                    }
                 }
             }
         });

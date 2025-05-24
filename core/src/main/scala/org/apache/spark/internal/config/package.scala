@@ -855,6 +855,15 @@ package object config {
       .intConf
       .createWithDefault(1000)
 
+  private[spark] val LOCAL_REPARTITION_SENDER_MAXNUM =
+    ConfigBuilder("spark.localRepartition.sender.maxNum")
+      .doc("The maximum number of senders per operator when performing a local repartition. " +
+        "This is only used when the local repartition is performed in a single task. Note that " +
+        "this config value largely affects the performance of the local repartition")
+      .version("4.1.0")
+      .intConf
+      .createWithDefault(Int.MaxValue)
+
   private[spark] val KEYTAB = ConfigBuilder("spark.kerberos.keytab")
     .doc("Location of user's keytab.")
     .version("3.0.0")

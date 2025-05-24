@@ -16,9 +16,10 @@
  */
 package org.apache.spark.rdd
 
+import java.io._
 import java.util.Optional
 import java.util.Properties
-import java.util.concurrent.{Executors, Future}
+import java.util.concurrent.{Callable, Executors, ExecutorService, Future}
 
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.ListHasAsScala
@@ -31,6 +32,7 @@ import org.apache.spark.internal.config
 import org.apache.spark.memory.TaskMemoryManager
 import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.shuffle.local._
+import org.apache.spark.util.Utils
 
 class LocalRepartitionPartition(
     rddId: Int, val index: Int, val inputPartitions: Array[Partition]) extends Partition {
@@ -54,6 +56,7 @@ class LocalRepartitionRDD[T: ClassTag](
 
   val senderQueueSize = conf.get(config.LOCAL_REPARTITION_SENDER_BUFFER_SIZE)
   val receiverQueueSize = conf.get(config.LOCAL_REPARTITION_RECEIVER_BUFFER_SIZE)
+  val maxSenderNum = conf.get(config.LOCAL_REPARTITION_SENDER_MAXNUM)
 
   /**
    * :: DeveloperApi ::
@@ -61,7 +64,7 @@ class LocalRepartitionRDD[T: ClassTag](
    */
   override def compute(split: Partition, context: TaskContext): Iterator[T] = {
     LocalRepartition.initiate(this, split.asInstanceOf[LocalRepartitionPartition], context,
-      queueSize, senderQueueSize, receiverQueueSize)
+      queueSize, senderQueueSize, receiverQueueSize, maxSenderNum)
 
     new Iterator[T] {
       private lazy val receiver = LocalRepartition.getReceiver(id, split.index)
@@ -104,15 +107,28 @@ class LocalRepartitionRDD[T: ClassTag](
 
     result
   }
+
+  @transient private var receiver: Option[Receiver[Any]] = None
+
+  @throws(classOf[IOException])
+  private def writeObject(out: ObjectOutputStream): Unit = Utils.tryOrIOException {
+    out.defaultWriteObject()
+  }
+
+  @throws(classOf[IOException])
+  private def readObject(in: ObjectInputStream): Unit = Utils.tryOrIOException {
+    in.defaultReadObject()
+  }
 }
 
 object LocalRepartition {
   /**
    * A thread pool for sending data to the LocalRepartitionRDD.
    */
-  val nonVirtualfactory = Thread.ofPlatform().name("local-repartition-sender-thread-", 0).factory
-  val factory = Thread.ofVirtual.name("local-repartition-sender-virtual-thread-", 0).factory
-  val virtualThreadexecutor = Executors.newThreadPerTaskExecutor(factory)
+  final val nonVirtualfactory =
+    Thread.ofPlatform().name("local-repartition-sender-thread-", 0).factory
+  final val factory = Thread.ofVirtual.name("local-repartition-sender-virtual-thread-", 0).factory
+  final val virtualThreadexecutor = Executors.newThreadPerTaskExecutor(factory)
 
   /**
    * A map to store the channels for each LocalRepartitionRDD.
@@ -120,7 +136,8 @@ object LocalRepartition {
    */
   private val channelMap = new mutable.HashMap[Int, mutable.ArrayBuffer[Option[Receiver[Any]]]]()
 
-  private val tasksMap = new mutable.HashMap[Int, Seq[Future[Optional[Throwable]]]]()
+  private val tasksMap =
+    new mutable.HashMap[Int, mutable.ArrayBuffer[Future[Optional[Throwable]]]]()
 
   /**
    * Initialize the channel map for the given LocalRepartitionRDD.
@@ -133,7 +150,8 @@ object LocalRepartition {
       context: TaskContext,
       queueSize: Int,
       senderQueueSize: Int,
-      receiverQueueSize: Int): Unit =
+      receiverQueueSize: Int,
+      maxSenderNum: Int): Unit =
     LocalRepartition.synchronized {
       channelMap.synchronized {
         // Initiate the channel map for the local repartition rdd if it doesn't exist.
@@ -161,9 +179,7 @@ object LocalRepartition {
           }
 
           // Launch one async task per *input* partition
-          val tasks = launchInputTasks(senders.toSeq, rdd, split, rdd.part)
-
-          tasksMap.put(rdd.id, tasks)
+          launchInputTasks(senders.toSeq, rdd, split, rdd.part, maxSenderNum)
         } else {
           // no-op
         }
@@ -186,7 +202,7 @@ object LocalRepartition {
           val tasks = tasksMap.get(rdd.id)
           if (tasks.isDefined) {
             tasks.get.foreach { task =>
-              if (task.isDone) {
+              if (task != null && task.isDone) {
                 val err = task.get()
                 if (err.isPresent) {
                   throw err.get
@@ -220,16 +236,27 @@ object LocalRepartition {
       senders: Seq[Sender[Any]],
       rdd: LocalRepartitionRDD[T],
       split: LocalRepartitionPartition,
-      part: Partitioner): Seq[Future[Optional[Throwable]]] = {
+      part: Partitioner,
+      maxSenderNum: Int): Unit = {
     val clazz = implicitly[ClassTag[RDD[T]]].runtimeClass.asInstanceOf[Class[RDD[Any]]]
 
     val tasks = new mutable.ArrayBuffer[Future[Optional[Throwable]]]()
     for (i <- 0 until split.inputPartitions.length) {
-      tasks += senders(i).send(rdd.serializedRDD, split.inputPartitions(i), clazz, part)
-        .getFuture(virtualThreadexecutor)
+      tasks += null
     }
+    tasksMap.put(rdd.id, tasks)
 
-    tasks.toSeq
+    val callBack = new SenderCallBack(senders, maxSenderNum,
+      rdd.serializedRDD, split.inputPartitions, clazz, part, virtualThreadexecutor, tasks)
+
+    for (i <- 0 until split.inputPartitions.length) {
+      if (i < maxSenderNum) {
+        val task = senders(i)
+          .send(rdd.serializedRDD, split.inputPartitions(i), clazz, part, callBack)
+          .getFuture(virtualThreadexecutor)
+        tasks(i) = task
+      }
+    }
   }
 
   /**
@@ -256,3 +283,34 @@ object LocalRepartition {
       context.resources())
   }
 }
+
+class SenderCallBack(
+    val senders: Seq[Sender[Any]],
+    val startSenderIdx: Int,
+    val serializedRDD: Array[Byte],
+    val inputPartitions: Array[Partition],
+    val clazz: Class[RDD[Any]],
+    val part: Partitioner,
+    val threadExecutor: ExecutorService,
+    val tasks: mutable.ArrayBuffer[Future[Optional[Throwable]]]) extends Callable[Void] {
+
+  val senderIdx = new java.util.concurrent.atomic.AtomicInteger(startSenderIdx)
+
+  override def call(): Void = {
+    val idx = senderIdx.getAndIncrement()
+
+    if (idx > 0 && idx < senders.length) {
+      val future = senders(idx)
+        .send(serializedRDD, inputPartitions(idx), clazz, part, this)
+        .getFuture(threadExecutor)
+      tasks(idx) = future
+    }
+
+    null
+  }
+}
+
+
+
+
+

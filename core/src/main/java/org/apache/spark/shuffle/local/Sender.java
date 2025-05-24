@@ -16,6 +16,7 @@
  */
 package org.apache.spark.shuffle.local;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import scala.collection.Iterator;
@@ -88,7 +89,7 @@ public class Sender<T> {
         return closed;
     }
 
-    public SenderFuture<T> send(byte[] task, Partition partition, Class<RDD<T>> clazz, Partitioner partitioner) {
-        return new SenderFuture<>(senderId, rddId, task, partition, clazz,  this, channels, senderQueueSize, partitioner, env, taskContext);
+    public SenderFuture<T> send(byte[] task, Partition partition, Class<RDD<T>> clazz, Partitioner partitioner, Callable<Void> callback) {
+        return new SenderFuture<>(senderId, rddId, task, partition, clazz,  this, channels, senderQueueSize, partitioner, env, taskContext, callback);
     }
 }
