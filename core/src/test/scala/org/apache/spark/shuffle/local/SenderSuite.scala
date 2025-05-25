@@ -50,7 +50,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val serializedRDD = getSerializedRDD(rdd)
       val partitioner = new HashPartitioner(1)
 
-      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner)
+      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner, null)
       val result = sendFuture.getFuture(threadExecutor).get()
 
       assert(result.isEmpty)
@@ -75,7 +75,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val serializedRDD = getSerializedRDD(rdd)
       val partitioner = new HashPartitioner(1)
 
-      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner)
+      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner, null)
       val exception = intercept[ExecutionException] {
         sendFuture.getFuture(threadExecutor).get()
       }
@@ -110,7 +110,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
         }
       }
 
-      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner)
+      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner, null)
       val result = sendFuture.getFuture(threadExecutor).get()
       assert(result.isEmpty)
 
@@ -155,7 +155,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val serializedRDD = getSerializedRDD(rdd)
       val partitioner = new HashPartitioner(1)
 
-      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner)
+      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner, null)
       val future = sendFuture.getFuture(threadExecutor)
       assert(!future.isDone)
 
@@ -219,11 +219,11 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
         }
       }
 
-      val sendFuture1 = sender1.send(serializedRDD, partitions(0), clazz, partitioner)
+      val sendFuture1 = sender1.send(serializedRDD, partitions(0), clazz, partitioner, null)
       val result1 = sendFuture1.getFuture(threadExecutor).get()
       assert(result1.isEmpty)
 
-      val sendFuture2 = sender2.send(serializedRDD, partitions(1), clazz, partitioner)
+      val sendFuture2 = sender2.send(serializedRDD, partitions(1), clazz, partitioner, null)
       val result2 = sendFuture2.getFuture(threadExecutor).get()
       assert(result2.isEmpty)
 

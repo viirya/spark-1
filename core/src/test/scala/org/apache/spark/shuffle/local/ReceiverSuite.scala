@@ -71,7 +71,7 @@ class ReceiverSuite extends SparkFunSuite with LocalSparkContext with LocalRepar
       val serializedRDD = getSerializedRDD(rdd)
       val partitioner = new HashPartitioner(1)
 
-      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner)
+      val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner, null)
       val result = sendFuture.getFuture(threadExecutor).get()
 
       assert(result.isEmpty)
@@ -135,11 +135,11 @@ class ReceiverSuite extends SparkFunSuite with LocalSparkContext with LocalRepar
         }
       }
 
-      val sendFuture1 = sender1.send(serializedRDD, partitions(0), clazz, partitioner)
+      val sendFuture1 = sender1.send(serializedRDD, partitions(0), clazz, partitioner, null)
       val result1 = sendFuture1.getFuture(threadExecutor).get()
       assert(result1.isEmpty)
 
-      val sendFuture2 = sender2.send(serializedRDD, partitions(1), clazz, partitioner)
+      val sendFuture2 = sender2.send(serializedRDD, partitions(1), clazz, partitioner, null)
       val result2 = sendFuture2.getFuture(threadExecutor).get()
       assert(result2.isEmpty)
 
