@@ -68,12 +68,16 @@ class LocalRepartitionRDD[T: ClassTag](
 
     new Iterator[T] {
       private lazy val receiver = LocalRepartition.getReceiver(id, split.index)
-      private var recvFuture = receiver.recv()
-      private var item: Optional[T] = Optional.empty()
+      private val recvFuture = receiver.recv()
+      private var item: Optional[T] = null
 
       override def hasNext: Boolean = {
         if (!receiver.isClosed) {
-          item = recvFuture.get().asInstanceOf[Optional[T]]
+          if (item == null) {
+            // Initialize item on first call to hasNext
+            item = recvFuture.get().asInstanceOf[Optional[T]]
+          }
+
           val hasData = item.isPresent
           if (!hasData) {
             receiver.close()
@@ -85,8 +89,13 @@ class LocalRepartitionRDD[T: ClassTag](
       }
 
       override def next(): T = {
-        recvFuture = receiver.recv()
-        this.item.get()
+        if (item == null) {
+          hasNext
+        }
+
+        val data = item.get()
+        item = null
+        data
       }
     }
   }
