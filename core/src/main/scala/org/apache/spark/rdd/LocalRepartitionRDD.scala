@@ -312,7 +312,9 @@ class SenderCallBack(
       val future = senders(idx)
         .send(serializedRDD, inputPartitions(idx), clazz, part, this)
         .getFuture(threadExecutor)
-      tasks(idx) = future
+      if (tasks != null && idx < tasks.length) {
+        tasks(idx) = future
+      }
     }
 
     null
