@@ -272,7 +272,7 @@ object LocalRepartition {
    * Create a new TaskContext for the sender task.
    */
   def createSenderTaskContext(context: TaskContext, splitId: Int, numSplits: Int): TaskContext = {
-    val taskAttemptId = TaskSchedulerImpl.nextTaskId.getAndIncrement()
+    val taskAttemptId = TaskSchedulerImpl.newTaskId()
     val blockManager = SparkEnv.get.blockManager
     blockManager.registerTask(taskAttemptId)
 
