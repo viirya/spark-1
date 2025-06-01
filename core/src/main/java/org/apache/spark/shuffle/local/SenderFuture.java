@@ -39,224 +39,226 @@ import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.serializer.SerializerInstance;
 
 /**
- * A class that represents a future for a sender operation.
- * It handles the sending of data to channels and manages the
- * task context and memory management.
- *
- * The future after initialization pulls data by executing specified partition of the given RDD
- * and sends it to the specified channels after partitioning it
- *
+ * A class that represents a future for a sender operation. It handles the sending of data to
+ * channels and manages the task context and memory management.
+ * <p>
+ * The future after initialization pulls data by executing specified partition of the given RDD and
+ * sends it to the specified channels after partitioning it
+ * <p>
  * The future completes once all data are pulled from the RDD partition or channels are closed by
  * finished receivers.
  *
  * @param <T> The type of data being sent.
  */
 public class SenderFuture<T> {
-    private final Sender<T> sender;
-    private final Channel<T>[] channels;
-    private final Partitioner partitioner;
-    private final TaskContext taskContext;
-    private final SparkEnv env;
+  private final Sender<T> sender;
+  private final Channel<T>[] channels;
+  private final Partitioner partitioner;
+  private final TaskContext taskContext;
+  private final SparkEnv env;
 
-    private final int senderId;
-    private final int rddId;
+  private final int senderId;
+  private final int rddId;
 
-    private int sentDataCount = 0;
+  private Waker currentWaker;
 
-    private Waker currentWaker;
+  private byte[] task;
+  private Partition partition;
+  private Class<RDD<T>> clazz;
 
-    private byte[] task;
-    private Partition partition;
-    private Class<RDD<T>> clazz;
+  private int senderQueueSize;
+  private LinkedList<T>[] queues;
 
-    private int senderQueueSize;
-    private LinkedList<T>[] queues;
+  private Callable<Void> callback;
 
-    private Callable<Void> callback;
+  SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz,
+               Sender<T> sender, Channel<T>[] channels, int senderQueueSize,
+               Partitioner partitioner, SparkEnv env, TaskContext taskContext, Callable<Void> callback) {
+    this.senderId = senderId;
+    this.rddId = rddId;
+    this.sender = sender;
+    this.channels = channels;
+    this.partitioner = partitioner;
+    this.taskContext = taskContext;
+    this.env = env;
+    this.task = task;
+    this.partition = partition;
+    this.clazz = clazz;
+    this.currentWaker = getWaker();
 
-    SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz, Sender<T> sender, Channel<T>[] channels, int senderQueueSize, Partitioner partitioner, SparkEnv env, TaskContext taskContext, Callable<Void> callback) {
-        this.senderId = senderId;
-        this.rddId = rddId;
-        this.sender = sender;
-        this.channels = channels;
-        this.partitioner = partitioner;
-        this.taskContext = taskContext;
-        this.env = env;
-        this.task = task;
-        this.partition = partition;
-        this.clazz = clazz;
-        this.currentWaker = getWaker();
+    this.senderQueueSize = senderQueueSize;
 
-        this.senderQueueSize = senderQueueSize;
-
-        // Initialize the queues for each channel
-        this.queues = new LinkedList[channels.length];
-        for (int i = 0; i < channels.length; i++) {
-            this.queues[i] = new LinkedList<>();
-        }
-
-        this.callback = callback;
+    // Initialize the queues for each channel
+    this.queues = new LinkedList[channels.length];
+    for (int i = 0; i < channels.length; i++) {
+      this.queues[i] = new LinkedList<>();
     }
 
-    Waker getWaker() {
-        return new SimpleWaker();
+    this.callback = callback;
+  }
+
+  Waker getWaker() {
+    return new SimpleWaker();
+  }
+
+  int nextQueue() {
+    for (int i = 0; i < queues.length; i++) {
+      LinkedList<T> queue = queues[i];
+      if (!queue.isEmpty()) {
+        return i;
+      }
     }
 
-    int nextQueue() {
-        for (int i = 0; i < queues.length; i++) {
-            LinkedList<T> queue = queues[i];
-            if (!queue.isEmpty()) {
-                return i;
+    return -1;
+  }
+
+  public Future<Optional<Throwable>> getFuture(ExecutorService executor) {
+
+    return executor.submit(() -> {
+      // Set the task context for the current thread
+      TaskContext$.MODULE$.setTaskContext(taskContext);
+
+      // Deserialize the task binary
+      SerializerInstance ser = env.closureSerializer().newInstance();
+      ClassTag<RDD<T>> tag = ClassTag$.MODULE$.apply(clazz);
+      RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task),
+                Thread.currentThread().getContextClassLoader(), tag);
+      Iterator<T> iterator = rdd.iterator(partition, taskContext);
+
+
+      Channel<T> channel = null;
+      try {
+        while (!Thread.currentThread().isInterrupted()) {
+          boolean iterHasNext = iterator.hasNext();
+
+          LinkedList<T> queue;
+
+          if (iterHasNext) {
+            T data = iterator.next();
+            int key = partitioner.getPartition(data);
+            channel = channels[key];
+
+            // todo: better stop condition
+            if (channel.isClosed()) {
+              break;
             }
+
+            queue = queues[key];
+            queue.add(data);
+
+            if (queue.size() < senderQueueSize) {
+              continue;
+            }
+          } else {
+            int queueId = nextQueue();
+            if (queueId == -1) {
+              // No more data to send
+              break;
+            }
+            queue = queues[queueId];
+            channel = channels[queueId];
+          }
+
+          boolean channelLocked = false;
+          try {
+            channel.lockChannel();
+            channelLocked = true;
+
+            // todo: better stop condition
+            if (channel.isClosed()) {
+              break;
+            }
+
+            // Checks if this sender should be added into waiting list:
+            // 1. All channels are full.
+            // 2. The current channel reached the maximum queue size.
+            if (channel.getChannelGate().getEmptyChannelNumber() == 0 &&
+                    channel.isReachedMaxQueueSize()) {
+              boolean toWait;
+              try {
+                channel.getChannelGate().lockGate();
+                toWait = channel.getChannelGate().addSenderWaker(currentWaker, channel.getId());
+              } finally {
+                channel.getChannelGate().unlockGate();
+              }
+
+              if (toWait) {
+                // If the sender is added to the waiting list, let it await.
+                channel.unlockChannel();
+                channelLocked = false;
+                currentWaker.await();
+                // Update the current waker after being woken up
+                currentWaker = getWaker();
+
+                channel.lockChannel();
+                channelLocked = true;
+              }
+            }
+
+            boolean wasEmpty = channel.isEmpty();
+
+            for (T item : queue) {
+              channel.addData(item);
+            }
+            queue.clear();
+
+            if (wasEmpty) {
+              // If the channel was empty before, decrement the empty channel number.
+              channel.getChannelGate().decrementEmptyChannelNumber();
+              // If the channel was empty before, wake up the receiver if there is one waiting.
+              Waker waker = channel.getCurrentWake();
+              channel.unlockChannel();
+              channelLocked = false;
+
+              if (waker != null) {
+                waker.wake();
+              }
+            }
+          } finally {
+            if (channelLocked) {
+              channel.unlockChannel();
+            }
+          }
         }
 
-        return -1;
-    }
+        sender.close();
 
-    public Future<Optional<Throwable>> getFuture(ExecutorService executor) {
+        return Optional.empty();
+      } catch (Throwable e) {
+        if (channel != null) {
+          channel.setError(e);
+        }
+        sender.close();
+        return Optional.of(e);
+      } finally {
+        taskContext.markTaskCompleted(Option.empty());
 
-        return executor.submit(() -> {
-            // Set the task context for the current thread
-            TaskContext$.MODULE$.setTaskContext(taskContext);
+        // See `Task.scala` and `Executor.scala` for the details of the task lifecycle.
+        try {
+          env.blockManager().memoryStore().releaseUnrollMemoryForThisTask(MemoryMode.ON_HEAP,
+                  Long.MAX_VALUE);
+          env.blockManager().memoryStore().releaseUnrollMemoryForThisTask(MemoryMode.OFF_HEAP,
+                  Long.MAX_VALUE);
+          MemoryManager memoryManager = env.blockManager().memoryManager();
+          synchronized (memoryManager) {
+            env.blockManager().memoryManager().notifyAll();
+          }
+        } finally {
+          env.blockManager().releaseAllLocksForTask(taskContext.taskAttemptId());
+          taskContext.taskMemoryManager().cleanUpAllAllocatedMemory();
+          TaskContext$.MODULE$.unset();
 
-            // Deserialize the task binary
-            SerializerInstance ser = env.closureSerializer().newInstance();
-            ClassTag<RDD<T>> tag = ClassTag$.MODULE$.apply(clazz);
-            RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task), Thread.currentThread().getContextClassLoader(), tag);
-            Iterator<T> iterator = rdd.iterator(partition, taskContext);
-
-
-            Channel<T> channel = null;
+          // Call the callback if it is not null
+          if (callback != null) {
             try {
-                while (!Thread.currentThread().isInterrupted()) {
-                    boolean iterHasNext = iterator.hasNext();
-
-                    LinkedList<T> queue;
-
-                    if (iterHasNext) {
-                        T data = iterator.next();
-                        int key = partitioner.getPartition(data);
-                        channel = channels[key];
-
-                        // todo: better stop condition
-                        if (channel.isClosed()) {
-                            break;
-                        }
-
-                        queue = queues[key];
-                        queue.add(data);
-
-                        if (queue.size() < senderQueueSize) {
-                            continue;
-                        }
-                    } else {
-                        int queueId = nextQueue();
-                        if (queueId == -1) {
-                            // No more data to send
-                            break;
-                        }
-                        queue = queues[queueId];
-                        channel = channels[queueId];
-                    }
-
-                    boolean channelLocked = false;
-                    try {
-                        channel.lockChannel();
-                        channelLocked = true;
-
-                        // todo: better stop condition
-                        if (channel.isClosed()) {
-                            break;
-                        }
-
-                        // Checks if this sender should be added into waiting list:
-                        // 1. All channels are full.
-                        // 2. The current channel reached the maximum queue size.
-                        if (channel.getChannelGate().getEmptyChannelNumber() == 0 && channel.isReachedMaxQueueSize()) {
-                            boolean toWait;
-                            try {
-                                channel.getChannelGate().lockGate();
-                                toWait = channel.getChannelGate().addSenderWaker(currentWaker, channel.getId());
-                            } finally {
-                                channel.getChannelGate().unlockGate();
-                            }
-
-                            if (toWait) {
-                                // If the sender is added to the waiting list, let it await.
-                                channel.unlockChannel();
-                                channelLocked = false;
-                                currentWaker.await();
-                                // Update the current waker after being woken up
-                                currentWaker = getWaker();
-
-                                channel.lockChannel();
-                                channelLocked = true;
-                            }
-                        }
-
-                        boolean wasEmpty = channel.isEmpty();
-
-                        for (T item : queue) {
-                            channel.addData(item);
-                        }
-                        sentDataCount += queue.size();
-                        queue.clear();
-
-                        if (wasEmpty) {
-                            // If the channel was empty before, decrement the empty channel number.
-                            channel.getChannelGate().decrementEmptyChannelNumber();
-                            // If the channel was empty before, wake up the receiver if there is one waiting.
-                            Waker waker = channel.getCurrentWake();
-                            channel.unlockChannel();
-                            channelLocked = false;
-
-                            if (waker != null) {
-                                waker.wake();
-                            }
-                        }
-                    } finally {
-                        if (channelLocked) {
-                            channel.unlockChannel();
-                        }
-                    }
-                }
-
-                sender.close();
-
-                return Optional.empty();
-            } catch (Throwable e) {
-                if (channel != null) {
-                    channel.setError(e);
-                }
-                sender.close();
-                return Optional.of(e);
-            } finally {
-                taskContext.markTaskCompleted(Option.empty());
-
-                // See `Task.scala` and `Executor.scala` for the details of the task lifecycle.
-                try {
-                    env.blockManager().memoryStore().releaseUnrollMemoryForThisTask(MemoryMode.ON_HEAP, Long.MAX_VALUE);
-                    env.blockManager().memoryStore().releaseUnrollMemoryForThisTask(MemoryMode.OFF_HEAP, Long.MAX_VALUE);
-                    MemoryManager memoryManager = env.blockManager().memoryManager();
-                    synchronized (memoryManager) {
-                        env.blockManager().memoryManager().notifyAll();
-                    }
-                } finally {
-                    env.blockManager().releaseAllLocksForTask(taskContext.taskAttemptId());
-                    taskContext.taskMemoryManager().cleanUpAllAllocatedMemory();
-                    TaskContext$.MODULE$.unset();
-
-                    // Call the callback if it is not null
-                    if (callback != null) {
-                        try {
-                            callback.call();
-                        } catch (Exception e) {
-                            // Handle the exception from the callback
-                            throw new RuntimeException("Error in callback", e);
-                        }
-                    }
-                }
+              callback.call();
+            } catch (Exception e) {
+              // Handle the exception from the callback
+              throw new RuntimeException("Error in callback", e);
             }
-        });
-    }
+          }
+        }
+      }
+    });
+  }
 }

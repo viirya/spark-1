@@ -19,20 +19,19 @@ package org.apache.spark.shuffle.local;
 import java.util.concurrent.CountDownLatch;
 
 public class SimpleWaker implements Waker {
-    private final CountDownLatch latch;
+  private final CountDownLatch latch;
 
-    public SimpleWaker() {
-        this.latch = new CountDownLatch(1);
-    }
+  public SimpleWaker() {
+    this.latch = new CountDownLatch(1);
+  }
 
-    @Override
-    public void wake() {
-        latch.countDown();
-    }
+  @Override
+  public void wake() {
+    latch.countDown();
+  }
 
-    @Override
-    public void await() throws InterruptedException {
-        latch.await();
-    }
+  @Override
+  public void await() throws InterruptedException {
+    latch.await();
+  }
 }
-

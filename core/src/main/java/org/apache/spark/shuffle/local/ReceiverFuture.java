@@ -27,95 +27,96 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @param <T> The type of the data to be received.
  */
 public class ReceiverFuture<T> {
-    private final Channel<T> channel;
-    private final int rddId;
-    private final int receiverId;
-    private final AtomicInteger received;
-    private final int maxQueueSize;
-    private final LinkedList<T> queue;
+  private final Channel<T> channel;
+  private final int rddId;
+  private final int receiverId;
+  private final AtomicInteger received;
+  private final int maxQueueSize;
+  private final LinkedList<T> queue;
 
-    ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received, LinkedList<T> queue, int maxQueueSize) {
-        this.receiverId = receiverId;
-        this.channel = channel;
-        this.rddId = rddId;
-        this.received = received;
-        this.maxQueueSize = maxQueueSize;
-        this.queue = queue;
-    }
+  ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received,
+                 LinkedList<T> queue, int maxQueueSize) {
+    this.receiverId = receiverId;
+    this.channel = channel;
+    this.rddId = rddId;
+    this.received = received;
+    this.maxQueueSize = maxQueueSize;
+    this.queue = queue;
+  }
 
-    Waker getWaker() {
-        return new SimpleWaker();
-    }
+  Waker getWaker() {
+    return new SimpleWaker();
+  }
 
-    public Optional<T> get() {
-        try {
-            while (!Thread.currentThread().isInterrupted()) {
-                if (channel.isError()) {
-                    throw new IllegalStateException("Error in channel", channel.getError().get());
-                }
-
-                // Consume data from receiver queue if
-                // 1. The queue is not empty and the channel is empty, or
-                // 2. The queue is full.
-                int queueSize = queue.size();
-                if (queueSize >= maxQueueSize || (queueSize > 0 && channel.isEmpty())) {
-                    T data = queue.removeFirst();
-                    return Optional.of(data);
-                }
-
-                boolean channelLocked = false;
-                try {
-                    channel.lockChannel();
-                    channelLocked = true;
-                    if (!channel.isEmpty()) {
-                        while (!channel.isEmpty()) {
-                            T data = channel.getData();
-                            queue.add(data);
-                        }
-
-                        if (channel.isEmpty() && channel.isReceiverWakerEnabled()) {
-                            int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();
-                            if (oldCount == 0) {
-                                LinkedList<Map.Entry<Waker, Integer>> wakers = new LinkedList<>();
-                                try {
-                                    channel.getChannelGate().lockGate();
-                                    if (channel.getChannelGate().getEmptyChannelNumber() > 0) {
-                                        channel.getChannelGate().getSenderWakers(wakers);
-                                    }
-                                } finally {
-                                    channel.getChannelGate().unlockGate();
-                                    channel.unlockChannel();
-                                    channelLocked = false;
-                                }
-
-                                for (Map.Entry<Waker, Integer> waker : wakers) {
-                                    waker.getKey().wake();
-                                }
-                            }
-                        }
-
-                        T data = queue.removeFirst();
-                        return Optional.of(data);
-                    } else {
-                        if (channel.isReceiverWakerEnabled()) {
-                            Waker receiverWaker = getWaker();
-                            channel.setCurrentWaker(receiverWaker);
-                            channel.unlockChannel();
-                            channelLocked = false;
-                            receiverWaker.await();
-                        } else {
-                            return Optional.empty();
-                        }
-                    }
-                } finally {
-                    if (channelLocked) {
-                        channel.unlockChannel();
-                    }
-                }
-            }
-            return Optional.empty();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+  public Optional<T> get() {
+    try {
+      while (!Thread.currentThread().isInterrupted()) {
+        if (channel.isError()) {
+          throw new IllegalStateException("Error in channel", channel.getError().get());
         }
+
+        // Consume data from receiver queue if
+        // 1. The queue is not empty and the channel is empty, or
+        // 2. The queue is full.
+        int queueSize = queue.size();
+        if (queueSize >= maxQueueSize || (queueSize > 0 && channel.isEmpty())) {
+          T data = queue.removeFirst();
+          return Optional.of(data);
+        }
+
+        boolean channelLocked = false;
+        try {
+          channel.lockChannel();
+          channelLocked = true;
+          if (!channel.isEmpty()) {
+            while (!channel.isEmpty()) {
+              T data = channel.getData();
+              queue.add(data);
+            }
+
+            if (channel.isEmpty() && channel.isReceiverWakerEnabled()) {
+              int oldCount = channel.getChannelGate().incrementEmptyChannelNumber();
+              if (oldCount == 0) {
+                LinkedList<Map.Entry<Waker, Integer>> wakers = new LinkedList<>();
+                try {
+                  channel.getChannelGate().lockGate();
+                  if (channel.getChannelGate().getEmptyChannelNumber() > 0) {
+                    channel.getChannelGate().getSenderWakers(wakers);
+                  }
+                } finally {
+                  channel.getChannelGate().unlockGate();
+                  channel.unlockChannel();
+                  channelLocked = false;
+                }
+
+                for (Map.Entry<Waker, Integer> waker : wakers) {
+                  waker.getKey().wake();
+                }
+              }
+            }
+
+            T data = queue.removeFirst();
+            return Optional.of(data);
+          } else {
+            if (channel.isReceiverWakerEnabled()) {
+              Waker receiverWaker = getWaker();
+              channel.setCurrentWaker(receiverWaker);
+              channel.unlockChannel();
+              channelLocked = false;
+              receiverWaker.await();
+            } else {
+              return Optional.empty();
+            }
+          }
+        } finally {
+          if (channelLocked) {
+            channel.unlockChannel();
+          }
+        }
+      }
+      return Optional.empty();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
+  }
 }

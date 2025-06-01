@@ -20,61 +20,61 @@ import java.util.LinkedList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * The receiver is responsible for receiving data from the given channel.
- * It is also responsible for closing the channel when it is no longer needed.
+ * The receiver is responsible for receiving data from the given channel. It is also responsible for
+ * closing the channel when it is no longer needed.
  *
  * @param <T> The type of the data to be received.
  */
 public class Receiver<T> {
-    private final Channel<T> channel;
-    private boolean closed = false;
-    private final int rddId;
-    private int receiverId;
-    private final AtomicInteger received = new AtomicInteger(0);
+  private final Channel<T> channel;
+  private boolean closed = false;
+  private final int rddId;
+  private int receiverId;
+  private final AtomicInteger received = new AtomicInteger(0);
 
-    private static AtomicInteger nextReceiverId = new AtomicInteger(0);
+  private static AtomicInteger nextReceiverId = new AtomicInteger(0);
 
-    private final int maxQueueSize;
-    private final LinkedList<T> queue = new LinkedList<>();
+  private final int maxQueueSize;
+  private final LinkedList<T> queue = new LinkedList<>();
 
-    Receiver(Channel<T> channel, int rddId, int maxQueueSize) {
-        this.channel  = channel;
-        this.rddId = rddId;
-        this.receiverId = nextReceiverId.getAndIncrement();
-        this.maxQueueSize = maxQueueSize;
+  Receiver(Channel<T> channel, int rddId, int maxQueueSize) {
+    this.channel = channel;
+    this.rddId = rddId;
+    this.receiverId = nextReceiverId.getAndIncrement();
+    this.maxQueueSize = maxQueueSize;
+  }
+
+  public ReceiverFuture<T> recv() {
+    return new ReceiverFuture<>(receiverId, channel, rddId, received, queue, maxQueueSize);
+  }
+
+  public Channel<T> getChannel() {
+    return channel;
+  }
+
+  public void close() {
+    if (closed) {
+      return;
     }
+    try {
+      channel.lockChannel();
+      if (!channel.isClosed()) {
+        // Close the channel and decrement the empty channel number if needed.
+        channel.setClosed();
 
-    public ReceiverFuture<T> recv() {
-        return new ReceiverFuture<>(receiverId, channel, rddId, received, queue, maxQueueSize);
-    }
-
-    public Channel<T> getChannel() {
-        return channel;
-    }
-
-    public void close() {
-        if (closed) {
-            return;
+        if (channel.isEmpty() && channel.getNumSenders() > 0) {
+          channel.getChannelGate().decrementEmptyChannelNumber();
         }
-        try {
-            channel.lockChannel();
-            if (!channel.isClosed()) {
-                // Close the channel and decrement the empty channel number if needed.
-                channel.setClosed();
-
-                if (channel.isEmpty() && channel.getNumSenders() > 0) {
-                    channel.getChannelGate().decrementEmptyChannelNumber();
-                }
-                channel.cleanUp();
-                channel.getChannelGate().wakeSenders(channel.getId());
-            }
-        } finally {
-            channel.unlockChannel();
-        }
-        closed = true;
+        channel.cleanUp();
+        channel.getChannelGate().wakeSenders(channel.getId());
+      }
+    } finally {
+      channel.unlockChannel();
     }
+    closed = true;
+  }
 
-    public boolean isClosed() {
-        return closed;
-    }
+  public boolean isClosed() {
+    return closed;
+  }
 }

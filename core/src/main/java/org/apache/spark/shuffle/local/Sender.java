@@ -34,62 +34,65 @@ import org.apache.spark.rdd.RDD;
  * @param <T> The type of the data to be sent.
  */
 public class Sender<T> {
-    private final Channel<T>[] channels;
-    private boolean closed = false;
-    private final TaskContext taskContext;
-    private final SparkEnv env;
-    private final int rddId;
-    private int senderId;
-    private int senderQueueSize;
+  private final Channel<T>[] channels;
+  private boolean closed = false;
+  private final TaskContext taskContext;
+  private final SparkEnv env;
+  private final int rddId;
+  private int senderId;
+  private int senderQueueSize;
 
-    private static AtomicInteger nextSenderId = new AtomicInteger(0);
+  private static AtomicInteger nextSenderId = new AtomicInteger(0);
 
-    public Sender(int rddId, Channel<T>[] channels, int senderQueueSize, SparkEnv env, TaskContext taskContext) {
-          this.rddId = rddId;
-          this.channels  = channels;
-          for (Channel<T> channel : channels) {
-              channel.addSender();
-          }
-          this.taskContext = taskContext;
-          this.env = env;
-          this.senderId = nextSenderId.getAndIncrement();
-          this.senderQueueSize = senderQueueSize;
+  public Sender(int rddId, Channel<T>[] channels, int senderQueueSize, SparkEnv env,
+                TaskContext taskContext) {
+    this.rddId = rddId;
+    this.channels = channels;
+    for (Channel<T> channel : channels) {
+      channel.addSender();
     }
+    this.taskContext = taskContext;
+    this.env = env;
+    this.senderId = nextSenderId.getAndIncrement();
+    this.senderQueueSize = senderQueueSize;
+  }
 
-    public void close() {
-        if (!closed) {
-            for (Channel<T> channel : channels) {
-                if (channel.reduceNumSenders() == 0) {
-                    Waker receiverWaker;
-                    try {
-                        channel.lockChannel();
+  public void close() {
+    if (!closed) {
+      for (Channel<T> channel : channels) {
+        if (channel.reduceNumSenders() == 0) {
+          Waker receiverWaker;
+          try {
+            channel.lockChannel();
 
-                        if (!channel.isClosed() && channel.isEmpty()) {
-                            channel.getChannelGate().decrementEmptyChannelNumber();
-                        }
-                        receiverWaker = channel.getCurrentWake();
-
-                        // The channel cannot add a new receiver waker
-                        channel.disableReceiverWaker();
-                    } finally {
-                        channel.unlockChannel();
-                    }
-
-                    if (receiverWaker != null) {
-                        receiverWaker.wake();
-                    }
-                }
+            if (!channel.isClosed() && channel.isEmpty()) {
+              channel.getChannelGate().decrementEmptyChannelNumber();
             }
+            receiverWaker = channel.getCurrentWake();
 
-            closed = true;
+            // The channel cannot add a new receiver waker
+            channel.disableReceiverWaker();
+          } finally {
+            channel.unlockChannel();
+          }
+
+          if (receiverWaker != null) {
+            receiverWaker.wake();
+          }
         }
-    }
+      }
 
-    public boolean isClosed() {
-        return closed;
+      closed = true;
     }
+  }
 
-    public SenderFuture<T> send(byte[] task, Partition partition, Class<RDD<T>> clazz, Partitioner partitioner, Callable<Void> callback) {
-        return new SenderFuture<>(senderId, rddId, task, partition, clazz,  this, channels, senderQueueSize, partitioner, env, taskContext, callback);
-    }
+  public boolean isClosed() {
+    return closed;
+  }
+
+  public SenderFuture<T> send(byte[] task, Partition partition, Class<RDD<T>> clazz,
+                              Partitioner partitioner, Callable<Void> callback) {
+    return new SenderFuture<>(senderId, rddId, task, partition, clazz, this, channels,
+            senderQueueSize, partitioner, env, taskContext, callback);
+  }
 }

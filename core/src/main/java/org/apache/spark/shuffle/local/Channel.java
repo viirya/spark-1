@@ -24,183 +24,184 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * A channel is a FIFO queue that holds data for a single RDD partition.
- * It is used to transfer data between the senders and receivers.
- *
+ * A channel is a FIFO queue that holds data for a single RDD partition. It is used to transfer data
+ * between the senders and receivers.
+ * <p>
  * In local repartition, a channel is created for each RDD partition for each receiver.
  *
  * @param <T> The type of data that this channel will hold.
  */
 public class Channel<T> {
-    private final int id;
-    private AtomicBoolean closed = new AtomicBoolean(false);;
-    private final LinkedList<T> queue;
-    // A flag to indicate whether a receiver waker can be added.
-    // Once a channel has no more senders, the last sender will turn this flag to false.
-    private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
-    private final ChannelGate channelGate ;
-    private final AtomicInteger numSenders = new AtomicInteger(0);
-    private final int queueSize;
+  private final int id;
+  private AtomicBoolean closed = new AtomicBoolean(false);
 
-    // A lock to protect the channel from concurrent access.
-    private final ReentrantLock lock = new ReentrantLock();
+  private final LinkedList<T> queue;
+  // A flag to indicate whether a receiver waker can be added.
+  // Once a channel has no more senders, the last sender will turn this flag to false.
+  private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
+  private final ChannelGate channelGate;
+  private final AtomicInteger numSenders = new AtomicInteger(0);
+  private final int queueSize;
 
-    // A waker to wake up the receiver when data is available.
-    private Waker currentWaker;
+  // A lock to protect the channel from concurrent access.
+  private final ReentrantLock lock = new ReentrantLock();
 
-    private Optional<Throwable> error = Optional.empty();
+  // A waker to wake up the receiver when data is available.
+  private Waker currentWaker;
 
-    public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize) {
-        List<Channel<T>> channels = new LinkedList<>();
-        ChannelGate channelGate = new ChannelGate(numChannels);
+  private Optional<Throwable> error = Optional.empty();
 
-        for (int i = 0; i < numChannels; i++) {
-            channels.add(new Channel<>(i, channelGate, queueSize));
-        }
+  public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize) {
+    List<Channel<T>> channels = new LinkedList<>();
+    ChannelGate channelGate = new ChannelGate(numChannels);
 
-        return channels;
+    for (int i = 0; i < numChannels; i++) {
+      channels.add(new Channel<>(i, channelGate, queueSize));
     }
 
-    Channel(int id, ChannelGate channelGate, int queueSize) {
-        this.id = id;
-        this.queue = new LinkedList<>();
-        this.channelGate = channelGate;
-        this.queueSize = queueSize;
-    }
+    return channels;
+  }
 
-    void lockChannel() {
-        lock.lock();
-    }
+  Channel(int id, ChannelGate channelGate, int queueSize) {
+    this.id = id;
+    this.queue = new LinkedList<>();
+    this.channelGate = channelGate;
+    this.queueSize = queueSize;
+  }
 
-    void unlockChannel() {
-        lock.unlock();
-    }
+  void lockChannel() {
+    lock.lock();
+  }
 
-    public boolean isClosed() {
-        return closed.get();
-    }
+  void unlockChannel() {
+    lock.unlock();
+  }
 
-    void setClosed() {
-        canAddReceiverWaker.set(false);
-        this.closed.set(true);
-    }
+  public boolean isClosed() {
+    return closed.get();
+  }
 
-    int getId() {
-        return id;
-    }
+  void setClosed() {
+    canAddReceiverWaker.set(false);
+    this.closed.set(true);
+  }
 
-    public boolean isError() {
-        return error.isPresent();
-    }
+  int getId() {
+    return id;
+  }
 
-    public Optional<Throwable> getError() {
-        return error;
-    }
+  public boolean isError() {
+    return error.isPresent();
+  }
 
-    void setError(Throwable error) {
-        setClosed();
+  public Optional<Throwable> getError() {
+    return error;
+  }
 
-        this.error = Optional.of(error);
-        channelGate.wakeSenders(id);
-        wakeReceivers();
-    }
+  void setError(Throwable error) {
+    setClosed();
 
-    public void addSender() {
-        numSenders.incrementAndGet();
-    }
+    this.error = Optional.of(error);
+    channelGate.wakeSenders(id);
+    wakeReceivers();
+  }
 
-    public int reduceNumSenders() {
-        return numSenders.decrementAndGet();
-    }
+  public void addSender() {
+    numSenders.incrementAndGet();
+  }
 
-    public int getNumSenders() {
-        return numSenders.get();
-    }
+  public int reduceNumSenders() {
+    return numSenders.decrementAndGet();
+  }
 
-    public Receiver<T> createReceiver(int rddId, int queueSize) {
-        return new Receiver<>(this, rddId, queueSize);
-    }
+  public int getNumSenders() {
+    return numSenders.get();
+  }
 
-    /**
-     * Returns the current receiver waker and reset it to null.
-     * This is used to wake up the receiver when data is available.
-     *
-     * @return The current waker.
-     */
-    Waker getCurrentWake() {
-        Waker waker = currentWaker;
-        currentWaker = null;
-        return waker;
-    }
+  public Receiver<T> createReceiver(int rddId, int queueSize) {
+    return new Receiver<>(this, rddId, queueSize);
+  }
 
-    /**
-     * Wake up the receiver if it is waiting for data.
-     * This is used to notify the receiver that data is available.
-     */
-    void wakeReceivers() {
-        if (currentWaker == null) {
-            return;
-        }
-        currentWaker.wake();
-        currentWaker = null;
-    }
+  /**
+   * Returns the current receiver waker and reset it to null.
+   * This is used to wake up the receiver when data is available.
+   *
+   * @return The current waker.
+   */
+  Waker getCurrentWake() {
+    Waker waker = currentWaker;
+    currentWaker = null;
+    return waker;
+  }
 
-    void addData(T data) {
-        queue.add(data);
+  /**
+   * Wake up the receiver if it is waiting for data.
+   * This is used to notify the receiver that data is available.
+   */
+  void wakeReceivers() {
+    if (currentWaker == null) {
+      return;
     }
+    currentWaker.wake();
+    currentWaker = null;
+  }
 
-    T getData() {
-        return queue.poll();
-    }
+  void addData(T data) {
+    queue.add(data);
+  }
 
-    // Only for testing
-    public LinkedList<T> getAllData() {
-        return queue;
-    }
+  T getData() {
+    return queue.poll();
+  }
 
-    boolean isEmpty() {
-        return queue.isEmpty();
-    }
+  // Only for testing
+  public LinkedList<T> getAllData() {
+    return queue;
+  }
 
-    public int getQueueSize() {
-        return queue.size();
-    }
+  boolean isEmpty() {
+    return queue.isEmpty();
+  }
 
-    boolean isReachedMaxQueueSize() {
-        return queue.size() >= queueSize;
-    }
+  public int getQueueSize() {
+    return queue.size();
+  }
 
-    public ChannelGate getChannelGate() {
-        return channelGate;
-    }
+  boolean isReachedMaxQueueSize() {
+    return queue.size() >= queueSize;
+  }
 
-    void cleanUp() {
-        queue.clear();
-    }
+  public ChannelGate getChannelGate() {
+    return channelGate;
+  }
 
-    /**
-     * Disable the receiver waker. This is used to prevent the receiver from being into
-     * waiting status when there are no more senders.
-     */
-    void disableReceiverWaker() {
-        canAddReceiverWaker.set(false);
-        currentWaker = null;
-    }
+  void cleanUp() {
+    queue.clear();
+  }
 
-    /**
-     * Returns if it is possible to add a receiver waker into the channel.
-     */
-    boolean isReceiverWakerEnabled() {
-        return canAddReceiverWaker.get();
-    }
+  /**
+   * Disable the receiver waker. This is used to prevent the receiver from being into
+   * waiting status when there are no more senders.
+   */
+  void disableReceiverWaker() {
+    canAddReceiverWaker.set(false);
+    currentWaker = null;
+  }
 
-    /**
-     * Sets the current waker to the given waker.
-     *
-     * @param currentWaker The waker to set as the current waker.
-     */
-    void setCurrentWaker(Waker currentWaker) {
-        this.currentWaker = currentWaker;
-    }
+  /**
+   * Returns if it is possible to add a receiver waker into the channel.
+   */
+  boolean isReceiverWakerEnabled() {
+    return canAddReceiverWaker.get();
+  }
+
+  /**
+   * Sets the current waker to the given waker.
+   *
+   * @param currentWaker The waker to set as the current waker.
+   */
+  void setCurrentWaker(Waker currentWaker) {
+    this.currentWaker = currentWaker;
+  }
 }
 
