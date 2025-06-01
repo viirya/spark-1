@@ -71,6 +71,8 @@ public class SenderFuture<T> {
 
   private Callable<Void> callback;
 
+  private boolean channelLocked = false;
+
   SenderFuture(int senderId, int rddId, byte[] task, Partition partition, Class<RDD<T>> clazz,
                Sender<T> sender, Channel<T>[] channels, int senderQueueSize,
                Partitioner partitioner, SparkEnv env, TaskContext taskContext, Callable<Void> callback) {
@@ -110,6 +112,100 @@ public class SenderFuture<T> {
     }
 
     return -1;
+  }
+
+  /**
+   * Attempts to wait for the channel to become available for sending data.
+   * If the channel is full, it adds the current waker to the channel's waiting list.
+   *
+   * @param channel The channel to wait on.
+   * @throws InterruptedException if the thread is interrupted while waiting.
+   */
+  void tryWait(Channel<T> channel) throws InterruptedException {
+    boolean toWait;
+    try {
+      channel.getChannelGate().lockGate();
+      toWait = channel.getChannelGate().addSenderWaker(currentWaker, channel.getId());
+    } finally {
+      channel.getChannelGate().unlockGate();
+    }
+
+    if (toWait) {
+      // If the sender is added to the waiting list, let it await.
+      channel.unlockChannel();
+      channelLocked = false;
+      currentWaker.await();
+      // Update the current waker after being woken up
+      currentWaker = getWaker();
+
+      channel.lockChannel();
+      channelLocked = true;
+    }
+  }
+
+  /**
+   * Wakes up the receiver associated with the given channel if it was waiting.
+   * If the channel was empty before, it decrements the empty channel number.
+   *
+   * @param channel The channel to wake up the receiver for.
+   */
+  void wakeReceiver(Channel<T> channel) {
+    // If the channel was empty before, decrement the empty channel number.
+    channel.getChannelGate().decrementEmptyChannelNumber();
+    // If the channel was empty before, wake up the receiver if there is one waiting.
+    Waker waker = channel.getCurrentWake();
+    channel.unlockChannel();
+    channelLocked = false;
+
+    if (waker != null) {
+      waker.wake();
+    }
+  }
+
+  /**
+   * Processes the data in the given channel and queue.
+   * It locks the channel, checks if it is closed, and if not, adds data from the queue to the channel.
+   * If the channel was empty before adding data, it wakes up the receiver.
+   *
+   * @param channel The channel to process data in.
+   * @param queue   The queue containing data to be sent.
+   * @return true if the channel is closed, false otherwise.
+   * @throws InterruptedException if the thread is interrupted while waiting.
+   */
+  boolean processData(Channel<T> channel, LinkedList<T> queue) throws InterruptedException {
+    try {
+      channel.lockChannel();
+      channelLocked = true;
+
+      // todo: better stop condition
+      if (channel.isClosed()) {
+        return true;
+      }
+
+      // Checks if this sender should be added into waiting list:
+      // 1. All channels are full.
+      // 2. The current channel reached the maximum queue size.
+      if (channel.getChannelGate().getEmptyChannelNumber() == 0 &&
+              channel.isReachedMaxQueueSize()) {
+        tryWait(channel);
+      }
+
+      boolean wasEmpty = channel.isEmpty();
+
+      for (T item : queue) {
+        channel.addData(item);
+      }
+      queue.clear();
+
+      if (wasEmpty) {
+        wakeReceiver(channel);
+      }
+    } finally {
+      if (channelLocked) {
+        channel.unlockChannel();
+      }
+    }
+    return false;
   }
 
   public Future<Optional<Throwable>> getFuture(ExecutorService executor) {
@@ -159,65 +255,10 @@ public class SenderFuture<T> {
             channel = channels[queueId];
           }
 
-          boolean channelLocked = false;
-          try {
-            channel.lockChannel();
-            channelLocked = true;
-
-            // todo: better stop condition
-            if (channel.isClosed()) {
-              break;
-            }
-
-            // Checks if this sender should be added into waiting list:
-            // 1. All channels are full.
-            // 2. The current channel reached the maximum queue size.
-            if (channel.getChannelGate().getEmptyChannelNumber() == 0 &&
-                    channel.isReachedMaxQueueSize()) {
-              boolean toWait;
-              try {
-                channel.getChannelGate().lockGate();
-                toWait = channel.getChannelGate().addSenderWaker(currentWaker, channel.getId());
-              } finally {
-                channel.getChannelGate().unlockGate();
-              }
-
-              if (toWait) {
-                // If the sender is added to the waiting list, let it await.
-                channel.unlockChannel();
-                channelLocked = false;
-                currentWaker.await();
-                // Update the current waker after being woken up
-                currentWaker = getWaker();
-
-                channel.lockChannel();
-                channelLocked = true;
-              }
-            }
-
-            boolean wasEmpty = channel.isEmpty();
-
-            for (T item : queue) {
-              channel.addData(item);
-            }
-            queue.clear();
-
-            if (wasEmpty) {
-              // If the channel was empty before, decrement the empty channel number.
-              channel.getChannelGate().decrementEmptyChannelNumber();
-              // If the channel was empty before, wake up the receiver if there is one waiting.
-              Waker waker = channel.getCurrentWake();
-              channel.unlockChannel();
-              channelLocked = false;
-
-              if (waker != null) {
-                waker.wake();
-              }
-            }
-          } finally {
-            if (channelLocked) {
-              channel.unlockChannel();
-            }
+          channelLocked = false;
+          if (processData(channel, queue)) {
+            // If the channel is closed, break the loop
+            break;
           }
         }
 
