@@ -43,7 +43,16 @@ import org.apache.spark.serializer.SerializerInstance;
  * channels and manages the task context and memory management.
  * <p>
  * The future after initialization pulls data by executing specified partition of the given RDD and
- * sends it to the specified channels after partitioning it
+ * sends it to the specified channels after partitioning it.
+ * <p>
+ * In order to improve throughput, the sender uses a queue for each channel internally. The queue
+ * size is specified by the `senderQueueSize` parameter. The sender will not send data to the channel
+ * if the queue size is less than `senderQueueSize`. This allows the sender to batch data before
+ * sending it to the channel, which can improve performance by reducing the number of calls to the
+ * channel.
+ * <p>
+ * If the queue is full, the sender will wait for the channel to become available before sending
+ * data. It uses a waker to wake up the sender when the channel is available again.
  * <p>
  * The future completes once all data are pulled from the RDD partition or channels are closed by
  * finished receivers.

@@ -22,7 +22,11 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * A class that represents an operation for receiving data from a channel.
+ * A class that represents an operation for receiving data from a channel. It provides a blocking
+ * get() method that waits for data to be available in the channel or the internal queue. In each
+ * call to get(), it checks the channel for data and fills the queue if necessary. If the queue is
+ * full or has data while the channel is empty, it consumes data from the queue. If the channel is
+ * empty and the queue is also empty, it waits for data to be available in the channel.
  *
  * @param <T> The type of the data to be received.
  */
