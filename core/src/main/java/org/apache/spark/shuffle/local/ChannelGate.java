@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * A class that manages the channels and their states. It keeps track of the number of empty
- * channels and manages the wakers for senders.
+ * During data exchange between senders, receivers through channels, this class manages the channel
+ * states. It keeps track of the number of empty channels and manages the wakers for senders.
  * <p>
  * The class is thread-safe and uses locks to protect shared resources.
  */

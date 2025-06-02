@@ -16,6 +16,9 @@
  */
 package org.apache.spark.shuffle.local;
 
+/**
+ * A interface used to wake up a thread that is waiting for some condition to be met.
+ */
 public interface Waker {
     void wake();
     void await() throws InterruptedException;

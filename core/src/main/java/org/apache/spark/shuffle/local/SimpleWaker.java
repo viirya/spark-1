@@ -18,6 +18,10 @@ package org.apache.spark.shuffle.local;
 
 import java.util.concurrent.CountDownLatch;
 
+/**
+ * A simple implementation of the Waker interface that uses a CountDownLatch to wake up a thread
+ * waiting for some condition to be met.
+ */
 public class SimpleWaker implements Waker {
   private final CountDownLatch latch;
 

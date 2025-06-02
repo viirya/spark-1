@@ -24,10 +24,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * A channel is a FIFO queue that holds data for a single RDD partition. It is used to transfer data
- * between the senders and receivers.
+ * A channel is a FIFO queue that is used by senders and receivers to exchange data asynchronously.
+ * It allows multiple senders to send data to a single receiver, and multiple receivers to receive
+ * data from a single sender. Senders can distribute data across multiple channels based on some
+ * distribution logic, such as hash partitioning, range partitioning, or custom partitioning logic.
  * <p>
- * In local repartition, a channel is created for each RDD partition for each receiver.
+ * Only one sender can send data to a channel at a time, but multiple senders can send data to
+ * different channels concurrently. Currently, a channel only supports one receiver. A channel keeps
+ * track the current waker of the receiver, which is used to wake up the receiver when data is
+ * available. When the receiver tries to receive data, it will block until data is available. Before
+ * the receiver blocks, it will set the current waker to itself. When data is available, the sender
+ * who added the data will wake up the receiver by calling the waker's wake method.
+ * <p>
+ * On the sender side, generally if the channel is full, the sender will block until the receiver
+ * consumes some data and wakes up the sender. The fullness of the channel is determined by the
+ * configuration of the maximum queue size.
  *
  * @param <T> The type of data that this channel will hold.
  */
