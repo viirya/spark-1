@@ -543,13 +543,13 @@ object QueryExecution {
       DisableUnnecessaryBucketedScan,
       ApplyColumnarRulesAndInsertTransitions(
         sparkSession.sessionState.columnarRules, outputsColumnar = false),
-      LocalRepartition(),
       CollapseCodegenStages()) ++
       (if (subquery) {
         Nil
       } else {
         Seq(ReuseExchangeAndSubquery)
-      })
+      }) ++
+      Seq(LocalRepartition())
   }
 
   /**

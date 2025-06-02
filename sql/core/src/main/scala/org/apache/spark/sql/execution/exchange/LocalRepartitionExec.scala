@@ -21,12 +21,14 @@ import org.apache.spark.{Partitioner, ShuffleDependency, SparkEnv}
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.{SparkPlan, SQLExecution}
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.MutablePair
 
 case class LocalRepartitionExec(
+    override val output: Seq[Attribute],
     override val outputPartitioning: Partitioning,
     child: SparkPlan,
     shuffleDependency : ShuffleDependency[Int, InternalRow, InternalRow],
