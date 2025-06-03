@@ -5546,6 +5546,17 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val LOCAL_REPARTITION_FORCED_FOR_RANGE_PARTITIONING =
+    buildConf("spark.sql.localRepartition.forceForRangePartitioning")
+      .internal()
+      .doc("When set to true, the local repartitioning will be forced to apply even for range" +
+        "partitioning. This is a performance optimization for replacing disk-based shuffle " +
+        "operations with in-memory repartition. This is only effective under local deployment " +
+        "mode.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val LOCAL_REPARTITION_MAX_INPUT_PARTITION_NUM =
     buildConf("spark.sql.localRepartition.maxInputPartitionNum")
       .internal()
@@ -6609,6 +6620,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def localRepartitionForceForShuffleReuse: Boolean =
     getConf(SQLConf.LOCAL_REPARTITION_FORCED_FOR_SHUFFLE_REUSE)
+
+  def localRepartitionForceForRangePartitioning: Boolean =
+    getConf(SQLConf.LOCAL_REPARTITION_FORCED_FOR_RANGE_PARTITIONING)
 
   def localRepartitionMaxInputPartitions: Int =
     getConf(SQLConf.LOCAL_REPARTITION_MAX_INPUT_PARTITION_NUM)

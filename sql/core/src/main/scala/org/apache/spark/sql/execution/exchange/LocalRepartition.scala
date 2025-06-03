@@ -28,6 +28,7 @@ case class LocalRepartition() extends Rule[SparkPlan] {
     }
 
     val forceForShuffleReuse = plan.conf.localRepartitionForceForShuffleReuse
+    val forceForRangePartitioning = plan.conf.localRepartitionForceForRangePartitioning
 
     val reusedExchangeExec = plan.find {
       case _: ReusedExchangeExec => true
@@ -49,8 +50,8 @@ case class LocalRepartition() extends Rule[SparkPlan] {
 
     val newPlan = plan.transformUp {
       case _ @ ReusedExchangeExec(output, shuffle: ShuffleExchangeExec)
-        if !shuffle.outputPartitioning.isInstanceOf[RangePartitioning] &&
-          numLocalRepartition < maxLocalRepartitionNum &&
+        if (!shuffle.outputPartitioning.isInstanceOf[RangePartitioning] ||
+          forceForRangePartitioning) && numLocalRepartition < maxLocalRepartitionNum &&
           shuffle.child.outputPartitioning.numPartitions <= maxInputPartitions =>
         numLocalRepartition += 1
         LocalRepartitionExec(
@@ -61,7 +62,7 @@ case class LocalRepartition() extends Rule[SparkPlan] {
           shuffleOrigin = shuffle.shuffleOrigin)
 
       case shuffle @ ShuffleExchangeExec(upper, child, shuffleOrigin, _)
-        if !upper.isInstanceOf[RangePartitioning] &&
+        if (!upper.isInstanceOf[RangePartitioning] || forceForRangePartitioning) &&
           numLocalRepartition < maxLocalRepartitionNum &&
           child.outputPartitioning.numPartitions <= maxInputPartitions =>
         numLocalRepartition += 1
