@@ -791,6 +791,9 @@ private[spark] class DAGScheduler(
                 }
               case narrowDep: NarrowDependency[_] =>
                 waitingForVisit.prepend(narrowDep.rdd)
+
+              case localDep: LocalRepartitionDependency[_] =>
+                waitingForVisit.prepend(localDep.rdd)
             }
           }
         }

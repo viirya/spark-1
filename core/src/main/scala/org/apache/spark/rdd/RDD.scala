@@ -494,7 +494,7 @@ abstract class RDD[T: ClassTag](
    * suitable for local deployment mode.
    */
   def localRepartition(numPartitions: Int, serializedRDD: Array[Byte]): RDD[T] = {
-    new LocalRepartitionRDD(sc, this, new HashPartitioner(numPartitions), serializedRDD)
+    new LocalRepartitionRDD(sc, this, id, new HashPartitioner(numPartitions), serializedRDD)
   }
 
   /**
@@ -505,7 +505,7 @@ abstract class RDD[T: ClassTag](
    * suitable for local deployment mode.
    */
   def localRepartition(part: Partitioner, serializedRDD: Array[Byte]): RDD[T] = {
-    new LocalRepartitionRDD(sc, this, part, serializedRDD)
+    new LocalRepartitionRDD(sc, this, id, part, serializedRDD)
   }
 
   /**

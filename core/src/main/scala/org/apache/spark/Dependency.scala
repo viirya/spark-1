@@ -265,8 +265,6 @@ class RangeDependency[T](rdd: RDD[T], inStart: Int, outStart: Int, length: Int)
  * @param rdd the parent RDD
  */
 @DeveloperApi
-class LocalRepartitionDependency[T](rdd: RDD[T]) extends NarrowDependency[T](rdd) {
-  override def getParents(partitionId: Int): List[Int] = {
-    rdd.partitions.map(_.index).toList
-  }
+class LocalRepartitionDependency[T](@transient _rdd: RDD[T]) extends Dependency[T] {
+  override def rdd: RDD[T] = _rdd
 }

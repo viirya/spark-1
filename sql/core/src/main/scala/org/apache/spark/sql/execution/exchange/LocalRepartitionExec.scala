@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.execution.exchange
 
-import org.apache.spark.{Partitioner, ShuffleDependency, SparkEnv}
+import org.apache.spark.{Partitioner, SparkEnv}
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -31,7 +31,6 @@ case class LocalRepartitionExec(
     override val output: Seq[Attribute],
     override val outputPartitioning: Partitioning,
     child: SparkPlan,
-    shuffleDependency : ShuffleDependency[Int, InternalRow, InternalRow],
     shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS)
   extends Exchange {
 

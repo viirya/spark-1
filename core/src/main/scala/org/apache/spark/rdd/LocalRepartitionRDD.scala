@@ -42,8 +42,9 @@ class LocalRepartitionPartition(
 
 @DeveloperApi
 class LocalRepartitionRDD[T: ClassTag](
-    sc: SparkContext,
-    var rdd: RDD[T],
+    @transient sc: SparkContext,
+    @transient var rdd: RDD[T],
+    val parentRDDID: Int,
     val part: Partitioner,
     val serializedRDD: Array[Byte])
   extends RDD[T](sc, Nil) {
@@ -176,7 +177,7 @@ object LocalRepartition {
           val senders = mutable.ArrayBuffer[Sender[Any]]()
           for (i <- 0 until split.inputPartitions.length) {
             val senderContext = createSenderTaskContext(context, i, split.inputPartitions.length)
-            senders += new Sender(rdd.rdd.id, channels, senderQueueSize, SparkEnv.get,
+            senders += new Sender(rdd.parentRDDID, channels, senderQueueSize, SparkEnv.get,
               senderContext).asInstanceOf[Sender[Any]]
           }
 

@@ -58,7 +58,6 @@ case class LocalRepartition() extends Rule[SparkPlan] {
           output = output,
           outputPartitioning = shuffle.outputPartitioning,
           child = shuffle.child,
-          shuffleDependency = shuffle.shuffleDependency,
           shuffleOrigin = shuffle.shuffleOrigin)
 
       case shuffle @ ShuffleExchangeExec(upper, child, shuffleOrigin, _)
@@ -70,7 +69,6 @@ case class LocalRepartition() extends Rule[SparkPlan] {
           output = child.output,
           outputPartitioning = upper,
           child = child,
-          shuffleDependency = shuffle.shuffleDependency,
           shuffleOrigin = shuffleOrigin)
     }
 
