@@ -43,7 +43,7 @@ class LocalRepartitionPartition(
 @DeveloperApi
 class LocalRepartitionRDD[T: ClassTag](
     @transient sc: SparkContext,
-    @transient var rdd: RDD[T],
+    @transient private var rdd: RDD[T],
     val parentRDDID: Int,
     val part: Partitioner,
     val serializedRDD: Array[Byte])
