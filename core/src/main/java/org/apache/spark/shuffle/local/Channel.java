@@ -88,6 +88,10 @@ public class Channel<T> {
     lock.unlock();
   }
 
+  boolean tryLockChannel() {
+    return lock.tryLock();
+  }
+
   public boolean isClosed() {
     return closed.get();
   }

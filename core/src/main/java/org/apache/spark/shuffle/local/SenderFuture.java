@@ -112,15 +112,30 @@ public class SenderFuture<T> {
     return new SimpleWaker();
   }
 
-  int nextQueue() {
-    for (int i = 0; i < queues.length; i++) {
-      LinkedList<T> queue = queues[i];
-      if (!queue.isEmpty()) {
-        return i;
+  State nextQueue() {
+    // Try to find a queue that has data and a channel that is not locked, in three attempts.
+    boolean hasNonEmptyQueue = false;
+    int queueId = -1;
+    for (int c = 0; c < 3; c++) {
+      for (int i = 0; i < queues.length; i++) {
+        LinkedList<T> queue = queues[i];
+        Channel<T> channel = channels[i];
+        if (!queue.isEmpty()) {
+          hasNonEmptyQueue = true;
+          queueId = i;
+          if (channel.tryLockChannel()) {
+            return new State(ChannelState.LOCKED_CHANNEL, i);
+          }
+        }
       }
     }
 
-    return -1;
+    if (hasNonEmptyQueue) {
+      // If there are non-empty queues but no unlocked channels, return a state indicating that.
+      return new State(ChannelState.NO_UNLOCKED_CHANNEL, queueId);
+    } else {
+      return new State(ChannelState.NO_DATA);
+    }
   }
 
   /**
@@ -183,8 +198,10 @@ public class SenderFuture<T> {
    */
   boolean processData(Channel<T> channel, LinkedList<T> queue) throws InterruptedException {
     try {
-      channel.lockChannel();
-      channelLocked = true;
+      if (!channelLocked) {
+        channel.lockChannel();
+        channelLocked = true;
+      }
 
       // todo: better stop condition
       if (channel.isClosed()) {
@@ -254,17 +271,34 @@ public class SenderFuture<T> {
             if (queue.size() < senderQueueSize) {
               continue;
             }
+
+            if (queue.size() < senderQueueSize * 1.5) {
+              if (channel.tryLockChannel()) {
+                channelLocked = true;
+              } else {
+                continue;
+              }
+            } else {
+              channelLocked = false;
+            }
           } else {
-            int queueId = nextQueue();
-            if (queueId == -1) {
+            State state = nextQueue();
+            if (state.isNoData()) {
               // No more data to send
               break;
             }
+
+            int queueId = state.getChannelId();
             queue = queues[queueId];
             channel = channels[queueId];
+
+            if (state.isLockedChannel()) {
+              channelLocked = true;
+            } else {
+              channelLocked = false;
+            }
           }
 
-          channelLocked = false;
           if (processData(channel, queue)) {
             // If the channel is closed, break the loop
             break;
@@ -310,5 +344,37 @@ public class SenderFuture<T> {
         }
       }
     });
+  }
+
+  enum ChannelState {
+    NO_DATA,
+    NO_UNLOCKED_CHANNEL,
+    LOCKED_CHANNEL,
+  }
+
+  class State {
+    private final ChannelState state;
+    private int channelId = -1;
+
+    State(ChannelState state) {
+      this.state = state;
+    }
+
+    State(ChannelState state, int channelId) {
+      this.state = state;
+      this.channelId = channelId;
+    }
+
+    boolean isNoData() {
+      return state == ChannelState.NO_DATA;
+    }
+
+    boolean isLockedChannel() {
+      return state == ChannelState.LOCKED_CHANNEL;
+    }
+
+    int getChannelId() {
+      return channelId;
+    }
   }
 }
