@@ -116,16 +116,14 @@ public class SenderFuture<T> {
     // Try to find a queue that has data and a channel that is not locked, in three attempts.
     boolean hasNonEmptyQueue = false;
     int queueId = -1;
-    for (int c = 0; c < 3; c++) {
-      for (int i = 0; i < queues.length; i++) {
-        LinkedList<T> queue = queues[i];
-        Channel<T> channel = channels[i];
-        if (!queue.isEmpty()) {
-          hasNonEmptyQueue = true;
-          queueId = i;
-          if (channel.tryLockChannel()) {
-            return new State(ChannelState.LOCKED_CHANNEL, i);
-          }
+    for (int i = 0; i < queues.length; i++) {
+      LinkedList<T> queue = queues[i];
+      Channel<T> channel = channels[i];
+      if (!queue.isEmpty()) {
+        hasNonEmptyQueue = true;
+        queueId = i;
+        if (channel.tryLockChannel()) {
+          return new State(ChannelState.LOCKED_CHANNEL, i);
         }
       }
     }
