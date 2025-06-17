@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, JoinedRow, Predicate, UnsafeRow}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeRowJoiner
 import org.apache.spark.sql.catalyst.plans.{Inner, JoinType}
+import org.apache.spark.sql.catalyst.trees.TreePattern.{CARTESIAN_PRODUCT, TreePattern}
 import org.apache.spark.sql.execution.{ExternalAppendOnlyUnsafeRowArray, SparkPlan}
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.CompletionIterator
@@ -61,6 +62,8 @@ case class CartesianProductExec(
     left: SparkPlan,
     right: SparkPlan,
     condition: Option[Expression]) extends BaseJoinExec {
+
+  final override val nodePatterns: Seq[TreePattern] = Seq(CARTESIAN_PRODUCT)
 
   override def joinType: JoinType = Inner
   override def leftKeys: Seq[Expression] = Nil

@@ -19,6 +19,7 @@ package org.apache.spark.sql.execution.exchange
 
 import org.apache.spark.sql.catalyst.plans.physical.RangePartitioning
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.trees.TreePattern.CARTESIAN_PRODUCT
 import org.apache.spark.sql.execution.SparkPlan
 
 case class LocalRepartition() extends Rule[SparkPlan] {
@@ -48,6 +49,32 @@ case class LocalRepartition() extends Rule[SparkPlan] {
 
     var numLocalRepartition = 0
 
+    // CartesianProductExec will create cross product between partitions from two sides.
+    // So each partition will be executed multiple times. For local repartition, it will
+    // be regression case.
+    val newPlan = plan.transformDownWithPruning(!_.containsPattern(CARTESIAN_PRODUCT)) {
+      case p =>
+        val (updatedPlan, updatedNumLocalRepartition) = replace(
+          p,
+          forceForRangePartitioning,
+          numLocalRepartition,
+          maxLocalRepartitionNum,
+          maxInputPartitions)
+
+        numLocalRepartition = updatedNumLocalRepartition
+        updatedPlan
+    }
+
+    newPlan
+  }
+
+  def replace(plan: SparkPlan,
+      forceForRangePartitioning: Boolean,
+      accuNumLocalRepartition: Int,
+      maxLocalRepartitionNum: Int,
+      maxInputPartitions: Int): (SparkPlan, Int) = {
+    var numLocalRepartition = accuNumLocalRepartition
+
     val newPlan = plan.transformUp {
       case _ @ ReusedExchangeExec(output, shuffle: ShuffleExchangeExec)
         if (!shuffle.outputPartitioning.isInstanceOf[RangePartitioning] ||
@@ -72,6 +99,6 @@ case class LocalRepartition() extends Rule[SparkPlan] {
           shuffleOrigin = shuffleOrigin)
     }
 
-    newPlan
+    (newPlan, numLocalRepartition)
   }
 }
