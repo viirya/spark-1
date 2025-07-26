@@ -145,12 +145,6 @@ case class BroadcastExchangeExec(
     Statistics(dataSize, Some(rowCount))
   }
 
-  override def resetMetrics(): Unit = {
-    // no-op
-    // BroadcastExchangeExec after materialized won't be materialized again, so we should not
-    // reset the metrics. Otherwise, we will lose the metrics collected in the broadcast job.
-  }
-
   @transient
   private lazy val promise = Promise[broadcast.Broadcast[Any]]()
 
