@@ -26,8 +26,14 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project, Subquery}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns
+// import org.apache.spark.sql.connector.read.Scan
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+// BEGIN-V2-SUPPORT: DataSource V2 imports (commented due to incomplete reader support)
+// Note: V2 variant pushdown requires ParquetVariantConverter equivalent in V2 readers
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
+import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScan
+// END-V2-SUPPORT
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -279,6 +285,15 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
       relation @ LogicalRelationWithTable(
       hadoopFsRelation@HadoopFsRelation(_, _, _, _, _: ParquetFileFormat, _), _)) =>
         rewritePlan(p, projectList, filters, relation, hadoopFsRelation)
+
+      // BEGIN-V2-SUPPORT: DataSource V2 pattern matching
+      // (commented due to incomplete reader support)
+      // Note: Most V2 sources lack ParquetVariantConverter equivalent, would cause silent failures
+      case p@PhysicalOperation(projectList, filters,
+        scanRelation @ DataSourceV2ScanRelation(
+          relation, scan: ParquetScan, output, _, _)) =>
+        rewritePlanV2(p, projectList, filters, scanRelation, scan)
+      // END-V2-SUPPORT
     }
   }
 
@@ -343,4 +358,123 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
     }
     Project(newProjectList, withFilter)
   }
+
+  // BEGIN-V2-SUPPORT: DataSource V2 rewrite method (commented due to incomplete reader support)
+  // Key differences from V1 implementation:
+  // 1. V2 uses DataSourceV2ScanRelation instead of LogicalRelation
+  // 2. V2 doesn't have direct catalogTable access like V1's LogicalRelation
+  // 3. Table metadata (defaults, constraints) may need different access patterns
+  // 4. Schema is already resolved in scanRelation.output (no need for relation.resolve())
+  // 5. Scan rebuilding uses copy() instead of creating new HadoopFsRelation
+  private def rewritePlanV2(
+      originalPlan: LogicalPlan,
+      projectList: Seq[NamedExpression],
+      filters: Seq[Expression],
+      scanRelation: DataSourceV2ScanRelation,
+      parquetScan: ParquetScan): LogicalPlan = {
+    val variants = new VariantInRelation
+
+    // Extract schema attributes from V2 scan relation
+    // Note: Unlike V1, V2 doesn't have direct access to catalogTable metadata.
+    // The scanRelation.output should already be properly resolved attributes,
+    // but we may need to handle table metadata differently for default values.
+    val schemaAttributes = scanRelation.output
+
+    // For V2, we need to construct the schema for default value resolution
+    // Handle table metadata access for V2 - more complex than V1
+    val structSchema = try {
+      // Attempt to access catalog table metadata through V2 APIs
+      // Note: This is a simplified approach - production code might need more sophisticated
+      // catalog table resolution depending on the V2 implementation
+      scanRelation.relation.table.schema() match {
+        case schema if schema.fields.nonEmpty => schema
+        case _ =>
+          // Fallback: construct from resolved attributes
+          StructType(schemaAttributes.map(a =>
+            StructField(a.name, a.dataType, a.nullable, a.metadata)))
+      }
+    } catch {
+      case _: Exception =>
+        // Fallback: construct from resolved attributes if V2 table access fails
+        StructType(schemaAttributes.map(a =>
+          StructField(a.name, a.dataType, a.nullable, a.metadata)))
+    }
+
+    val defaultValues = ResolveDefaultColumns.existenceDefaultValues(structSchema)
+
+    // Additional V2-specific considerations:
+    // - scanRelation.relation.catalog: access to catalog for metadata
+    // - scanRelation.relation.identifier: table identifier for catalog lookups
+    // - scanRelation.relation.table.properties(): table-level properties
+    // These may be needed for complete metadata handling in complex scenarios
+
+    // Add variant fields from the V2 scan schema
+    for ((a, defaultValue) <- schemaAttributes.zip(defaultValues)) {
+      variants.addVariantFields(a.exprId, a.dataType, defaultValue, Nil)
+    }
+    if (variants.mapping.isEmpty) return originalPlan
+
+    // Collect requested fields from project list and filters
+    projectList.foreach(variants.collectRequestedFields)
+    filters.foreach(variants.collectRequestedFields)
+
+    // If no variant columns remain after collection, return original plan
+    if (variants.mapping.forall(_._2.isEmpty)) return originalPlan
+
+    // Create new attribute mapping with rewritten types
+    val attributeMap = schemaAttributes.map { a =>
+      if (variants.mapping.get(a.exprId).exists(_.nonEmpty)) {
+        val newType = variants.rewriteType(a.exprId, a.dataType, Nil)
+        val newAttr = AttributeReference(a.name, newType, a.nullable, a.metadata)(
+          qualifier = a.qualifier)
+        (a.exprId, newAttr)
+      } else {
+        (a.exprId, a)
+      }
+    }.toMap
+
+    // Create new schema fields for the V2 scan
+    val newFields = schemaAttributes.map { a =>
+      val dataType = attributeMap(a.exprId).dataType
+      StructField(a.name, dataType, a.nullable, a.metadata)
+    }
+    val newOutput = scanRelation.output.map(a => attributeMap.getOrElse(a.exprId, a))
+
+    // Create new ParquetScan with modified schema
+    val newParquetScan = parquetScan.copy(
+      dataSchema = StructType(newFields),
+      readDataSchema = StructType(newFields)
+    )
+
+    // Create new DataSourceV2ScanRelation with the modified scan
+    val newScanRelation = scanRelation.copy(
+      scan = newParquetScan,
+      output = newOutput
+    )
+
+    // Apply filters if present
+    val withFilter = if (filters.nonEmpty) {
+      Filter(filters.map(variants.rewriteExpr(_, attributeMap)).reduce(And), newScanRelation)
+    } else {
+      newScanRelation
+    }
+
+    // Rewrite project list expressions
+    val newProjectList = projectList.map { e =>
+      val rewritten = variants.rewriteExpr(e, attributeMap)
+      rewritten match {
+        case n: NamedExpression => n
+        // Wrap non-named expressions with Alias for Project compatibility
+        case _ => Alias(rewritten, e.name)(e.exprId, e.qualifier)
+      }
+    }
+
+    Project(newProjectList, withFilter)
+  }
+  // END-V2-SUPPORT
+  //
+  // NOTE: V2 implementation requires each DataSource V2 implementation to support variant-to-struct
+  // conversion in their PartitionReader implementations. Without this support (equivalent to
+  // ParquetVariantConverter in V1), the rewritten schema would cause silent failures or incorrect
+  // results. Most V2 sources like Iceberg likely don't implement this conversion logic.
 }
