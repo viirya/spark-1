@@ -292,8 +292,16 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
       case p@PhysicalOperation(projectList, filters,
         scanRelation @ DataSourceV2ScanRelation(
           relation, scan: ParquetScan, output, _, _)) =>
+        // scalastyle:off println
+        println(s"rewritePlanV2")
         rewritePlanV2(p, projectList, filters, scanRelation, scan)
       // END-V2-SUPPORT
+      case p@PhysicalOperation(projectList, filters,
+      scanRelation @ DataSourceV2ScanRelation(
+      relation, scan, output, _, _)) =>
+        // scalastyle:off println
+        println(s"scan: ${scan.getClass.getSimpleName}")
+        p
     }
   }
 
@@ -375,38 +383,15 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
     val variants = new VariantInRelation
 
     // Extract schema attributes from V2 scan relation
-    // Note: Unlike V1, V2 doesn't have direct access to catalogTable metadata.
-    // The scanRelation.output should already be properly resolved attributes,
-    // but we may need to handle table metadata differently for default values.
+    // Unlike V1, V2's scanRelation.output already contains properly resolved attributes
     val schemaAttributes = scanRelation.output
 
-    // For V2, we need to construct the schema for default value resolution
-    // Handle table metadata access for V2 - more complex than V1
-    val structSchema = try {
-      // Attempt to access catalog table metadata through V2 APIs
-      // Note: This is a simplified approach - production code might need more sophisticated
-      // catalog table resolution depending on the V2 implementation
-      scanRelation.relation.table.schema() match {
-        case schema if schema.fields.nonEmpty => schema
-        case _ =>
-          // Fallback: construct from resolved attributes
-          StructType(schemaAttributes.map(a =>
-            StructField(a.name, a.dataType, a.nullable, a.metadata)))
-      }
-    } catch {
-      case _: Exception =>
-        // Fallback: construct from resolved attributes if V2 table access fails
-        StructType(schemaAttributes.map(a =>
-          StructField(a.name, a.dataType, a.nullable, a.metadata)))
-    }
+    // Construct schema for default value resolution from the scan relation's output
+    // This is simpler than V1 because V2 attributes are already resolved
+    val structSchema = StructType(schemaAttributes.map(a =>
+      StructField(a.name, a.dataType, a.nullable, a.metadata)))
 
     val defaultValues = ResolveDefaultColumns.existenceDefaultValues(structSchema)
-
-    // Additional V2-specific considerations:
-    // - scanRelation.relation.catalog: access to catalog for metadata
-    // - scanRelation.relation.identifier: table identifier for catalog lookups
-    // - scanRelation.relation.table.properties(): table-level properties
-    // These may be needed for complete metadata handling in complex scenarios
 
     // Add variant fields from the V2 scan schema
     for ((a, defaultValue) <- schemaAttributes.zip(defaultValues)) {
@@ -422,6 +407,7 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
     if (variants.mapping.forall(_._2.isEmpty)) return originalPlan
 
     // Create new attribute mapping with rewritten types
+    // Note: V2 output is Seq[AttributeReference], so we can directly work with it
     val attributeMap = schemaAttributes.map { a =>
       if (variants.mapping.get(a.exprId).exists(_.nonEmpty)) {
         val newType = variants.rewriteType(a.exprId, a.dataType, Nil)
@@ -433,17 +419,32 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
       }
     }.toMap
 
-    // Create new schema fields for the V2 scan
-    val newFields = schemaAttributes.map { a =>
-      val dataType = attributeMap(a.exprId).dataType
-      StructField(a.name, dataType, a.nullable, a.metadata)
+    // Build new data schema and read schema
+    // Key difference from V1: ParquetScan has separate dataSchema and readDataSchema
+    // We need to rewrite both based on the original relationship
+    val newDataSchemaFields = parquetScan.dataSchema.fields.map { field =>
+      // Find the corresponding attribute in schemaAttributes
+      schemaAttributes.find(_.name == field.name).map { attr =>
+        val newDataType = attributeMap(attr.exprId).dataType
+        StructField(field.name, newDataType, field.nullable, field.metadata)
+      }.getOrElse(field)
     }
+
+    val newReadDataSchemaFields = parquetScan.readDataSchema.fields.map { field =>
+      // Find the corresponding attribute in schemaAttributes
+      schemaAttributes.find(_.name == field.name).map { attr =>
+        val newDataType = attributeMap(attr.exprId).dataType
+        StructField(field.name, newDataType, field.nullable, field.metadata)
+      }.getOrElse(field)
+    }
+
     val newOutput = scanRelation.output.map(a => attributeMap.getOrElse(a.exprId, a))
 
-    // Create new ParquetScan with modified schema
+    // Create new ParquetScan with modified schemas
+    // Preserve the original distinction between dataSchema and readDataSchema
     val newParquetScan = parquetScan.copy(
-      dataSchema = StructType(newFields),
-      readDataSchema = StructType(newFields)
+      dataSchema = StructType(newDataSchemaFields),
+      readDataSchema = StructType(newReadDataSchemaFields)
     )
 
     // Create new DataSourceV2ScanRelation with the modified scan
