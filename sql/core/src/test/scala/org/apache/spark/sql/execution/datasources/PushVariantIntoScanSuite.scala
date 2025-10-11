@@ -223,6 +223,7 @@ class PushVariantIntoScanV2Suite extends PushVariantIntoScanSuiteBase {
     super.sparkConf
       .set(s"spark.sql.catalog.$SESSION_CATALOG_NAME",
            "org.apache.spark.sql.connector.catalog.InMemoryTableCatalog")
+      .set("spark.sql.sources.useV1SourceList", "")
 
   private def testOnV2Formats(fn: String => Unit): Unit = {
     for (format <- Seq("PARQUET")) {
