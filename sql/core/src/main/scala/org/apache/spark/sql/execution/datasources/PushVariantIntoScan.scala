@@ -292,8 +292,6 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
       case p@PhysicalOperation(projectList, filters,
         scanRelation @ DataSourceV2ScanRelation(
           relation, scan: ParquetScan, output, _, _)) =>
-        // scalastyle:off println
-        println(s"rewritePlanV2")
         rewritePlanV2(p, projectList, filters, scanRelation, scan)
       // END-V2-SUPPORT
       case p@PhysicalOperation(projectList, filters,

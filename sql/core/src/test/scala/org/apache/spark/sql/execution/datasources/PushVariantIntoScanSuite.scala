@@ -18,6 +18,7 @@
 package org.apache.spark.sql.execution.datasources
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.variant._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -28,7 +29,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
-abstract class PushVariantIntoScanSuiteBase extends SharedSparkSession {
+trait PushVariantIntoScanSuiteBase extends SharedSparkSession {
   override def sparkConf: SparkConf =
     super.sparkConf.set(SQLConf.PUSH_VARIANT_INTO_SCAN.key, "true")
 
@@ -216,7 +217,7 @@ class PushVariantIntoScanSuite extends PushVariantIntoScanSuiteBase {
 }
 
 // V2 DataSource tests
-class PushVariantIntoScanV2Suite extends PushVariantIntoScanSuiteBase {
+class PushVariantIntoScanV2Suite extends QueryTest with PushVariantIntoScanSuiteBase {
   test("V2 test - basic variant field extraction") {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
@@ -234,17 +235,23 @@ class PushVariantIntoScanV2Suite extends PushVariantIntoScanSuiteBase {
         val df = spark.read.parquet(path)
         df.createOrReplaceTempView("T_V2")
 
+        val query = "select variant_get(v, '$.a', 'int') as a, v, " +
+          "cast(v as struct<b float>) as v_cast from T_V2"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).explain()
+          sql(query).show()
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
         // Test the variant pushdown
-        sql("select variant_get(v, '$.a', 'int') as a, v, " +
-          "cast(v as struct<b float>) as v_cast from T_V2")
-          .queryExecution.optimizedPlan match {
+        sql(query).queryExecution.optimizedPlan match {
           case Project(projectList, scanRelation: DataSourceV2ScanRelation) =>
-            sql("select variant_get(v, '$.a', 'int') as a, v, " +
-              "cast(v as struct<b float>) as v_cast from T_V2").show()
-            sql("select variant_get(v, '$.a', 'int') as a, v, " +
-              "cast(v as struct<b float>) as v_cast from T_V2").explain(true)
-            sql("select variant_get(v, '$.a', 'int') as a, v, " +
-              "cast(v as struct<b float>) as v_cast from T_V2").printSchema()
+            sql(query).explain()
+            sql(query).show()
             val output = scanRelation.output
             val v = output(0)
             // Check that variant pushdown happened - v should be a struct, not variant
@@ -302,13 +309,33 @@ class PushVariantIntoScanV2Suite extends PushVariantIntoScanSuiteBase {
   }
 
   test("V2 No push down for JSON") {
-    // JSON format doesn't actually support variant type storage. When using V2 reader,
-    // JSON performs schema inference and converts the data to typed structs.
-    // This test verifies that the optimization rule correctly doesn't apply to JSON.
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
 
-    // Skip this test because JSON format doesn't preserve variant type.
-    // When reading JSON with V2, the JSON reader infers schema as STRUCT, not VARIANT.
-    // Therefore, there's no variant column for the pushdown rule to operate on.
-    // The V1 test "No push down for JSON" already covers JSON behavior appropriately.
+      // Use V1 to write JSON files with variant data
+      withTable("temp_v1_json") {
+        sql(s"create table temp_v1_json (v variant) using JSON location '$path'")
+        sql("insert into temp_v1_json values (parse_json('{\"a\": 1}'))")
+      }
+
+      // Use V2 to read back
+      withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
+        val df = spark.read.format("json").load(path)
+        df.createOrReplaceTempView("T_V2_JSON")
+
+        // JSON V2 reader performs schema inference - it won't preserve variant type
+        // It will infer the schema as a typed struct instead
+        sql("select v from T_V2_JSON").queryExecution.optimizedPlan match {
+          case scanRelation: DataSourceV2ScanRelation =>
+            val output = scanRelation.output
+            // JSON format with V2 infers schema, so variant becomes a typed struct
+            assert(output(0).dataType != VariantType,
+              s"Expected non-variant type for JSON V2 due to schema inference, " +
+              s"got ${output(0).dataType}")
+          case other =>
+            fail(s"Expected V2 scan relation, got ${other.getClass.getName}")
+        }
+      }
+    }
   }
 }
