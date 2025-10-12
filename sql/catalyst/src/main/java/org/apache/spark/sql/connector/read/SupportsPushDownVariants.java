@@ -36,7 +36,7 @@ import org.apache.spark.annotation.Evolving;
  *   <li>Data source uses the information to optimize reading in {@link #readSchema()} and readers</li>
  * </ol>
  *
- * @since 4.0.0
+ * @since 4.1.0
  */
 @Evolving
 public interface SupportsPushDownVariants extends Scan {

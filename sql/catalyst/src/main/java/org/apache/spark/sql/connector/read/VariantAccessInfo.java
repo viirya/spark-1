@@ -34,7 +34,7 @@ import org.apache.spark.sql.types.StructType;
  * {@code variant_get(v, '$.b', 'string')}, the extracted schema would be
  * {@code struct<0:int, 1:string>} where field ordinals correspond to the access order.
  *
- * @since 4.0.0
+ * @since 4.1.0
  */
 @Evolving
 public final class VariantAccessInfo implements Serializable {
