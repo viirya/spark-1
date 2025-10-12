@@ -81,7 +81,21 @@ case class ParquetScan(
     if (pushedAggregate.nonEmpty) {
       effectiveReadDataSchema
     } else {
-      super.readSchema()
+      // super.readSchema() combines readDataSchema + readPartitionSchema
+      // Apply variant transformation if variant pushdown is active
+      val baseSchema = super.readSchema()
+      if (_pushedVariantAccess.isEmpty) {
+        baseSchema
+      } else {
+        val variantSchemaMap = _pushedVariantAccess.map(info =>
+          info.columnName() -> info.extractedSchema()).toMap
+        StructType(baseSchema.map { field =>
+          variantSchemaMap.get(field.name) match {
+            case Some(extractedSchema) => field.copy(dataType = extractedSchema)
+            case None => field
+          }
+        })
+      }
     }
   }
 
