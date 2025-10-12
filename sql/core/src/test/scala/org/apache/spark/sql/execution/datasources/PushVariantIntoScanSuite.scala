@@ -235,9 +235,16 @@ class PushVariantIntoScanVectorizedSuite extends PushVariantIntoScanV1SuiteBase 
   override protected def readerName: String = "vectorized reader"
 }
 
-// V2 DataSource tests
-class PushVariantIntoScanV2Suite extends QueryTest with PushVariantIntoScanSuiteBase {
-  test("V2 test - basic variant field extraction") {
+// V2 DataSource tests with parameterized reader type
+abstract class PushVariantIntoScanV2SuiteBase extends QueryTest with PushVariantIntoScanSuiteBase {
+  protected def vectorizedReaderEnabled: Boolean
+  protected def readerName: String
+
+  override def sparkConf: SparkConf =
+    super.sparkConf.set(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key,
+      vectorizedReaderEnabled.toString)
+
+  test(s"V2 test - basic variant field extraction ($readerName)") {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
 
@@ -290,7 +297,7 @@ class PushVariantIntoScanV2Suite extends QueryTest with PushVariantIntoScanSuite
     }
   }
 
-  test("V2 test - variant pushdown with filters") {
+  test(s"V2 test - variant pushdown with filters ($readerName)") {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
 
@@ -327,7 +334,7 @@ class PushVariantIntoScanV2Suite extends QueryTest with PushVariantIntoScanSuite
     }
   }
 
-  test("V2 No push down for JSON") {
+  test(s"V2 No push down for JSON ($readerName)") {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
 
@@ -357,4 +364,16 @@ class PushVariantIntoScanV2Suite extends QueryTest with PushVariantIntoScanSuite
       }
     }
   }
+}
+
+// V2 DataSource tests - Row-based reader
+class PushVariantIntoScanV2Suite extends PushVariantIntoScanV2SuiteBase {
+  override protected def vectorizedReaderEnabled: Boolean = false
+  override protected def readerName: String = "row-based reader"
+}
+
+// V2 DataSource tests - Vectorized reader
+class PushVariantIntoScanV2VectorizedSuite extends PushVariantIntoScanV2SuiteBase {
+  override protected def vectorizedReaderEnabled: Boolean = true
+  override protected def readerName: String = "vectorized reader"
 }
