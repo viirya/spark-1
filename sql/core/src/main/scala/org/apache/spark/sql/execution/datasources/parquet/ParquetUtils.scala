@@ -216,8 +216,13 @@ object ParquetUtils extends Logging {
         isBatchReadSupported(sqlConf, mt.keyType) &&
         isBatchReadSupported(sqlConf, mt.valueType)
     case st: StructType =>
-      sqlConf.parquetVectorizedReaderNestedColumnEnabled &&
-        st.fields.forall(f => isBatchReadSupported(sqlConf, f.dataType))
+      // Variant structs require special conversion logic not supported by vectorized reader
+      if (org.apache.spark.sql.execution.datasources.VariantMetadata.isVariantStruct(st)) {
+        false
+      } else {
+        sqlConf.parquetVectorizedReaderNestedColumnEnabled &&
+          st.fields.forall(f => isBatchReadSupported(sqlConf, f.dataType))
+      }
     case udt: UserDefinedType[_] =>
       isBatchReadSupported(sqlConf, udt.sqlType)
     case _ =>

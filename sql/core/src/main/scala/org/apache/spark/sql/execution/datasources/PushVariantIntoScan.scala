@@ -26,13 +26,11 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project, Subquery}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns
-// import org.apache.spark.sql.connector.read.Scan
+import org.apache.spark.sql.connector.read.{SupportsPushDownVariants, VariantAccessInfo}
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-// BEGIN-V2-SUPPORT: DataSource V2 imports (commented due to incomplete reader support)
-// Note: V2 variant pushdown requires ParquetVariantConverter equivalent in V2 readers
+// BEGIN-V2-SUPPORT: DataSource V2 imports
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
-import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScan
 // END-V2-SUPPORT
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -286,20 +284,12 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
       hadoopFsRelation@HadoopFsRelation(_, _, _, _, _: ParquetFileFormat, _), _)) =>
         rewritePlan(p, projectList, filters, relation, hadoopFsRelation)
 
-      // BEGIN-V2-SUPPORT: DataSource V2 pattern matching
-      // (commented due to incomplete reader support)
-      // Note: Most V2 sources lack ParquetVariantConverter equivalent, would cause silent failures
+      // BEGIN-V2-SUPPORT: DataSource V2 pattern matching with API
       case p@PhysicalOperation(projectList, filters,
         scanRelation @ DataSourceV2ScanRelation(
-          relation, scan: ParquetScan, output, _, _)) =>
+          relation, scan: SupportsPushDownVariants, output, _, _)) =>
         rewritePlanV2(p, projectList, filters, scanRelation, scan)
       // END-V2-SUPPORT
-      case p@PhysicalOperation(projectList, filters,
-      scanRelation @ DataSourceV2ScanRelation(
-      relation, scan, output, _, _)) =>
-        // scalastyle:off println
-        println(s"scan: ${scan.getClass.getSimpleName}")
-        p
     }
   }
 
@@ -365,27 +355,24 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
     Project(newProjectList, withFilter)
   }
 
-  // BEGIN-V2-SUPPORT: DataSource V2 rewrite method (commented due to incomplete reader support)
+  // BEGIN-V2-SUPPORT: DataSource V2 rewrite method using SupportsPushDownVariants API
   // Key differences from V1 implementation:
   // 1. V2 uses DataSourceV2ScanRelation instead of LogicalRelation
-  // 2. V2 doesn't have direct catalogTable access like V1's LogicalRelation
-  // 3. Table metadata (defaults, constraints) may need different access patterns
-  // 4. Schema is already resolved in scanRelation.output (no need for relation.resolve())
-  // 5. Scan rebuilding uses copy() instead of creating new HadoopFsRelation
+  // 2. Uses SupportsPushDownVariants API instead of directly manipulating scan
+  // 3. Schema is already resolved in scanRelation.output (no need for relation.resolve())
+  // 4. Scan rebuilding is handled by the scan implementation via the API
   private def rewritePlanV2(
       originalPlan: LogicalPlan,
       projectList: Seq[NamedExpression],
       filters: Seq[Expression],
       scanRelation: DataSourceV2ScanRelation,
-      parquetScan: ParquetScan): LogicalPlan = {
+      scan: SupportsPushDownVariants): LogicalPlan = {
     val variants = new VariantInRelation
 
     // Extract schema attributes from V2 scan relation
-    // Unlike V1, V2's scanRelation.output already contains properly resolved attributes
     val schemaAttributes = scanRelation.output
 
-    // Construct schema for default value resolution from the scan relation's output
-    // This is simpler than V1 because V2 attributes are already resolved
+    // Construct schema for default value resolution
     val structSchema = StructType(schemaAttributes.map(a =>
       StructField(a.name, a.dataType, a.nullable, a.metadata)))
 
@@ -404,10 +391,39 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
     // If no variant columns remain after collection, return original plan
     if (variants.mapping.forall(_._2.isEmpty)) return originalPlan
 
-    // Create new attribute mapping with rewritten types
-    // Note: V2 output is Seq[AttributeReference], so we can directly work with it
+    // Build VariantAccessInfo array for the API
+    val variantAccessInfoArray = schemaAttributes.flatMap { attr =>
+      variants.mapping.get(attr.exprId).flatMap(_.get(Nil)).map { fields =>
+        // Build extracted schema for this variant column
+        val extractedFields = fields.toArray.sortBy(_._2).map { case (field, ordinal) =>
+          StructField(ordinal.toString, field.targetType, metadata = field.path.toMetadata)
+        }
+        val extractedSchema = if (extractedFields.isEmpty) {
+          // Add placeholder field to avoid empty struct
+          val placeholder = VariantMetadata("$.__placeholder_field__",
+            failOnError = false, timeZoneId = "UTC")
+          StructType(Array(StructField("0", BooleanType, metadata = placeholder.toMetadata)))
+        } else {
+          StructType(extractedFields)
+        }
+        new VariantAccessInfo(attr.name, extractedSchema)
+      }
+    }.toArray
+
+    // Call the API to push down variant access
+    if (variantAccessInfoArray.isEmpty) return originalPlan
+
+    val pushed = scan.pushVariantAccess(variantAccessInfoArray)
+    if (!pushed) return originalPlan
+
+    // Get what was actually pushed
+    val pushedVariantAccess = scan.pushedVariantAccess()
+    if (pushedVariantAccess.isEmpty) return originalPlan
+
+    // Build new attribute mapping based on pushed variant access
+    val pushedColumnNames = pushedVariantAccess.map(_.columnName()).toSet
     val attributeMap = schemaAttributes.map { a =>
-      if (variants.mapping.get(a.exprId).exists(_.nonEmpty)) {
+      if (pushedColumnNames.contains(a.name) && variants.mapping.get(a.exprId).exists(_.nonEmpty)) {
         val newType = variants.rewriteType(a.exprId, a.dataType, Nil)
         val newAttr = AttributeReference(a.name, newType, a.nullable, a.metadata)(
           qualifier = a.qualifier)
@@ -417,37 +433,11 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
       }
     }.toMap
 
-    // Build new data schema and read schema
-    // Key difference from V1: ParquetScan has separate dataSchema and readDataSchema
-    // We need to rewrite both based on the original relationship
-    val newDataSchemaFields = parquetScan.dataSchema.fields.map { field =>
-      // Find the corresponding attribute in schemaAttributes
-      schemaAttributes.find(_.name == field.name).map { attr =>
-        val newDataType = attributeMap(attr.exprId).dataType
-        StructField(field.name, newDataType, field.nullable, field.metadata)
-      }.getOrElse(field)
-    }
-
-    val newReadDataSchemaFields = parquetScan.readDataSchema.fields.map { field =>
-      // Find the corresponding attribute in schemaAttributes
-      schemaAttributes.find(_.name == field.name).map { attr =>
-        val newDataType = attributeMap(attr.exprId).dataType
-        StructField(field.name, newDataType, field.nullable, field.metadata)
-      }.getOrElse(field)
-    }
-
     val newOutput = scanRelation.output.map(a => attributeMap.getOrElse(a.exprId, a))
 
-    // Create new ParquetScan with modified schemas
-    // Preserve the original distinction between dataSchema and readDataSchema
-    val newParquetScan = parquetScan.copy(
-      dataSchema = StructType(newDataSchemaFields),
-      readDataSchema = StructType(newReadDataSchemaFields)
-    )
-
-    // Create new DataSourceV2ScanRelation with the modified scan
+    // The scan implementation should have updated its readSchema() based on the pushed info
+    // We just need to create a new scan relation with the updated output
     val newScanRelation = scanRelation.copy(
-      scan = newParquetScan,
       output = newOutput
     )
 
@@ -472,8 +462,13 @@ object PushVariantIntoScan extends Rule[LogicalPlan] {
   }
   // END-V2-SUPPORT
   //
-  // NOTE: V2 implementation requires each DataSource V2 implementation to support variant-to-struct
-  // conversion in their PartitionReader implementations. Without this support (equivalent to
-  // ParquetVariantConverter in V1), the rewritten schema would cause silent failures or incorrect
-  // results. Most V2 sources like Iceberg likely don't implement this conversion logic.
+  // NOTE: V2 implementation uses the SupportsPushDownVariants API. Data sources that implement
+  // this API can control how variant pushdown is handled. The data source is responsible for:
+  // 1. Validating that variant pushdown is supported
+  // 2. Storing the variant access information
+  // 3. Modifying readSchema() to return the rewritten schema
+  // 4. Implementing variant-to-struct conversion in their readers
+  //    (like ParquetVariantConverter in V1)
+  //
+  // Data sources like Delta and Iceberg can implement this API to support variant pushdown.
 }
