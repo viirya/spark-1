@@ -53,11 +53,18 @@ trait PushVariantIntoScanSuiteBase extends SharedSparkSession {
 
 }
 
-// V1 DataSource tests
-class PushVariantIntoScanSuite extends PushVariantIntoScanSuiteBase {
+// V1 DataSource tests with parameterized reader type
+abstract class PushVariantIntoScanV1SuiteBase extends PushVariantIntoScanSuiteBase {
+  protected def vectorizedReaderEnabled: Boolean
+  protected def readerName: String
+
+  override def sparkConf: SparkConf =
+    super.sparkConf.set(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key,
+      vectorizedReaderEnabled.toString)
+
   private def testOnFormats(fn: String => Unit): Unit = {
     for (format <- Seq("PARQUET")) {
-      test("test - " + format) {
+      test(s"test - $format ($readerName)") {
         withTable("T") {
           fn(format)
         }
@@ -203,7 +210,7 @@ class PushVariantIntoScanSuite extends PushVariantIntoScanSuiteBase {
     }
   }
 
-  test("No push down for JSON") {
+  test(s"No push down for JSON ($readerName)") {
     withTable("T") {
       sql("create table T (v variant) using JSON")
       sql("select variant_get(v, '$.a') from T").queryExecution.optimizedPlan match {
@@ -214,6 +221,18 @@ class PushVariantIntoScanSuite extends PushVariantIntoScanSuiteBase {
       }
     }
   }
+}
+
+// V1 DataSource tests - Row-based reader
+class PushVariantIntoScanSuite extends PushVariantIntoScanV1SuiteBase {
+  override protected def vectorizedReaderEnabled: Boolean = false
+  override protected def readerName: String = "row-based reader"
+}
+
+// V1 DataSource tests - Vectorized reader
+class PushVariantIntoScanVectorizedSuite extends PushVariantIntoScanV1SuiteBase {
+  override protected def vectorizedReaderEnabled: Boolean = true
+  override protected def readerName: String = "vectorized reader"
 }
 
 // V2 DataSource tests
