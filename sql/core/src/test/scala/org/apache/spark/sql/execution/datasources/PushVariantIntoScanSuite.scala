@@ -22,9 +22,7 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.variant._
 import org.apache.spark.sql.catalyst.plans.logical._
-// BEGIN-V2-SUPPORT: DataSource V2 imports for tests (commented due to incomplete reader support)
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
-// END-V2-SUPPORT
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
