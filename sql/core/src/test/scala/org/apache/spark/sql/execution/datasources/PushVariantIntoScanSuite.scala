@@ -265,8 +265,6 @@ abstract class PushVariantIntoScanV2SuiteBase extends QueryTest with PushVariant
           "cast(v as struct<b float>) as v_cast from T_V2"
 
         val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
-          sql(query).explain()
-          sql(query).show()
           sql(query).collect()
         }
 
@@ -276,8 +274,6 @@ abstract class PushVariantIntoScanV2SuiteBase extends QueryTest with PushVariant
         // Test the variant pushdown
         sql(query).queryExecution.optimizedPlan match {
           case Project(projectList, scanRelation: DataSourceV2ScanRelation) =>
-            sql(query).explain()
-            sql(query).show()
             val output = scanRelation.output
             val v = output(0)
             // Check that variant pushdown happened - v should be a struct, not variant
@@ -297,38 +293,274 @@ abstract class PushVariantIntoScanV2SuiteBase extends QueryTest with PushVariant
     }
   }
 
-  test(s"V2 test - variant pushdown with filters ($readerName)") {
+  test(s"V2 test - placeholder field with filter ($readerName)") {
     withTempPath { dir =>
       val path = dir.getCanonicalPath
 
-      // Use V1 to write Parquet files with actual variant data
+      withTable("temp_v1") {
+        sql(s"create table temp_v1 (v variant) using PARQUET location '$path'")
+        sql("insert into temp_v1 values (parse_json('{\"a\": 1}'))")
+      }
+
+      withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
+        val df = spark.read.parquet(path)
+        df.createOrReplaceTempView("T_V2")
+
+        val query = "select 1 from T_V2 where isnotnull(v)"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
+        sql(query)
+          .queryExecution.optimizedPlan match {
+          case Project(_, Filter(condition, scanRelation: DataSourceV2ScanRelation)) =>
+            val output = scanRelation.output
+            val v = output(0)
+            assert(condition == IsNotNull(v))
+            assert(v.dataType == StructType(Array(
+              field(0, BooleanType, "$.__placeholder_field__", failOnError = false,
+                timeZone = "UTC"))))
+          case other => fail(s"Expected filtered V2 scan relation, got ${other.getClass.getName}")
+        }
+      }
+    }
+  }
+
+  test(s"V2 test - arithmetic and try_variant_get ($readerName)") {
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
+
       withTable("temp_v1") {
         sql(s"create table temp_v1 (v variant) using PARQUET location '$path'")
         sql("insert into temp_v1 values " +
-          "(parse_json('{\"a\": 6, \"x\": \"test1\"}')), " +
-          "(parse_json('{\"a\": 2, \"x\": \"test2\"}'))")
+          "(parse_json('{\"a\": 1, \"b\": \"hello\"}')), " +
+          "(parse_json('{\"a\": 2, \"b\": \"world\"}'))")
       }
 
-      // Use V2 to read back
       withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
         val df = spark.read.parquet(path)
-        df.createOrReplaceTempView("T_V2_FILTER")
+        df.createOrReplaceTempView("T_V2")
 
-        sql("select variant_get(v, '$.x', 'string') as x from T_V2_FILTER " +
-          "where variant_get(v, '$.a', 'int') > 5")
-          .queryExecution.optimizedPlan match {
+        val query = "select variant_get(v, '$.a', 'int') + 1 as a, " +
+          "try_variant_get(v, '$.b', 'string') as b from T_V2 " +
+          "where variant_get(v, '$.a', 'int') = 1"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
+        sql(query).queryExecution.optimizedPlan match {
           case Project(_, Filter(_, scanRelation: DataSourceV2ScanRelation)) =>
             val output = scanRelation.output
             val v = output(0)
             assert(v.dataType.isInstanceOf[StructType],
-              s"Expected v to be struct type after pushdown, but got ${v.dataType}")
+              s"Expected v to be struct type, but got ${v.dataType}")
             val vStruct = v.dataType.asInstanceOf[StructType]
-            assert(vStruct.fields.length == 2,
-              s"Expected 2 fields in struct (x and a), got ${vStruct.fields.length}")
-            assert(vStruct.fields(0).dataType == StringType)
-            assert(vStruct.fields(1).dataType == IntegerType)
-          case other => fail(s"Expected filtered V2 scan relation with variant pushdown, " +
-            s"got ${other.getClass.getName}")
+            assert(vStruct.fields.length == 2, s"Expected 2 fields in struct")
+            assert(vStruct.fields(0).dataType == IntegerType)
+            assert(vStruct.fields(1).dataType == StringType)
+          case other => fail(s"Expected filtered V2 scan relation, got ${other.getClass.getName}")
+        }
+      }
+    }
+  }
+
+  test(s"V2 test - nested variant in struct ($readerName)") {
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
+
+      withTable("temp_v1") {
+        sql(s"create table temp_v1 (vs struct<v1 variant, v2 variant, i int>) " +
+          s"using PARQUET location '$path'")
+        sql("insert into temp_v1 select named_struct('v1', parse_json('{\"a\": 1, \"b\": 2}'), " +
+          "'v2', parse_json('{\"a\": 3}'), 'i', 100)")
+      }
+
+      withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
+        val df = spark.read.parquet(path)
+        df.createOrReplaceTempView("T_V2")
+
+        val query = "select variant_get(vs.v1, '$.a', 'int') as a, " +
+          "variant_get(vs.v1, '$.b', 'int') as b, " +
+          "variant_get(vs.v2, '$.a', 'int') as a2, vs.i from T_V2"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
+        sql(query).queryExecution.optimizedPlan match {
+          case Project(_, scanRelation: DataSourceV2ScanRelation) =>
+            val output = scanRelation.output
+            val vs = output(0)
+            assert(vs.dataType.isInstanceOf[StructType])
+            val vsStruct = vs.dataType.asInstanceOf[StructType]
+            // Should have 3 fields: v1 (struct), v2 (struct), i (int)
+            assert(vsStruct.fields.length == 3, s"Expected 3 fields in vs")
+          case other => fail(s"Expected V2 scan relation, got ${other.getClass.getName}")
+        }
+      }
+    }
+  }
+
+  test(s"V2 test - no pushdown when struct is used ($readerName)") {
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
+
+      withTable("temp_v1") {
+        sql(s"create table temp_v1 (vs struct<v1 variant, v2 variant, i int>) " +
+          s"using PARQUET location '$path'")
+        sql("insert into temp_v1 select named_struct('v1', parse_json('{\"a\": 1}'), " +
+          "'v2', parse_json('{\"a\": 2}'), 'i', 100)")
+      }
+
+      withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
+        val df = spark.read.parquet(path)
+        df.createOrReplaceTempView("T_V2")
+
+        val query = "select vs, variant_get(vs.v1, '$.a', 'int') as a from T_V2"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
+        sql(query).queryExecution.optimizedPlan match {
+          case Project(_, scanRelation: DataSourceV2ScanRelation) =>
+            val output = scanRelation.output
+            val vs = output(0)
+            assert(vs.dataType.isInstanceOf[StructType])
+            val vsStruct = vs.dataType.asInstanceOf[StructType]
+            // When struct is used directly, variants inside should NOT be pushed down
+            val v1Field = vsStruct.fields.find(_.name == "v1").get
+            assert(v1Field.dataType == VariantType,
+              s"Expected v1 to remain VariantType, but got ${v1Field.dataType}")
+          case other => fail(s"Expected V2 scan relation, got ${other.getClass.getName}")
+        }
+      }
+    }
+  }
+
+  test(s"V2 test - no pushdown for variant in array ($readerName)") {
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
+
+      withTable("temp_v1") {
+        sql(s"create table temp_v1 (va array<variant>) using PARQUET location '$path'")
+        sql("insert into temp_v1 select array(parse_json('{\"a\": 1}'))")
+      }
+
+      withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
+        val df = spark.read.parquet(path)
+        df.createOrReplaceTempView("T_V2")
+
+        val query = "select variant_get(va[0], '$.a', 'int') as a from T_V2"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
+        sql(query).queryExecution.optimizedPlan match {
+          case Project(_, scanRelation: DataSourceV2ScanRelation) =>
+            val output = scanRelation.output
+            val va = output(0)
+            assert(va.dataType.isInstanceOf[ArrayType])
+            val arrayType = va.dataType.asInstanceOf[ArrayType]
+            assert(arrayType.elementType == VariantType,
+              s"Expected array element to be VariantType, but got ${arrayType.elementType}")
+          case other => fail(s"Expected V2 scan relation, got ${other.getClass.getName}")
+        }
+      }
+    }
+  }
+
+  test(s"V2 test - no pushdown for variant with default ($readerName)") {
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
+
+      withTable("temp_v1") {
+        sql(s"create table temp_v1 (vd variant default parse_json('1')) " +
+          s"using PARQUET location '$path'")
+        sql("insert into temp_v1 select parse_json('{\"a\": 1}')")
+      }
+
+      withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
+        val df = spark.read.parquet(path)
+        df.createOrReplaceTempView("T_V2")
+
+        val query = "select variant_get(vd, '$.a', 'int') as a from T_V2"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
+        sql(query)
+          .queryExecution.optimizedPlan match {
+          case Project(_, scanRelation: DataSourceV2ScanRelation) =>
+            val output = scanRelation.output
+            val vd = output(0)
+            assert(vd.dataType == VariantType,
+              s"Expected vd to remain VariantType, but got ${vd.dataType}")
+          case other => fail(s"Expected V2 scan relation, got ${other.getClass.getName}")
+        }
+      }
+    }
+  }
+
+  test(s"V2 test - no pushdown for non-literal path ($readerName)") {
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
+
+      withTable("temp_v1") {
+        sql(s"create table temp_v1 (v variant, s string) using PARQUET location '$path'")
+        sql("insert into temp_v1 values (parse_json('{\"a\": 1, \"b\": 2}'), '$.a')")
+      }
+
+      withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "") {
+        val df = spark.read.parquet(path)
+        df.createOrReplaceTempView("T_V2")
+
+        val query = "select variant_get(v, '$.a', 'int') as a, " +
+          "variant_get(v, s, 'int') as v2, v, " +
+          "cast(v as struct<b float>) as v3 from T_V2"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
+        sql(query).queryExecution.optimizedPlan match {
+          case Project(_, scanRelation: DataSourceV2ScanRelation) =>
+            val output = scanRelation.output
+            val v = output(0)
+            assert(v.dataType.isInstanceOf[StructType])
+            val vStruct = v.dataType.asInstanceOf[StructType]
+            // Should have 3 fields: literal path extraction, full variant, cast
+            assert(vStruct.fields.length == 3,
+              s"Expected 3 fields in struct, got ${vStruct.fields.length}")
+            assert(vStruct.fields(0).dataType == IntegerType)
+            assert(vStruct.fields(1).dataType == VariantType)
+            assert(vStruct.fields(2).dataType.isInstanceOf[StructType])
+          case other => fail(s"Expected V2 scan relation, got ${other.getClass.getName}")
         }
       }
     }
@@ -349,9 +581,18 @@ abstract class PushVariantIntoScanV2SuiteBase extends QueryTest with PushVariant
         val df = spark.read.format("json").load(path)
         df.createOrReplaceTempView("T_V2_JSON")
 
+        val query = "select v from T_V2_JSON"
+
+        val expectedRows = withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "false") {
+          sql(query).collect()
+        }
+
+        // Validate results are the same with and without pushdown
+        checkAnswer(sql(query), expectedRows)
+
         // JSON V2 reader performs schema inference - it won't preserve variant type
         // It will infer the schema as a typed struct instead
-        sql("select v from T_V2_JSON").queryExecution.optimizedPlan match {
+        sql(query).queryExecution.optimizedPlan match {
           case scanRelation: DataSourceV2ScanRelation =>
             val output = scanRelation.output
             // JSON format with V2 infers schema, so variant becomes a typed struct
