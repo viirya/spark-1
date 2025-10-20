@@ -61,12 +61,12 @@ class Observation(val name: String) {
 
   @volatile private var sparkSession: Option[SparkSession] = None
 
-  private val promise = Promise[Row]()
+  private val promise = Promise[Option[Row]]()
 
   /**
    * Future holding the (yet to be completed) observation.
    */
-  val future: Future[Row] = promise.future
+  val future: Future[Option[Row]] = promise.future
 
   /**
    * Attach this observation to the given [[Dataset]] to observe aggregation expressions.
@@ -97,7 +97,11 @@ class Observation(val name: String) {
   @throws[InterruptedException]
   def get: Map[String, _] = {
     val row = getRow
-    row.getValuesMap(row.schema.map(_.name))
+    if (row.isDefined) {
+      row.get.getValuesMap(row.schema.map(_.name))
+    } else {
+      Map.empty[String, Any]
+    }
   }
 
   /**
@@ -134,10 +138,9 @@ class Observation(val name: String) {
   }
 
   private[spark] def onFinish(qe: QueryExecution): Unit = {
-    qe.observedMetrics.get(name).foreach { metrics =>
-      promise.trySuccess(metrics)
-      unregister()
-    }
+    val metrics = qe.observedMetrics.get(name)
+    promise.trySuccess(metrics)
+    unregister()
   }
 
   /**
@@ -146,7 +149,7 @@ class Observation(val name: String) {
    * @return
    *   the observed metrics as a `Row`.
    */
-  private[sql] def getRow: Row = {
+  private[sql] def getRow: Option[Row] = {
     SparkThreadUtils.awaitResult(future, Duration.Inf)
   }
 }
