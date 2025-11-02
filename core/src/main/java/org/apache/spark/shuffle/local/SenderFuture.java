@@ -344,12 +344,23 @@ public class SenderFuture<T> {
     });
   }
 
+  /**
+   * Represents the state of channel availability when the sender needs to flush queued data.
+   * Used by nextQueue() to determine which queue/channel pair to process.
+   */
   enum ChannelState {
+    /** No queues have pending data to send - sender is done */
     NO_DATA,
+    /** Some queues have data but all corresponding channels are locked by other threads */
     NO_UNLOCKED_CHANNEL,
+    /** Found a queue with data and successfully acquired its channel lock */
     LOCKED_CHANNEL,
   }
 
+  /**
+   * Encapsulates the result of attempting to find the next queue to process.
+   * Contains the channel state and the channel ID if applicable.
+   */
   class State {
     private final ChannelState state;
     private int channelId = -1;

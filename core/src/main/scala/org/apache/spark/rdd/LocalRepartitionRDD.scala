@@ -152,7 +152,24 @@ object LocalRepartition {
   /**
    * Initialize the channel map for the given LocalRepartitionRDD.
    * Launch async tasks for each input partition.
-   * This method is thread-safe.
+   *
+   * This method is called once per LocalRepartitionRDD by the first receiver task.
+   * It sets up:
+   * 1. Channels for data exchange between input and output partitions
+   * 2. Senders (one per input partition) to read and distribute data
+   * 3. Receivers (one per output partition) to collect partitioned data
+   * 4. Sender tasks that run asynchronously using virtual threads
+   *
+   * The method is thread-safe and uses double-locking to ensure only one initialization
+   * occurs even if multiple receiver tasks call it concurrently.
+   *
+   * @param rdd The LocalRepartitionRDD being initialized
+   * @param split The partition being computed by the current receiver task
+   * @param context The task context for the current receiver task
+   * @param queueSize Maximum number of elements each channel can buffer
+   * @param senderQueueSize Size of sender's internal buffer before flushing to channel
+   * @param receiverQueueSize Size of receiver's internal buffer when pulling from channel
+   * @param maxSenderNum Maximum number of concurrent sender tasks
    */
   def initiate[T: ClassTag](
       rdd: LocalRepartitionRDD[T],
@@ -165,15 +182,19 @@ object LocalRepartition {
     LocalRepartition.synchronized {
       channelMap.synchronized {
         // Initiate the channel map for the local repartition rdd if it doesn't exist.
+        // This ensures initialization happens exactly once per RDD.
         if (!channelMap.contains(rdd.id)) {
           channelMap(rdd.id) =
             new mutable.ArrayBuffer[Option[Receiver[Any]]]
 
-          // Create a channel for each output partition
+          // Create a channel for each output partition.
+          // Each channel is a FIFO queue with backpressure via queueSize limit.
           val channels = Channel.createChannels[T](rdd.part.numPartitions, queueSize)
             .asScala.toArray
 
-          // Create a sender for each input partition
+          // Create a sender for each input partition.
+          // Each sender will read its input partition and distribute rows
+          // to appropriate output channels based on partitioning logic.
           val senders = mutable.ArrayBuffer[Sender[Any]]()
           for (i <- 0 until split.inputPartitions.length) {
             val senderContext = createSenderTaskContext(context, i, split.inputPartitions.length)
@@ -181,20 +202,24 @@ object LocalRepartition {
               senderContext).asInstanceOf[Sender[Any]]
           }
 
-          // Create a receiver for each output partition
+          // Create a receiver for each output partition.
+          // Each receiver pulls data from its dedicated channel.
           for (i <- 0 until rdd.part.numPartitions) {
             channelMap(rdd.id) +=
               Some(channels(i).createReceiver(rdd.id, receiverQueueSize)
                 .asInstanceOf[Receiver[Any]])
           }
 
-          // Launch one async task per *input* partition
+          // Launch sender tasks asynchronously.
+          // Only maxSenderNum senders start immediately; others start via callback chain.
           launchInputTasks(senders.toSeq, rdd, split, rdd.part, maxSenderNum)
         } else {
-          // no-op
+          // no-op: already initialized by another receiver task
         }
       }
 
+      // Register cleanup logic when this receiver task completes.
+      // This ensures proper resource cleanup even if task fails.
       context.addTaskCompletionListener[Unit](_ => {
         channelMap.synchronized {
           val receiver = channelMap(rdd.id)(split.index)
@@ -203,11 +228,13 @@ object LocalRepartition {
             channelMap(rdd.id)(split.index) = None
           }
 
+          // Clean up the entire channel map when all receivers are done.
           if (channelMap(rdd.id).forall(_.isEmpty)) {
             channelMap.remove(rdd.id)
           }
         }
 
+        // Check for errors in sender tasks and propagate them to receiver.
         tasksMap.synchronized {
           val tasks = tasksMap.get(rdd.id)
           if (tasks.isDefined) {
@@ -294,6 +321,24 @@ object LocalRepartition {
   }
 }
 
+/**
+ * Callback invoked when a sender task completes. This implements a chain reaction pattern
+ * where completing one sender task triggers the next sender task, allowing controlled
+ * parallelism of sender tasks based on the configured max sender number.
+ *
+ * This design prevents overwhelming the system with too many concurrent sender tasks while
+ * still ensuring all input partitions are eventually processed.
+ *
+ * @param senders The sequence of all sender objects, one per input partition
+ * @param startSenderIdx The index of the first sender that should be triggered via callback
+ *                       (senders before this are launched directly in launchInputTasks)
+ * @param serializedRDD Serialized form of the RDD to be sent by each sender
+ * @param inputPartitions Array of input partitions to be processed
+ * @param clazz The runtime class of the RDD
+ * @param part The partitioner used to distribute data across output partitions
+ * @param threadExecutor The executor service for running sender tasks
+ * @param tasks Buffer to store Future objects for tracking task completion
+ */
 class SenderCallBack(
     val senders: Seq[Sender[Any]],
     val startSenderIdx: Int,
@@ -304,11 +349,14 @@ class SenderCallBack(
     val threadExecutor: ExecutorService,
     val tasks: mutable.ArrayBuffer[Future[Optional[Throwable]]]) extends Callable[Void] {
 
+  // Atomic counter to ensure thread-safe assignment of the next sender to launch
   val senderIdx = new java.util.concurrent.atomic.AtomicInteger(startSenderIdx)
 
   override def call(): Void = {
     val idx = senderIdx.getAndIncrement()
 
+    // Launch the next sender if there are more senders to process
+    // idx > 0 check ensures we skip senders already launched directly
     if (idx > 0 && idx < senders.length) {
       val future = senders(idx)
         .send(serializedRDD, inputPartitions(idx), clazz, part, this)
