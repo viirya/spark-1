@@ -212,6 +212,10 @@ public class SenderFuture<T> {
       if (channel.getChannelGate().getEmptyChannelNumber() == 0 &&
               channel.isReachedMaxQueueSize()) {
         tryWait(channel);
+        // Check again if channel was closed while waiting
+        if (channel.isClosed()) {
+          return true;
+        }
       }
 
       boolean wasEmpty = channel.isEmpty();
@@ -238,16 +242,14 @@ public class SenderFuture<T> {
       // Set the task context for the current thread
       TaskContext$.MODULE$.setTaskContext(taskContext);
 
-      // Deserialize the task binary
-      SerializerInstance ser = env.closureSerializer().newInstance();
-      ClassTag<RDD<T>> tag = ClassTag$.MODULE$.apply(clazz);
-      RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task),
-                Thread.currentThread().getContextClassLoader(), tag);
-      Iterator<T> iterator = rdd.iterator(partition, taskContext);
-
-
       Channel<T> channel = null;
       try {
+        // Deserialize the task binary
+        SerializerInstance ser = env.closureSerializer().newInstance();
+        ClassTag<RDD<T>> tag = ClassTag$.MODULE$.apply(clazz);
+        RDD<T> rdd = ser.deserialize(ByteBuffer.wrap(task),
+                  Thread.currentThread().getContextClassLoader(), tag);
+        Iterator<T> iterator = rdd.iterator(partition, taskContext);
         while (!Thread.currentThread().isInterrupted()) {
           boolean iterHasNext = iterator.hasNext();
 
@@ -307,8 +309,9 @@ public class SenderFuture<T> {
 
         return Optional.empty();
       } catch (Throwable e) {
-        if (channel != null) {
-          channel.setError(e);
+        // Set error on all channels to notify all receivers
+        for (Channel<T> ch : channels) {
+          ch.setError(e);
         }
         sender.close();
         return Optional.of(e);

@@ -119,7 +119,11 @@ public class ReceiverFuture<T> {
         }
       }
       return Optional.empty();
+    } catch (RuntimeException e) {
+      // Re-throw runtime exceptions (like IllegalStateException) without wrapping
+      throw e;
     } catch (Exception e) {
+      // Wrap checked exceptions
       throw new RuntimeException(e);
     }
   }

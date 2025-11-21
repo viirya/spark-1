@@ -60,7 +60,7 @@ public class Channel<T> {
   // A waker to wake up the receiver when data is available.
   private Waker currentWaker;
 
-  private Optional<Throwable> error = Optional.empty();
+  private volatile Optional<Throwable> error = Optional.empty();
 
   public static <T> List<Channel<T>> createChannels(int numChannels, int queueSize) {
     List<Channel<T>> channels = new LinkedList<>();
@@ -99,6 +99,9 @@ public class Channel<T> {
   void setClosed() {
     canAddReceiverWaker.set(false);
     this.closed.set(true);
+    // Wake up any senders that might be waiting
+    channelGate.wakeSenders(id);
+    wakeReceivers();
   }
 
   int getId() {
