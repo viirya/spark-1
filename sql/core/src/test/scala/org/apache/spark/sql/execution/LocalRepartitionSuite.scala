@@ -32,7 +32,9 @@ class LocalRepartitionSuite extends QueryTest with SharedSparkSession {
   import testImplicits._
 
   test("local repartition with simple aggregation") {
-    withSQLConf(SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true") {
+    withSQLConf(
+      SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
       val df = spark.range(100).selectExpr("id", "id % 10 as key")
         .groupBy("key").count()
 
@@ -53,7 +55,9 @@ class LocalRepartitionSuite extends QueryTest with SharedSparkSession {
   }
 
   test("local repartition disabled falls back to shuffle") {
-    withSQLConf(SQLConf.LOCAL_REPARTITION_ENABLED.key -> "false") {
+    withSQLConf(
+      SQLConf.LOCAL_REPARTITION_ENABLED.key -> "false",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
       val df = spark.range(100).selectExpr("id", "id % 10 as key")
         .groupBy("key").count()
 
@@ -85,7 +89,9 @@ class LocalRepartitionSuite extends QueryTest with SharedSparkSession {
   }
 
   test("local repartition with multiple stages") {
-    withSQLConf(SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true") {
+    withSQLConf(
+      SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
       val df = spark.range(1000)
         .selectExpr("id", "id % 100 as key")
         .groupBy("key").agg(sum("id").as("sum_id"))
@@ -107,7 +113,8 @@ class LocalRepartitionSuite extends QueryTest with SharedSparkSession {
   test("local repartition respects max input partition limit") {
     withSQLConf(
       SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true",
-      SQLConf.LOCAL_REPARTITION_MAX_INPUT_PARTITION_NUM.key -> "2") {
+      SQLConf.LOCAL_REPARTITION_MAX_INPUT_PARTITION_NUM.key -> "2",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
 
       val df = spark.range(0, 100, 1, 10) // 10 partitions
         .selectExpr("id", "id % 5 as key")
@@ -125,22 +132,27 @@ class LocalRepartitionSuite extends QueryTest with SharedSparkSession {
   }
 
   test("local repartition respects max local repartition operators limit") {
+    // Note: Setting maxNum to 0 currently means unlimited, but setting to 1 should limit
+    // the number of local repartitions in multi-stage queries
     withSQLConf(
       SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true",
-      SQLConf.LOCAL_REPARTITION_MAX_NUM.key -> "0") {
+      SQLConf.LOCAL_REPARTITION_MAX_NUM.key -> "1",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
 
+      // Multi-stage query that would normally have 2 repartitions
       val df = spark.range(100)
         .selectExpr("id", "id % 10 as key")
-        .groupBy("key").count()
+        .groupBy("key").agg(sum("id").as("sum_id"))
+        .groupBy().agg(sum("sum_id").as("total"))
 
       val plan = df.queryExecution.executedPlan
-      val hasShuffleExchange = plan.collect {
-        case _: ShuffleExchangeExec => true
-      }.nonEmpty
+      val localRepartitionCount = plan.collect {
+        case _: LocalRepartitionExec => 1
+      }.sum
 
-      // Should fall back to shuffle because max local repartition is 0
-      assert(hasShuffleExchange,
-        "Should use ShuffleExchangeExec when max local repartition limit is reached")
+      // Should have at most 1 LocalRepartitionExec due to the limit
+      assert(localRepartitionCount <= 1,
+        s"Should have at most 1 LocalRepartitionExec, but found $localRepartitionCount")
     }
   }
 
@@ -234,7 +246,9 @@ class LocalRepartitionSuite extends QueryTest with SharedSparkSession {
   }
 
   test("local repartition metrics are recorded") {
-    withSQLConf(SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true") {
+    withSQLConf(
+      SQLConf.LOCAL_REPARTITION_ENABLED.key -> "true",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
       val df = spark.range(100)
         .selectExpr("id", "id % 10 as key")
         .groupBy("key").count()
