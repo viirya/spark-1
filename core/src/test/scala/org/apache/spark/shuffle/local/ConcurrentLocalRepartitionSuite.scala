@@ -49,7 +49,8 @@ class ConcurrentLocalRepartitionSuite extends SparkFunSuite
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, numSenders, null, null, null)
       val senders = (0 until numSenders).map { i =>
-        val senderContext = LocalRepartition.createSenderTaskContext(context, i, numSenders)
+        val senderContext = LocalRepartition
+          .createSenderTaskContext(context, i, numSenders, 1000L + i)
         new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
       }
 
@@ -80,7 +81,7 @@ class ConcurrentLocalRepartitionSuite extends SparkFunSuite
       val channels = Channel.createChannels[Long](1, 10).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = sc.range(0, 100, 1, 1)
@@ -113,7 +114,7 @@ class ConcurrentLocalRepartitionSuite extends SparkFunSuite
       val receiver = channels(0).createReceiver(0, 10)
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = new ErrorRDD(sc, "Test error")
@@ -173,7 +174,7 @@ class ConcurrentLocalRepartitionSuite extends SparkFunSuite
       val channels = Channel.createChannels[Long](1, 100).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10000, sc.env, senderContext)
         .asInstanceOf[Sender[Any]]
 
@@ -201,7 +202,7 @@ class ConcurrentLocalRepartitionSuite extends SparkFunSuite
       val receiver = channels(0).createReceiver(0, 1) // Very small buffer
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = sc.range(0, 10, 1, 1)
@@ -253,7 +254,7 @@ class ConcurrentLocalRepartitionSuite extends SparkFunSuite
       val channels = Channel.createChannels[Long](3, 10).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = sc.range(0, 30, 1, 1)

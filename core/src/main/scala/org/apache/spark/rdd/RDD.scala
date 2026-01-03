@@ -494,7 +494,7 @@ abstract class RDD[T: ClassTag](
    * suitable for local deployment mode.
    */
   def localRepartition(numPartitions: Int, serializedRDD: Array[Byte]): RDD[T] = {
-    new LocalRepartitionRDD(sc, this, id, new HashPartitioner(numPartitions), serializedRDD)
+    localRepartition(new HashPartitioner(numPartitions), serializedRDD)
   }
 
   /**
@@ -505,7 +505,14 @@ abstract class RDD[T: ClassTag](
    * suitable for local deployment mode.
    */
   def localRepartition(part: Partitioner, serializedRDD: Array[Byte]): RDD[T] = {
-    new LocalRepartitionRDD(sc, this, id, part, serializedRDD)
+    // Pre-allocate task IDs for all sender tasks on the driver.
+    // Each input partition will have a corresponding sender task that needs a unique task ID.
+    val taskScheduler = sc.taskScheduler.asInstanceOf[org.apache.spark.scheduler.TaskSchedulerImpl]
+    val senderTaskIds = Array.fill(partitions.length) {
+      taskScheduler.newTaskId()
+    }
+
+    new LocalRepartitionRDD(sc, this, id, part, serializedRDD, senderTaskIds)
   }
 
   /**

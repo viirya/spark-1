@@ -62,7 +62,7 @@ class ReceiverSuite extends SparkFunSuite with LocalSparkContext with LocalRepar
       val channels = Channel.createChannels[Long](1, 10).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = sc.range(0, 10, 1, 1)
@@ -115,8 +115,8 @@ class ReceiverSuite extends SparkFunSuite with LocalSparkContext with LocalRepar
 
       // Create two senders
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 2, null, null, null)
-      val sender1Context = LocalRepartition.createSenderTaskContext(context, 0, 2)
-      val sender2Context = LocalRepartition.createSenderTaskContext(context, 1, 2)
+      val sender1Context = LocalRepartition.createSenderTaskContext(context, 0, 2, 1000L)
+      val sender2Context = LocalRepartition.createSenderTaskContext(context, 1, 2, 1001L)
       val sender1 = new Sender(0, channels, 10, sc.env, sender1Context).asInstanceOf[Sender[Any]]
       val sender2 = new Sender(0, channels, 10, sc.env, sender2Context).asInstanceOf[Sender[Any]]
 

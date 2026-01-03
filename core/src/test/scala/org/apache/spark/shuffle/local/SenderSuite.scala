@@ -18,7 +18,6 @@
 package org.apache.spark.shuffle.local
 
 import java.util
-import java.util.concurrent.ExecutionException
 
 import scala.jdk.CollectionConverters.ListHasAsScala
 import scala.reflect.ClassTag
@@ -41,7 +40,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val channels = Channel.createChannels[Long](1, 10).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = sc.range(0, 10, 1, 1)
@@ -66,7 +65,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val channels = Channel.createChannels[Long](1, 10).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = new TestErrorRDD(sc)
@@ -76,10 +75,11 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val partitioner = new HashPartitioner(1)
 
       val sendFuture = sender.send(serializedRDD, partitions(0), clazz, partitioner, null)
-      val exception = intercept[ExecutionException] {
-        sendFuture.getFuture(threadExecutor).get()
-      }
-      assert(exception.getCause.isInstanceOf[SparkException])
+      // SenderFuture returns Optional<Throwable>, where empty = success, non-empty = error
+      val result = sendFuture.getFuture(threadExecutor).get()
+      assert(result.isPresent, "Expected error to be captured in Optional")
+      assert(result.get().isInstanceOf[SparkException],
+        s"Expected SparkException but got ${result.get().getClass.getName}")
     }
   }
 
@@ -92,7 +92,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val channels = Channel.createChannels[Long](2, 10).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 2, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 10, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = sc.range(0, 10, 1, 1)
@@ -145,7 +145,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
       val channels = Channel.createChannels[java.lang.Long](1, 1).asScala.toArray
 
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 1, null, null, null)
-      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1)
+      val senderContext = LocalRepartition.createSenderTaskContext(context, 0, 1, 1000L)
       val sender = new Sender(0, channels, 1, sc.env, senderContext).asInstanceOf[Sender[Any]]
 
       val rdd = sc.range(0, 10, 1, 1)
@@ -199,8 +199,8 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
 
       // Create two senders
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 2, null, null, null)
-      val sender1Context = LocalRepartition.createSenderTaskContext(context, 0, 2)
-      val sender2Context = LocalRepartition.createSenderTaskContext(context, 1, 2)
+      val sender1Context = LocalRepartition.createSenderTaskContext(context, 0, 2, 1000L)
+      val sender2Context = LocalRepartition.createSenderTaskContext(context, 1, 2, 1001L)
       val sender1 = new Sender(0, channels, 10, sc.env, sender1Context).asInstanceOf[Sender[Any]]
       val sender2 = new Sender(0, channels, 10, sc.env, sender2Context).asInstanceOf[Sender[Any]]
 
@@ -257,8 +257,8 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
 
       // Create two senders
       val context = new TaskContextImpl(0, 0, 0, 0, 0, 2, null, null, null)
-      val sender1Context = LocalRepartition.createSenderTaskContext(context, 0, 2)
-      val sender2Context = LocalRepartition.createSenderTaskContext(context, 1, 2)
+      val sender1Context = LocalRepartition.createSenderTaskContext(context, 0, 2, 1000L)
+      val sender2Context = LocalRepartition.createSenderTaskContext(context, 1, 2, 1001L)
       val sender1 = new Sender(0, channels, 10, sc.env, sender1Context).asInstanceOf[Sender[Any]]
       val sender2 = new Sender(0, channels, 10, sc.env, sender2Context).asInstanceOf[Sender[Any]]
 

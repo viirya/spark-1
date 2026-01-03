@@ -231,15 +231,7 @@ private[spark] class TaskSchedulerImpl(
     schedulableBuilder.buildPools()
   }
 
-  def newTaskId(): Long = {
-    val next = nextTaskId.getAndIncrement()
-    if (next >= LOCAL_TASK_ID_RANGE.start) {
-      nextTaskId.set(0)
-      nextTaskId.getAndIncrement()
-    } else {
-      next
-    }
-  }
+  def newTaskId(): Long = nextTaskId.getAndIncrement()
 
   override def start(): Unit = {
     backend.start()
@@ -1212,21 +1204,6 @@ private[spark] class TaskSchedulerImpl(
 private[spark] object TaskSchedulerImpl {
 
   val SCHEDULER_MODE_PROPERTY = SCHEDULER_MODE.key
-
-  val LOCAL_TASK_ID_RANGE = Long.MaxValue / 2 until Long.MaxValue
-
-  // Incrementing task IDs for local tasks.
-  val nextTaskId = new AtomicLong(LOCAL_TASK_ID_RANGE.start)
-
-  def newTaskId(): Long = {
-    val next = nextTaskId.getAndIncrement()
-    if (next == TaskSchedulerImpl.LOCAL_TASK_ID_RANGE.end) {
-      nextTaskId.set(LOCAL_TASK_ID_RANGE.start)
-      nextTaskId.getAndIncrement()
-    } else {
-      next
-    }
-  }
 
   /**
    * Calculate the max available task slots given the `availableCpus` and `availableResources`

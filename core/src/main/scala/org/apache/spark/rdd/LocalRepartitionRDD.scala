@@ -30,7 +30,6 @@ import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.config
 import org.apache.spark.memory.TaskMemoryManager
-import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.shuffle.local._
 import org.apache.spark.util.Utils
 
@@ -46,8 +45,17 @@ class LocalRepartitionRDD[T: ClassTag](
     @transient private var rdd: RDD[T],
     val parentRDDID: Int,
     val part: Partitioner,
-    val serializedRDD: Array[Byte])
+    val serializedRDD: Array[Byte],
+    // Pre-allocated task IDs for sender tasks (one per input partition)
+    val senderTaskIds: Array[Long])
   extends RDD[T](sc, Nil) {
+
+  require(senderTaskIds != null, "senderTaskIds cannot be null")
+  require(senderTaskIds.length == rdd.partitions.length,
+    s"Expected ${rdd.partitions.length} sender task IDs for input partitions, " +
+    s"but got ${senderTaskIds.length}")
+  require(senderTaskIds.distinct.length == senderTaskIds.length,
+    "Sender task IDs must be unique")
 
   override def getDependencies: Seq[Dependency[_]] = {
     Seq(new LocalRepartitionDependency(rdd))
@@ -197,7 +205,9 @@ object LocalRepartition {
           // to appropriate output channels based on partitioning logic.
           val senders = mutable.ArrayBuffer[Sender[Any]]()
           for (i <- 0 until split.inputPartitions.length) {
-            val senderContext = createSenderTaskContext(context, i, split.inputPartitions.length)
+            val preAllocatedTaskId = rdd.senderTaskIds(i)
+            val senderContext = createSenderTaskContext(
+              context, i, split.inputPartitions.length, preAllocatedTaskId)
             senders += new Sender(rdd.parentRDDID, channels, senderQueueSize, SparkEnv.get,
               senderContext).asInstanceOf[Sender[Any]]
           }
@@ -298,18 +308,26 @@ object LocalRepartition {
 
   /**
    * Create a new TaskContext for the sender task.
+   *
+   * @param context The parent receiver task's context
+   * @param splitId The partition index for this sender
+   * @param numSplits Total number of input partitions (senders)
+   * @param preAllocatedTaskId The task ID pre-allocated on the driver for this sender
    */
-  def createSenderTaskContext(context: TaskContext, splitId: Int, numSplits: Int): TaskContext = {
-    val taskAttemptId = TaskSchedulerImpl.newTaskId()
+  def createSenderTaskContext(
+      context: TaskContext,
+      splitId: Int,
+      numSplits: Int,
+      preAllocatedTaskId: Long): TaskContext = {
     val blockManager = SparkEnv.get.blockManager
-    blockManager.registerTask(taskAttemptId)
+    blockManager.registerTask(preAllocatedTaskId)
 
-    val taskMemoryManager = new TaskMemoryManager(SparkEnv.get.memoryManager, taskAttemptId)
+    val taskMemoryManager = new TaskMemoryManager(SparkEnv.get.memoryManager, preAllocatedTaskId)
     new TaskContextImpl(
       context.stageId(),
       context.stageAttemptNumber(),
       splitId,
-      taskAttemptId,
+      preAllocatedTaskId,
       0,
       numSplits,
       taskMemoryManager,
