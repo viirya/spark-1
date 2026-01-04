@@ -316,6 +316,18 @@ public class SenderFuture<T> {
         sender.close();
         return Optional.of(e);
       } finally {
+        // Execute callback first, before cleanup, to chain next sender
+        // Callback errors are logged but don't prevent cleanup
+        if (callback != null) {
+          try {
+            callback.call();
+          } catch (Exception e) {
+            // Log callback error but continue with cleanup
+            System.err.println("Error in sender callback: " + e.getMessage());
+            e.printStackTrace();
+          }
+        }
+
         taskContext.markTaskCompleted(Option.empty());
 
         // See `Task.scala` and `Executor.scala` for the details of the task lifecycle.
@@ -332,16 +344,6 @@ public class SenderFuture<T> {
           env.blockManager().releaseAllLocksForTask(taskContext.taskAttemptId());
           taskContext.taskMemoryManager().cleanUpAllAllocatedMemory();
           TaskContext$.MODULE$.unset();
-
-          // Call the callback if it is not null
-          if (callback != null) {
-            try {
-              callback.call();
-            } catch (Exception e) {
-              // Handle the exception from the callback
-              throw new RuntimeException("Error in callback", e);
-            }
-          }
         }
       }
     });
