@@ -96,16 +96,15 @@ public class ChannelGate {
    * the senders will be possibly added to the waker list.
    */
   void decrementEmptyChannelNumber() {
-    int oldCount = emptyChannelCounter.getAndAdd(-1);
-    if (oldCount == 1) {
-      try {
-        lock.lock();
-        if (emptyChannelCounter.get() == 0 && senderWakers == null) {
-          senderWakers = new LinkedList<>();
-        }
-      } finally {
-        lock.unlock();
+    try {
+      lock.lock();
+      int newCount = emptyChannelCounter.decrementAndGet();
+      // Initialize sender waker list when all channels become full
+      if (newCount == 0 && senderWakers == null) {
+        senderWakers = new LinkedList<>();
       }
+    } finally {
+      lock.unlock();
     }
   }
 
