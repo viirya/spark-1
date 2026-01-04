@@ -248,11 +248,16 @@ object LocalRepartition {
         tasksMap.synchronized {
           val tasks = tasksMap.get(rdd.id)
           if (tasks.isDefined) {
-            tasks.get.foreach { task =>
-              if (task != null && task.isDone) {
-                val err = task.get()
-                if (err.isPresent) {
-                  throw err.get
+            val tasksArray = tasks.get
+            // Synchronize access to tasks array to ensure visibility of updates from sender threads
+            tasksArray.synchronized {
+              tasksArray.foreach { task =>
+                // Null tasks indicate senders not yet started via callback
+                if (task != null && task.isDone) {
+                  val err = task.get()
+                  if (err.isPresent) {
+                    throw err.get
+                  }
                 }
               }
             }
@@ -379,8 +384,12 @@ class SenderCallBack(
       val future = senders(idx)
         .send(serializedRDD, inputPartitions(idx), clazz, part, this)
         .getFuture(threadExecutor)
+      // Synchronize tasks array update to ensure visibility across threads
+      // Multiple callbacks can run concurrently on virtual threads
       if (tasks != null && idx < tasks.length) {
-        tasks(idx) = future
+        tasks.synchronized {
+          tasks(idx) = future
+        }
       }
     }
 
