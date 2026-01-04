@@ -117,11 +117,11 @@ public class Channel<T> {
   }
 
   void setError(Throwable error) {
-    setClosed();
-
+    // Set error first before closing/waking to ensure threads see error state
     this.error = Optional.of(error);
-    channelGate.wakeSenders(id);
-    wakeReceivers();
+
+    // setClosed() will wake senders and receivers, ensuring they see the error
+    setClosed();
   }
 
   public void addSender() {
