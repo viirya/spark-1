@@ -76,6 +76,8 @@ public class ChannelGate {
   void getSenderWakers(LinkedList<Map.Entry<Waker, Integer>> wakers) {
     if (senderWakers != null) {
       wakers.addAll(senderWakers);
+      // Clear the list before nulling to help GC release waker references sooner
+      senderWakers.clear();
       senderWakers = null;
     }
   }
