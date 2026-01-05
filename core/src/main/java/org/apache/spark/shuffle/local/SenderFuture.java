@@ -23,6 +23,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.nio.ByteBuffer;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import scala.Option;
 import scala.collection.Iterator;
 import scala.reflect.ClassTag;
@@ -60,6 +63,13 @@ import org.apache.spark.serializer.SerializerInstance;
  * @param <T> The type of data being sent.
  */
 public class SenderFuture<T> {
+  private static final Logger logger = LoggerFactory.getLogger(SenderFuture.class);
+
+  // Threshold multiplier for aggressive queue flushing
+  // When queue size is between senderQueueSize and senderQueueSize * this multiplier,
+  // we use tryLock instead of blocking lock to avoid contention
+  private static final double QUEUE_FLUSH_THRESHOLD_MULTIPLIER = 1.5;
+
   private final Sender<T> sender;
   private final Channel<T>[] channels;
   private final Partitioner partitioner;
@@ -175,7 +185,7 @@ public class SenderFuture<T> {
     // If the channel was empty before, decrement the empty channel number.
     channel.getChannelGate().decrementEmptyChannelNumber();
     // If the channel was empty before, wake up the receiver if there is one waiting.
-    Waker waker = channel.getCurrentWake();
+    Waker waker = channel.getCurrentWaker();
     channel.unlockChannel();
     channelLocked = false;
 
@@ -272,7 +282,7 @@ public class SenderFuture<T> {
               continue;
             }
 
-            if (queue.size() < senderQueueSize * 1.5) {
+            if (queue.size() < senderQueueSize * QUEUE_FLUSH_THRESHOLD_MULTIPLIER) {
               if (channel.tryLockChannel()) {
                 channelLocked = true;
               } else {
@@ -323,8 +333,7 @@ public class SenderFuture<T> {
             callback.call();
           } catch (Exception e) {
             // Log callback error but continue with cleanup
-            System.err.println("Error in sender callback: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("Error in sender callback", e);
           }
         }
 

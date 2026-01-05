@@ -32,7 +32,7 @@ public class Receiver<T> {
   private int receiverId;
   private final AtomicInteger received = new AtomicInteger(0);
 
-  private static AtomicInteger nextReceiverId = new AtomicInteger(0);
+  private static final AtomicInteger nextReceiverId = new AtomicInteger(0);
 
   private final int maxQueueSize;
   private final LinkedList<T> queue = new LinkedList<>();

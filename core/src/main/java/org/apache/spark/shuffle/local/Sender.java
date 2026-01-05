@@ -42,7 +42,7 @@ public class Sender<T> {
   private int senderId;
   private int senderQueueSize;
 
-  private static AtomicInteger nextSenderId = new AtomicInteger(0);
+  private static final AtomicInteger nextSenderId = new AtomicInteger(0);
 
   public Sender(int rddId, Channel<T>[] channels, int senderQueueSize, SparkEnv env,
                 TaskContext taskContext) {
@@ -68,7 +68,7 @@ public class Sender<T> {
             if (!channel.isClosed() && channel.isEmpty()) {
               channel.getChannelGate().decrementEmptyChannelNumber();
             }
-            receiverWaker = channel.getCurrentWake();
+            receiverWaker = channel.getCurrentWaker();
 
             // The channel cannot add a new receiver waker
             channel.disableReceiverWaker();

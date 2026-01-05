@@ -44,12 +44,12 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class Channel<T> {
   private final int id;
-  private AtomicBoolean closed = new AtomicBoolean(false);
+  private final AtomicBoolean closed = new AtomicBoolean(false);
 
   private final LinkedList<T> queue;
   // A flag to indicate whether a receiver waker can be added.
   // Once a channel has no more senders, the last sender will turn this flag to false.
-  private AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
+  private final AtomicBoolean canAddReceiverWaker = new AtomicBoolean(true);
   private final ChannelGate channelGate;
   private final AtomicInteger numSenders = new AtomicInteger(0);
   private final int queueSize;
@@ -146,7 +146,7 @@ public class Channel<T> {
    *
    * @return The current waker.
    */
-  Waker getCurrentWake() {
+  Waker getCurrentWaker() {
     Waker waker = currentWaker;
     currentWaker = null;
     return waker;
