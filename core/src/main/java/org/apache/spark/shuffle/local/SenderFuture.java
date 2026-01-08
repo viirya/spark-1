@@ -341,7 +341,7 @@ public class SenderFuture<T> {
             callback.call();
           } catch (Exception e) {
             // Log callback error but continue with cleanup
-            logger.error("Error in sender callback", e);
+            logger.error("Error in sender callback for sender {} on RDD {}", senderId, rddId, e);
           }
         }
 

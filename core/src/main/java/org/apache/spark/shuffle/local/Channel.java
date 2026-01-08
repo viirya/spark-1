@@ -124,10 +124,22 @@ public class Channel<T> {
     setClosed();
   }
 
+  /**
+   * Registers a new sender with this channel by incrementing the sender count.
+   * This is called when a sender is created and begins sending data to this channel.
+   * The sender count is used to track when all senders have finished and the channel
+   * can be closed.
+   */
   public void addSender() {
     numSenders.incrementAndGet();
   }
 
+  /**
+   * Decrements the sender count and returns the new count.
+   * Called when a sender finishes sending data to this channel.
+   *
+   * @return The number of active senders remaining after decrementing.
+   */
   public int decrementSenderCount() {
     return numSenders.decrementAndGet();
   }

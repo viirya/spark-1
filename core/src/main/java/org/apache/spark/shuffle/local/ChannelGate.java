@@ -27,12 +27,21 @@ import java.util.concurrent.locks.ReentrantLock;
  * During data exchange between senders, receivers through channels, this class manages the channel
  * states. It keeps track of the number of empty channels and manages the wakers for senders.
  * <p>
+ * The senderWakers field follows this lifecycle:
+ * <ul>
+ *   <li>Null during normal operation when at least one channel has space</li>
+ *   <li>Initialized to an empty list when all channels become full (emptyChannelCounter reaches 0)</li>
+ *   <li>Accumulates sender wakers while all channels remain full</li>
+ *   <li>Nulled again after waking all queued senders when channels become available</li>
+ * </ul>
+ * <p>
  * The class is thread-safe and uses locks to protect shared resources.
  */
 public class ChannelGate {
   private AtomicInteger emptyChannelCounter;
-  // Null after waking all senders, initiated when all channels become full
-  // (i.e., we will begin to add sender wakers
+  // Null during normal operation. Initialized when all channels become full
+  // (i.e., emptyChannelCounter reaches 0), enabling sender wakers to be queued.
+  // Nulled again when channels become available and all queued senders are woken.
   private LinkedList<Map.Entry<Waker, Integer>> senderWakers;
   private final ReentrantLock lock = new ReentrantLock();
 
