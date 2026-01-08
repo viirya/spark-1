@@ -161,7 +161,7 @@ class SenderSuite extends SparkFunSuite with LocalSparkContext with LocalReparti
 
       Eventually.eventually(Timeout(1.second)) {
         assert(channels(0).getAllData.asScala.toArray === Array(0))
-        assert(channels(0).isReachedMaxQueueSize)
+        assert(channels(0).hasReachedMaxQueueSize)
       }
 
       // The sender is waiting

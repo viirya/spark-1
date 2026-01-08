@@ -36,9 +36,9 @@ public class ChannelGate {
   private LinkedList<Map.Entry<Waker, Integer>> senderWakers;
   private final ReentrantLock lock = new ReentrantLock();
 
-  ChannelGate(int numChannel) {
+  ChannelGate(int numChannels) {
     this.senderWakers = null;
-    this.emptyChannelCounter = new AtomicInteger(numChannel);
+    this.emptyChannelCounter = new AtomicInteger(numChannels);
   }
 
 

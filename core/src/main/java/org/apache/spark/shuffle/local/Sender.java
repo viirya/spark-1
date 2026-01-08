@@ -39,7 +39,7 @@ public class Sender<T> {
   private final TaskContext taskContext;
   private final SparkEnv env;
   private final int rddId;
-  private int senderId;
+  private final int senderId;
   private int senderQueueSize;
 
   private static final AtomicInteger nextSenderId = new AtomicInteger(0);
@@ -60,7 +60,7 @@ public class Sender<T> {
   public void close() {
     if (!closed) {
       for (Channel<T> channel : channels) {
-        if (channel.reduceNumSenders() == 0) {
+        if (channel.decrementSenderCount() == 0) {
           Waker receiverWaker;
           try {
             channel.lockChannel();

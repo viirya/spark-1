@@ -128,7 +128,7 @@ public class Channel<T> {
     numSenders.incrementAndGet();
   }
 
-  public int reduceNumSenders() {
+  public int decrementSenderCount() {
     return numSenders.decrementAndGet();
   }
 
@@ -185,7 +185,7 @@ public class Channel<T> {
     return queue.size();
   }
 
-  boolean isReachedMaxQueueSize() {
+  boolean hasReachedMaxQueueSize() {
     return queue.size() >= queueSize;
   }
 
@@ -198,7 +198,7 @@ public class Channel<T> {
   }
 
   /**
-   * Disable the receiver waker. This is used to prevent the receiver from being into
+   * Disable the receiver waker. This is used to prevent the receiver from entering
    * waiting status when there are no more senders.
    */
   void disableReceiverWaker() {

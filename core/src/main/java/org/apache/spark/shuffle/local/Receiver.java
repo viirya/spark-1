@@ -29,7 +29,7 @@ public class Receiver<T> {
   private final Channel<T> channel;
   private boolean closed = false;
   private final int rddId;
-  private int receiverId;
+  private final int receiverId;
   private final AtomicInteger received = new AtomicInteger(0);
 
   private static final AtomicInteger nextReceiverId = new AtomicInteger(0);

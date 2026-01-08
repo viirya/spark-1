@@ -211,7 +211,11 @@ public class SenderFuture<T> {
         channelLocked = true;
       }
 
-      // todo: better stop condition
+      // Check for error state first to fail fast
+      if (channel.isError()) {
+        throw new IllegalStateException("Error in channel", channel.getError().get());
+      }
+
       if (channel.isClosed()) {
         return true;
       }
@@ -220,7 +224,7 @@ public class SenderFuture<T> {
       // 1. All channels are full.
       // 2. The current channel reached the maximum queue size.
       if (channel.getChannelGate().getEmptyChannelNumber() == 0 &&
-              channel.isReachedMaxQueueSize()) {
+              channel.hasReachedMaxQueueSize()) {
         tryWait(channel);
         // Check again if channel was closed while waiting
         if (channel.isClosed()) {
@@ -270,7 +274,11 @@ public class SenderFuture<T> {
             int key = partitioner.getPartition(data);
             channel = channels[key];
 
-            // todo: better stop condition
+            // Check for error state first to fail fast
+            if (channel.isError()) {
+              throw new IllegalStateException("Error in channel", channel.getError().get());
+            }
+
             if (channel.isClosed()) {
               break;
             }
