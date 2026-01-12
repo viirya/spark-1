@@ -19,7 +19,6 @@ package org.apache.spark.shuffle.local;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A class that represents an operation for receiving data from a channel. It provides a blocking
@@ -34,16 +33,14 @@ public class ReceiverFuture<T> {
   private final Channel<T> channel;
   private final int rddId;
   private final int receiverId;
-  private final AtomicInteger received;
   private final int maxQueueSize;
   private final LinkedList<T> queue;
 
-  ReceiverFuture(int receiverId, Channel<T> channel, int rddId, AtomicInteger received,
+  ReceiverFuture(int receiverId, Channel<T> channel, int rddId,
                  LinkedList<T> queue, int maxQueueSize) {
     this.receiverId = receiverId;
     this.channel = channel;
     this.rddId = rddId;
-    this.received = received;
     this.maxQueueSize = maxQueueSize;
     this.queue = queue;
   }

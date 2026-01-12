@@ -22,15 +22,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * The receiver is responsible for receiving data from the given channel. It is also responsible for
  * closing the channel when it is no longer needed.
+ * <p>
+ * This class implements {@link AutoCloseable} to support try-with-resources usage, ensuring
+ * proper cleanup of channel resources.
  *
  * @param <T> The type of the data to be received.
  */
-public class Receiver<T> {
+public class Receiver<T> implements AutoCloseable {
   private final Channel<T> channel;
   private boolean closed = false;
   private final int rddId;
   private final int receiverId;
-  private final AtomicInteger received = new AtomicInteger(0);
 
   private static final AtomicInteger nextReceiverId = new AtomicInteger(0);
 
@@ -45,7 +47,7 @@ public class Receiver<T> {
   }
 
   public ReceiverFuture<T> recv() {
-    return new ReceiverFuture<>(receiverId, channel, rddId, received, queue, maxQueueSize);
+    return new ReceiverFuture<>(receiverId, channel, rddId, queue, maxQueueSize);
   }
 
   public Channel<T> getChannel() {

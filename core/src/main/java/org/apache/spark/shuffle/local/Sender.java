@@ -19,8 +19,6 @@ package org.apache.spark.shuffle.local;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import scala.collection.Iterator;
-
 import org.apache.spark.Partition;
 import org.apache.spark.Partitioner;
 import org.apache.spark.SparkEnv;
