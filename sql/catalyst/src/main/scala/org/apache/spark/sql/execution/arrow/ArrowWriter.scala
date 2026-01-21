@@ -402,6 +402,13 @@ private[arrow] class ArrayWriter(
   }
 
   override def finish(): Unit = {
+    // If the element is a nested list, we need to set an empty list for the case
+    // where the outer list is empty but the inner list exists.
+    if (count == 0 && elementWriter.isInstanceOf[ArrayWriter]) {
+      valueVector.startNewValue(count)
+      valueVector.endValue(count, 0)
+      count += 1
+    }
     super.finish()
     elementWriter.finish()
   }
