@@ -26,7 +26,7 @@ import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.execution.datasources.{PruneFileSourcePartitions, PushVariantIntoScan, SchemaPruning, V1Writes}
 import org.apache.spark.sql.execution.datasources.v2.{GroupBasedRowLevelOperationScanPlanning, OptimizeMetadataOnlyDeleteFromTable, V2ScanPartitioningAndOrdering, V2ScanRelationPushDown, V2Writes}
 import org.apache.spark.sql.execution.dynamicpruning.{CleanupDynamicPruningFilters, PartitionPruning, RowLevelOperationRuntimeGroupFiltering}
-import org.apache.spark.sql.execution.python.{ExtractGroupingPythonUDFFromAggregate, ExtractPythonUDFFromAggregate, ExtractPythonUDFs, ExtractPythonUDTFs}
+import org.apache.spark.sql.execution.python.{ExtractGroupingPythonUDFFromAggregate, ExtractInProcessPythonUDFs, ExtractPythonUDFFromAggregate, ExtractPythonUDFs, ExtractPythonUDTFs, InProcessPythonChecks}
 
 class SparkOptimizer(
     catalogManager: CatalogManager,
@@ -72,6 +72,9 @@ class SparkOptimizer(
       BooleanSimplification,
       PruneFilters),
     postHocOptimizationBatches,
+    Batch("Extract InProcess Python UDFs", Once,
+      ExtractInProcessPythonUDFs,
+      InProcessPythonChecks),
     Batch("Extract Python UDFs", Once,
       ExtractPythonUDFFromJoinCondition,
       // `ExtractPythonUDFFromJoinCondition` can convert a join to a cartesian product.
